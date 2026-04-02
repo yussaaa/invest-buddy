@@ -10,6 +10,13 @@ import {
   X,
   FolderPlus,
 } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
 import { api } from '../lib/api'
 import type { Watchlist } from '../lib/types'
 
@@ -25,23 +32,23 @@ function TickerBadge({
   onAnalyze: () => void
 }) {
   return (
-    <div className="flex items-center gap-1 bg-slate-700/70 border border-slate-600 rounded-lg pl-3 pr-1.5 py-1.5">
-      <span className="text-sm font-mono font-semibold text-slate-200">{ticker}</span>
+    <Badge variant="outline" className="flex items-center gap-1 pl-3 pr-1.5 py-1.5 text-sm font-mono font-semibold">
+      {ticker}
       <button
         onClick={onAnalyze}
         title="Quick Analyze"
-        className="ml-1 p-1 rounded hover:bg-blue-500/20 text-slate-400 hover:text-blue-400 transition-colors"
+        className="ml-1 p-1 rounded hover:bg-blue-500/20 text-muted-foreground hover:text-primary transition-colors"
       >
         <TrendingUp size={13} />
       </button>
       <button
         onClick={onRemove}
         title="Remove"
-        className="p-1 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-colors"
+        className="p-1 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
       >
         <X size={13} />
       </button>
-    </div>
+    </Badge>
   )
 }
 
@@ -71,79 +78,84 @@ function WatchlistCard({ watchlist, onDelete, onAddTicker, onRemoveTicker, onAna
   }, [adding])
 
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-5 flex flex-col gap-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <List size={16} className="text-slate-400" />
-          <h3 className="font-semibold text-white">{watchlist.name}</h3>
-          <span className="text-xs text-slate-500 bg-slate-700 rounded-full px-2 py-0.5">
-            {watchlist.tickers.length}
-          </span>
-        </div>
-        <button
-          onClick={() => onDelete(watchlist.id)}
-          className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-          title="Delete watchlist"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-
-      {/* Tickers */}
-      <div className="flex flex-wrap gap-2">
-        {watchlist.tickers.map(t => (
-          <TickerBadge
-            key={t}
-            ticker={t}
-            onRemove={() => onRemoveTicker(watchlist.id, t)}
-            onAnalyze={() => onAnalyze(t)}
-          />
-        ))}
-
-        {/* Add ticker inline */}
-        {adding ? (
-          <div className="flex items-center gap-1.5">
-            <input
-              ref={inputRef}
-              value={newTicker}
-              onChange={e => setNewTicker(e.target.value.toUpperCase())}
-              onKeyDown={e => {
-                if (e.key === 'Enter') handleAdd()
-                if (e.key === 'Escape') setAdding(false)
-              }}
-              maxLength={10}
-              placeholder="TSLA"
-              className="w-20 rounded-lg border border-blue-500/60 bg-slate-900 px-2 py-1.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-            />
-            <button
-              onClick={handleAdd}
-              className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2 py-1.5 rounded-lg transition-colors"
-            >
-              Add
-            </button>
-            <button
-              onClick={() => setAdding(false)}
-              className="text-xs text-slate-400 hover:text-slate-200 px-1 py-1.5"
-            >
-              Cancel
-            </button>
+    <Card>
+      <CardContent className="pt-5 flex flex-col gap-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <List size={16} className="text-muted-foreground" />
+            <h3 className="font-semibold text-foreground">{watchlist.name}</h3>
+            <Badge variant="secondary" className="text-xs">
+              {watchlist.tickers.length}
+            </Badge>
           </div>
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-slate-600 text-xs text-slate-500 hover:text-slate-300 hover:border-slate-400 transition-colors"
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onDelete(watchlist.id)}
+            className="h-8 w-8 text-muted-foreground hover:text-red-400 hover:bg-red-500/10"
+            title="Delete watchlist"
           >
-            <Plus size={12} />
-            Add ticker
-          </button>
-        )}
-      </div>
+            <Trash2 size={14} />
+          </Button>
+        </div>
 
-      <p className="text-xs text-slate-600">
-        Created {new Date(watchlist.created_at).toLocaleDateString()}
-      </p>
-    </div>
+        {/* Tickers */}
+        <div className="flex flex-wrap gap-2">
+          {watchlist.tickers.map(t => (
+            <TickerBadge
+              key={t}
+              ticker={t}
+              onRemove={() => onRemoveTicker(watchlist.id, t)}
+              onAnalyze={() => onAnalyze(t)}
+            />
+          ))}
+
+          {/* Add ticker inline */}
+          {adding ? (
+            <div className="flex items-center gap-1.5">
+              <Input
+                ref={inputRef}
+                value={newTicker}
+                onChange={e => setNewTicker(e.target.value.toUpperCase())}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleAdd()
+                  if (e.key === 'Escape') setAdding(false)
+                }}
+                maxLength={10}
+                placeholder="TSLA"
+                className="w-20 h-8 text-xs font-mono"
+              />
+              <Button size="sm" onClick={handleAdd} className="h-8 text-xs">
+                Add
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAdding(false)}
+                className="h-8 text-xs text-muted-foreground"
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAdding(true)}
+              className="h-8 gap-1 border-dashed text-muted-foreground"
+            >
+              <Plus size={12} />
+              Add ticker
+            </Button>
+          )}
+        </div>
+
+        <p className="text-xs text-muted-foreground/60">
+          Created {new Date(watchlist.created_at).toLocaleDateString()}
+        </p>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -228,71 +240,75 @@ export default function WatchlistPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Watchlists</h1>
-          <p className="text-sm text-slate-400 mt-1">Manage your tracked tickers and groups.</p>
+          <h1 className="text-2xl font-bold text-foreground">Watchlists</h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage your tracked tickers and groups.</p>
         </div>
-        <button
-          onClick={() => setCreating(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors"
-        >
+        <Button onClick={() => setCreating(true)}>
           <FolderPlus size={15} />
           New Watchlist
-        </button>
+        </Button>
       </div>
 
-      {/* Create new watchlist form */}
-      {creating && (
-        <div className="rounded-xl border border-blue-500/40 bg-blue-500/5 p-5 flex flex-col gap-3">
-          <h3 className="text-sm font-semibold text-blue-300">New Watchlist</h3>
-          <div className="flex gap-3">
-            <input
+      {/* Create new watchlist dialog */}
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Watchlist</DialogTitle>
+            <DialogDescription>
+              Create a new watchlist to track a group of tickers.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 py-2">
+            <Label htmlFor="watchlist-name">Name</Label>
+            <Input
+              id="watchlist-name"
               autoFocus
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setCreating(false) }}
+              onKeyDown={e => { if (e.key === 'Enter') handleCreate() }}
               placeholder="e.g. Tech Growth"
-              className="flex-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
             />
-            <button
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { setCreating(false); setNewName('') }}
+            >
+              Cancel
+            </Button>
+            <Button
               onClick={handleCreate}
               disabled={saving || !newName.trim()}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors disabled:opacity-50"
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
               Create
-            </button>
-            <button
-              onClick={() => { setCreating(false); setNewName('') }}
-              className="px-3 py-2.5 rounded-lg border border-slate-600 text-slate-400 hover:text-slate-200 text-sm transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Error */}
       {error && (
-        <div className="flex items-start gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3">
-          <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-400" />
-          <p className="text-sm text-red-300">{error}</p>
-        </div>
+        <Alert variant="destructive">
+          <AlertCircle size={16} />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center gap-3 text-slate-400 py-12 justify-center">
+        <div className="flex items-center gap-3 text-muted-foreground py-12 justify-center">
           <Loader2 size={20} className="animate-spin" />
-          <span>Loading watchlists…</span>
+          <span>Loading watchlists...</span>
         </div>
       )}
 
       {/* Empty state */}
       {!loading && watchlists.length === 0 && !error && (
         <div className="text-center py-16">
-          <List size={40} className="mx-auto text-slate-700 mb-4" />
-          <p className="text-slate-400 font-medium">No watchlists yet</p>
-          <p className="text-sm text-slate-600 mt-1">Create your first watchlist to track tickers.</p>
+          <List size={40} className="mx-auto text-muted-foreground/30 mb-4" />
+          <p className="text-muted-foreground font-medium">No watchlists yet</p>
+          <p className="text-sm text-muted-foreground/60 mt-1">Create your first watchlist to track tickers.</p>
         </div>
       )}
 

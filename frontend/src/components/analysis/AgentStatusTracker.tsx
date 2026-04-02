@@ -1,7 +1,10 @@
 import { Activity, BarChart2, MessageSquare, Shield, TrendingUp } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import type { AgentProgress, AgentName, AgentStatus } from '../../lib/types'
 
-// ── Config ──────────────────────────────────────────────────────────────────
+// -- Config -------------------------------------------------------------------
 
 const AGENT_CONFIG: Record<AgentName, { label: string; icon: React.ReactNode }> = {
   market_research: { label: 'Market Research', icon: <TrendingUp size={18} /> },
@@ -13,13 +16,13 @@ const AGENT_CONFIG: Record<AgentName, { label: string; icon: React.ReactNode }> 
 
 const STATUS_STYLES: Record<AgentStatus, { badge: string; ring: string; dot: string }> = {
   pending: {
-    badge: 'bg-slate-700 text-slate-400',
-    ring: 'border-slate-700',
-    dot: 'bg-slate-600',
+    badge: 'bg-muted text-muted-foreground',
+    ring: 'border-border',
+    dot: 'bg-muted-foreground/50',
   },
   running: {
     badge: 'bg-blue-500/20 text-blue-300',
-    ring: 'border-blue-500/60',
+    ring: 'border-blue-500/60 ring-2 ring-blue-500/20',
     dot: 'bg-blue-400 animate-pulse',
   },
   completed: {
@@ -28,20 +31,20 @@ const STATUS_STYLES: Record<AgentStatus, { badge: string; ring: string; dot: str
     dot: 'bg-green-400',
   },
   skipped: {
-    badge: 'bg-slate-700 text-slate-500',
-    ring: 'border-slate-700',
-    dot: 'bg-slate-600',
+    badge: 'bg-muted text-muted-foreground/50',
+    ring: 'border-border',
+    dot: 'bg-muted-foreground/30',
   },
 }
 
 const STATUS_LABEL: Record<AgentStatus, string> = {
   pending: 'Pending',
-  running: 'Running…',
+  running: 'Running...',
   completed: 'Completed',
   skipped: 'Skipped',
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+// -- Component ----------------------------------------------------------------
 
 interface AgentStatusTrackerProps {
   agents: AgentProgress[]
@@ -52,40 +55,45 @@ function AgentCard({ agent }: { agent: AgentProgress }) {
   const styles = STATUS_STYLES[agent.status]
 
   return (
-    <div
-      className={[
-        'flex flex-col items-center gap-2 p-4 rounded-xl border bg-slate-800/60 flex-1 min-w-[110px] transition-colors',
-        styles.ring,
-      ].join(' ')}
-    >
-      {/* Icon + dot */}
-      <div className="relative">
-        <div className="text-slate-400">{config.icon}</div>
-        <span
-          className={[
-            'absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full',
-            styles.dot,
-          ].join(' ')}
-        />
-      </div>
-
-      {/* Name */}
-      <span className="text-xs font-medium text-slate-300 text-center leading-tight">
-        {config.label}
-      </span>
-
-      {/* Status badge */}
-      <span className={['text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide', styles.badge].join(' ')}>
-        {STATUS_LABEL[agent.status]}
-      </span>
-
-      {/* Confidence */}
-      {agent.status === 'completed' && typeof agent.confidence === 'number' && (
-        <span className="text-[10px] text-slate-400">
-          {Math.round(agent.confidence * 100)}% confidence
-        </span>
+    <Card
+      className={cn(
+        'flex-1 min-w-[110px] transition-colors',
+        styles.ring
       )}
-    </div>
+    >
+      <CardContent className="flex flex-col items-center gap-2 p-4">
+        {/* Icon + dot */}
+        <div className="relative">
+          <div className="text-muted-foreground">{config.icon}</div>
+          <span
+            className={cn(
+              'absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full',
+              styles.dot
+            )}
+          />
+        </div>
+
+        {/* Name */}
+        <span className="text-xs font-medium text-foreground/80 text-center leading-tight">
+          {config.label}
+        </span>
+
+        {/* Status badge */}
+        <Badge
+          variant="secondary"
+          className={cn('text-[10px] uppercase tracking-wide', styles.badge)}
+        >
+          {STATUS_LABEL[agent.status]}
+        </Badge>
+
+        {/* Confidence */}
+        {agent.status === 'completed' && typeof agent.confidence === 'number' && (
+          <span className="text-[10px] text-muted-foreground">
+            {Math.round(agent.confidence * 100)}% confidence
+          </span>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

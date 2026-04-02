@@ -2,7 +2,7 @@
 # Usage: make <target>
 SHELL := /bin/bash
 
-.PHONY: help dev dev-ollama dev-monitoring dev-backend dev-frontend test test-all eval lint format docker-up docker-down docker-logs mlflow k8s-apply k8s-delete k8s-status k8s-logs env
+.PHONY: help dev dev-ollama dev-monitoring dev-backend dev-frontend dev-local test test-all eval lint format docker-up docker-down docker-logs mlflow k8s-apply k8s-delete k8s-status k8s-logs env
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -29,6 +29,11 @@ dev-backend:  ## Run backend only (uvicorn + venv)
 
 dev-frontend:  ## Run frontend Vite dev server
 	cd frontend && npm run dev
+
+dev-local:  ## Run backend + frontend locally (no Docker needed)
+	@echo "Starting backend on :8000 and frontend on :5173 ..."
+	@(cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000) &
+	@cd frontend && npm run dev
 
 test:  ## Run backend unit tests
 	cd backend && source .venv/bin/activate && python -m pytest tests/unit -v
@@ -71,5 +76,5 @@ k8s-logs:  ## Tail backend pod logs
 
 env:  ## Copy .env.example to .env
 	cp .env.example .env
-		@echo ".env created — add your API keys before running"
+	@echo ".env created — add your API keys before running"
 

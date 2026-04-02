@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { ThumbsUp, ThumbsDown, CheckCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { api } from '../../lib/api'
 
 interface FeedbackButtonsProps {
@@ -38,37 +40,39 @@ export default function FeedbackButtons({ runId, userId }: FeedbackButtonsProps)
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs text-slate-400 uppercase tracking-wide">Was this analysis helpful?</p>
+      <p className="text-xs text-muted-foreground uppercase tracking-wide">Was this analysis helpful?</p>
       <div className="flex items-center gap-3">
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => handleFeedback(1)}
           disabled={state === 'submitting'}
-          className={[
-            'flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors',
+          className={cn(
+            'gap-2',
             chosen === 1
-              ? 'border-green-500 bg-green-500/20 text-green-300'
-              : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-green-500/60 hover:text-green-300',
-            state === 'submitting' ? 'opacity-50 cursor-not-allowed' : '',
-          ].join(' ')}
+              ? 'border-green-500 bg-green-500/20 text-green-300 hover:bg-green-500/30 hover:text-green-300'
+              : 'hover:border-green-500/60 hover:text-green-300'
+          )}
         >
           <ThumbsUp size={15} />
           Helpful
-        </button>
+        </Button>
 
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => handleFeedback(-1)}
           disabled={state === 'submitting'}
-          className={[
-            'flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors',
+          className={cn(
+            'gap-2',
             chosen === -1
-              ? 'border-red-500 bg-red-500/20 text-red-300'
-              : 'border-slate-700 bg-slate-800 text-slate-300 hover:border-red-500/60 hover:text-red-300',
-            state === 'submitting' ? 'opacity-50 cursor-not-allowed' : '',
-          ].join(' ')}
+              ? 'border-red-500 bg-red-500/20 text-red-300 hover:bg-red-500/30 hover:text-red-300'
+              : 'hover:border-red-500/60 hover:text-red-300'
+          )}
         >
           <ThumbsDown size={15} />
           Not helpful
-        </button>
+        </Button>
       </div>
 
       {state === 'error' && (

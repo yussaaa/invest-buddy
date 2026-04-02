@@ -1,5 +1,8 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import { BarChart2, Clock, List, Settings, TrendingUp } from 'lucide-react'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { Separator } from '@/components/ui/separator'
+import { cn } from '@/lib/utils'
 import AnalyzePage from './pages/AnalyzePage'
 import WatchlistPage from './pages/WatchlistPage'
 import HistoryPage from './pages/HistoryPage'
@@ -14,12 +17,14 @@ const NAV_ITEMS = [
 
 function Sidebar() {
   return (
-    <aside className="flex flex-col w-56 shrink-0 min-h-screen bg-slate-900 border-r border-slate-800">
+    <aside className="flex flex-col w-56 shrink-0 min-h-screen bg-card border-r border-border">
       {/* Logo */}
-      <div className="flex items-center gap-2 px-5 py-5 border-b border-slate-800">
-        <BarChart2 className="text-blue-400" size={22} />
-        <span className="text-white font-semibold text-lg tracking-tight">AgentInvest</span>
+      <div className="flex items-center gap-2 px-5 py-5">
+        <BarChart2 className="text-primary" size={22} />
+        <span className="text-foreground font-semibold text-lg tracking-tight">AgentInvest</span>
       </div>
+
+      <Separator />
 
       {/* Nav links */}
       <nav className="flex flex-col gap-1 px-3 py-4 flex-1">
@@ -28,12 +33,12 @@ function Sidebar() {
             key={to}
             to={to}
             className={({ isActive }) =>
-              [
+              cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
                 isActive
-                  ? 'bg-blue-600/20 text-blue-400'
-                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800',
-              ].join(' ')
+                  ? 'bg-primary/20 text-primary'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              )
             }
           >
             <Icon size={17} />
@@ -42,9 +47,11 @@ function Sidebar() {
         ))}
       </nav>
 
+      <Separator />
+
       {/* Footer */}
-      <div className="px-5 py-4 border-t border-slate-800">
-        <p className="text-xs text-slate-600">v0.1.0 · Not financial advice</p>
+      <div className="px-5 py-4">
+        <p className="text-xs text-muted-foreground/50">v0.1.0 · Not financial advice</p>
       </div>
     </aside>
   )
@@ -53,18 +60,20 @@ function Sidebar() {
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex min-h-screen bg-slate-950 text-slate-100">
-        <Sidebar />
-        <main className="flex-1 overflow-y-auto">
-          <Routes>
-            <Route path="/" element={<Navigate to="/analyze" replace />} />
-            <Route path="/analyze" element={<AnalyzePage />} />
-            <Route path="/watchlist" element={<WatchlistPage />} />
-            <Route path="/history" element={<HistoryPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Routes>
-        </main>
-      </div>
+      <TooltipProvider>
+        <div className="flex min-h-screen bg-background text-foreground">
+          <Sidebar />
+          <main className="flex-1 overflow-y-auto">
+            <Routes>
+              <Route path="/" element={<Navigate to="/analyze" replace />} />
+              <Route path="/analyze" element={<AnalyzePage />} />
+              <Route path="/watchlist" element={<WatchlistPage />} />
+              <Route path="/history" element={<HistoryPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Routes>
+          </main>
+        </div>
+      </TooltipProvider>
     </BrowserRouter>
   )
 }

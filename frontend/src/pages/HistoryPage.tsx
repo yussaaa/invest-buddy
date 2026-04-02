@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Clock, AlertCircle, Loader2, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { cn } from '@/lib/utils'
 import { api } from '../lib/api'
 import type { AnalysisResult } from '../lib/types'
 
@@ -17,22 +22,22 @@ function ConfidencePill({ value }: { value: number }) {
       : 'bg-red-500/20 text-red-300 border-red-500/40'
 
   return (
-    <span className={['text-xs font-semibold px-2.5 py-1 rounded-full border', color].join(' ')}>
+    <Badge variant="outline" className={cn('text-xs font-semibold', color)}>
       {pct}%
-    </span>
+    </Badge>
   )
 }
 
 function StatusBadge({ status }: { status: AnalysisResult['status'] }) {
   const styles: Record<AnalysisResult['status'], string> = {
-    completed: 'bg-green-500/20 text-green-300',
-    running: 'bg-blue-500/20 text-blue-300',
-    error: 'bg-red-500/20 text-red-300',
+    completed: 'bg-green-500/20 text-green-300 hover:bg-green-500/20',
+    running: 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/20',
+    error: 'bg-red-500/20 text-red-300 hover:bg-red-500/20',
   }
   return (
-    <span className={['text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide', styles[status]].join(' ')}>
+    <Badge variant="secondary" className={cn('text-[10px] uppercase tracking-wide', styles[status])}>
       {status}
-    </span>
+    </Badge>
   )
 }
 
@@ -63,7 +68,6 @@ export default function HistoryPage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   function handleView(item: AnalysisResult) {
-    // Navigate to analyze page pre-filled with ticker
     navigate(`/analyze?ticker=${item.ticker}`)
   }
 
@@ -71,129 +75,139 @@ export default function HistoryPage() {
     <div className="max-w-4xl mx-auto px-6 py-8 flex flex-col gap-7">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white">Analysis History</h1>
-        <p className="text-sm text-slate-400 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Analysis History</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           {total > 0 ? `${total} analyses run` : 'Your past analyses will appear here.'}
         </p>
       </div>
 
       {/* Error */}
       {error && (
-        <div className="flex items-start gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3">
-          <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-400" />
-          <p className="text-sm text-red-300">{error}</p>
-        </div>
+        <Alert variant="destructive">
+          <AlertCircle size={16} />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center gap-3 text-slate-400 py-16 justify-center">
+        <div className="flex items-center gap-3 text-muted-foreground py-16 justify-center">
           <Loader2 size={20} className="animate-spin" />
-          <span>Loading history…</span>
+          <span>Loading history...</span>
         </div>
       )}
 
       {/* Empty state */}
       {!loading && items.length === 0 && !error && (
         <div className="text-center py-16">
-          <Clock size={40} className="mx-auto text-slate-700 mb-4" />
-          <p className="text-slate-400 font-medium">No analyses yet</p>
-          <p className="text-sm text-slate-600 mt-1">Run your first analysis to see it here.</p>
+          <Clock size={40} className="mx-auto text-muted-foreground/30 mb-4" />
+          <p className="text-muted-foreground font-medium">No analyses yet</p>
+          <p className="text-sm text-muted-foreground/60 mt-1">Run your first analysis to see it here.</p>
         </div>
       )}
 
       {/* Table */}
       {!loading && items.length > 0 && (
-        <div className="rounded-xl border border-slate-700 overflow-hidden">
-          {/* Table header */}
-          <div className="grid grid-cols-[2fr_3fr_auto_auto_auto] gap-4 px-5 py-3 bg-slate-800/80 border-b border-slate-700">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Ticker</span>
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Query</span>
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Confidence</span>
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Status</span>
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Action</span>
-          </div>
+        <div className="rounded-xl border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Ticker</TableHead>
+                <TableHead>Query</TableHead>
+                <TableHead className="text-center">Confidence</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-center">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map(item => {
+                const confidence = item.result?.final_report?.overall_confidence
+                return (
+                  <TableRow key={item.run_id}>
+                    {/* Ticker */}
+                    <TableCell>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-mono font-bold text-foreground">{item.ticker || '---'}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(item.created_at).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                    </TableCell>
 
-          {/* Rows */}
-          <div className="divide-y divide-slate-700/60">
-            {items.map(item => {
-              const confidence = item.result?.final_report?.overall_confidence
-              return (
-                <div
-                  key={item.run_id}
-                  className="grid grid-cols-[2fr_3fr_auto_auto_auto] gap-4 px-5 py-4 items-center hover:bg-slate-800/40 transition-colors"
-                >
-                  {/* Ticker */}
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-mono font-bold text-white">{item.ticker || '—'}</span>
-                    <span className="text-xs text-slate-500">
-                      {new Date(item.created_at).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  </div>
+                    {/* Query */}
+                    <TableCell>
+                      <p className="text-sm text-foreground/80 truncate max-w-[300px]" title={item.query}>
+                        {item.query || '---'}
+                      </p>
+                    </TableCell>
 
-                  {/* Query */}
-                  <p className="text-sm text-slate-300 truncate" title={item.query}>
-                    {item.query || '—'}
-                  </p>
+                    {/* Confidence */}
+                    <TableCell className="text-center">
+                      {typeof confidence === 'number' ? (
+                        <ConfidencePill value={confidence} />
+                      ) : (
+                        <span className="text-xs text-muted-foreground/50">---</span>
+                      )}
+                    </TableCell>
 
-                  {/* Confidence */}
-                  <div className="flex justify-center">
-                    {typeof confidence === 'number' ? (
-                      <ConfidencePill value={confidence} />
-                    ) : (
-                      <span className="text-xs text-slate-600">—</span>
-                    )}
-                  </div>
+                    {/* Status */}
+                    <TableCell className="text-center">
+                      <StatusBadge status={item.status} />
+                    </TableCell>
 
-                  {/* Status */}
-                  <div className="flex justify-center">
-                    <StatusBadge status={item.status} />
-                  </div>
-
-                  {/* Action */}
-                  <button
-                    onClick={() => handleView(item)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-600 text-xs text-slate-300 hover:text-white hover:border-slate-400 hover:bg-slate-700 transition-colors"
-                  >
-                    <Eye size={13} />
-                    View
-                  </button>
-                </div>
-              )
-            })}
-          </div>
+                    {/* Action */}
+                    <TableCell className="text-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleView(item)}
+                        className="gap-1.5"
+                      >
+                        <Eye size={13} />
+                        View
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
         </div>
       )}
 
       {/* Pagination */}
       {!loading && totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             Page {page + 1} of {totalPages}
           </p>
           <div className="flex gap-2">
-            <button
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setPage(p => p - 1)}
               disabled={page === 0}
-              className="flex items-center gap-1 px-3 py-2 rounded-lg border border-slate-700 text-sm text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="gap-1"
             >
               <ChevronLeft size={15} />
               Prev
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setPage(p => p + 1)}
               disabled={page >= totalPages - 1}
-              className="flex items-center gap-1 px-3 py-2 rounded-lg border border-slate-700 text-sm text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="gap-1"
             >
               Next
               <ChevronRight size={15} />
-            </button>
+            </Button>
           </div>
         </div>
       )}
