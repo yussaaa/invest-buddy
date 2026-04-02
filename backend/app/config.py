@@ -91,7 +91,7 @@ class Settings(BaseSettings):
 
     # ── Monitoring ──────────────────────────────────────────────────────────
     monitoring_backend: Literal["mlflow", "wandb", "none"] = "mlflow"
-    mlflow_tracking_uri: str = "http://localhost:5000"
+    mlflow_tracking_uri: str = "http://localhost:5050"
     wandb_api_key: str = ""
     wandb_project: str = "agent-invest"
 

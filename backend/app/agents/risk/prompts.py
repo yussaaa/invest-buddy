@@ -5,6 +5,8 @@ equity risk measurement, including volatility, tail risk (VaR), factor exposure
 (beta), risk-adjusted return metrics, and drawdown analysis.
 """
 
+PROMPT_VERSION = "v1"
+
 # ── Tool list ──────────────────────────────────────────────────────────────────
 
 TOOL_LIST: list[str] = [

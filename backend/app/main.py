@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import make_asgi_app
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
 
 from app.config import get_settings
 from app.api.v1.router import api_router
@@ -49,7 +50,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
 
-    app = FastAPI(
+    application = FastAPI(
         title="Agent Invest API",
         description="Multi-Agent Stock Investment Analysis Platform",
         version="0.1.0",
@@ -57,7 +58,7 @@ def create_app() -> FastAPI:
     )
 
     # CORS — allow the Vite frontend
-    app.add_middleware(
+    application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
         allow_credentials=True,
@@ -65,14 +66,20 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Mount Prometheus metrics at /metrics
-    metrics_app = make_asgi_app()
-    app.mount("/metrics", metrics_app)
+    # Prometheus metrics endpoint
+    @application.get("/metrics")
+    async def prometheus_metrics():
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     # Register API routes
-    app.include_router(api_router, prefix="/api/v1")
+    application.include_router(api_router, prefix="/api/v1")
 
-    return app
+    return application
 
+
+# Import metrics to register Prometheus collectors before app creation
+from app.observability.metrics import (  # noqa: E402, F401
+    ANALYSIS_RUNS_TOTAL, RAGAS_FAITHFULNESS, TOOL_CALLS_TOTAL,
+)
 
 app = create_app()

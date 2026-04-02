@@ -5,6 +5,8 @@ interprets price action, momentum indicators, trend signals, and key price level
 to build a structured technical picture of a security.
 """
 
+PROMPT_VERSION = "v1"
+
 # ── Tool list ──────────────────────────────────────────────────────────────────
 
 TOOL_LIST: list[str] = [

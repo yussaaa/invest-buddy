@@ -40,7 +40,7 @@ services:
 
   # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16    # postgres + pgvector extension pre-installed
     environment:
       POSTGRES_DB: agent_invest
       POSTGRES_USER: agent_invest
@@ -101,18 +101,22 @@ services:
 
   # ── MLflow tracking server ───────────────────────────────────────────────────
   mlflow:
-    image: python:3.11-slim
+    image: ghcr.io/mlflow/mlflow:v2.16.2
     ports:
-      - "5000:5000"
+      - "5050:5050"
     volumes:
       - mlflow_data:/mlflow
-    command: >
-      sh -c "pip install mlflow -q &&
-             mlflow server
-             --backend-store-uri sqlite:///mlflow/mlflow.db
-             --default-artifact-root /mlflow/artifacts
-             --host 0.0.0.0
-             --port 5000"
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:///mlflow/mlflow.db
+      - --default-artifact-root
+      - /mlflow/artifacts
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "5050"
     restart: unless-stopped
     profiles:
       - monitoring
@@ -139,6 +143,8 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
     restart: unless-stopped

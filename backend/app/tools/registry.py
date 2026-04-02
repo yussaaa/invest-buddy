@@ -114,22 +114,36 @@ class ToolRegistry:
             cache_key = f"{tool_name}:{sorted(arguments.items())}"
             cached = self._cache.get(cache_key)
             if cached and time.monotonic() < cached[1]:
-                return ToolResult(success=True, data=cached[0], cache_hit=True)
+                result = ToolResult(success=True, data=cached[0], cache_hit=True)
+                try:
+                    from app.observability.metrics import record_tool_call
+                    record_tool_call(tool_name, result.success, result.cache_hit, result.latency_ms)
+                except Exception:
+                    pass
+                return result
 
         t0 = time.monotonic()
         try:
-            result = await tool.fn(**arguments)
+            data = await tool.fn(**arguments)
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             # Store in cache
             if tool.cacheable:
-                self._cache[cache_key] = (result, time.monotonic() + tool.cache_ttl_seconds)
+                self._cache[cache_key] = (data, time.monotonic() + tool.cache_ttl_seconds)
 
-            return ToolResult(success=True, data=result, latency_ms=latency_ms)
+            result = ToolResult(success=True, data=data, latency_ms=latency_ms)
         except Exception as exc:
             latency_ms = int((time.monotonic() - t0) * 1000)
             log.error("tool_error", tool=tool_name, error=str(exc))
-            return ToolResult(success=False, data=None, error=str(exc), latency_ms=latency_ms)
+            result = ToolResult(success=False, data=None, error=str(exc), latency_ms=latency_ms)
+
+        try:
+            from app.observability.metrics import record_tool_call
+            record_tool_call(tool_name, result.success, result.cache_hit, result.latency_ms)
+        except Exception:
+            pass
+
+        return result
 
     def _register_all(self) -> None:
         """Register every tool. Called once on first access."""

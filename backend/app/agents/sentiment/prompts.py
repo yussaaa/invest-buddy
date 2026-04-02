@@ -5,6 +5,8 @@ news flow, analyst positioning, options market signals, and web intelligence
 into a structured sentiment assessment.
 """
 
+PROMPT_VERSION = "v1"
+
 # ── Tool list ──────────────────────────────────────────────────────────────────
 
 TOOL_LIST: list[str] = [
