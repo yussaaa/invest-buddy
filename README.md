@@ -189,6 +189,79 @@ Every LLM call returns a Pydantic-validated `AgentResult`, not free-form text. T
 - Forces the LLM to produce citable, auditable outputs
 - Enables the guardrails node to check specific fields (confidence, citations)
 
+## Roadmap
+
+### Phase 1 — Core Engine ✅
+
+- 5 specialist agents (Fundamental, Sentiment, Technical, Risk, Market Research) with domain-specific tools and structured outputs
+- LangGraph orchestrator with parallel fan-out via `Send` — all agents run concurrently
+- 22 financial tools (yfinance, ta, risk metrics, SEC EDGAR, NewsAPI, Tavily) + MCP-style tool registry
+- ModelProvider abstraction supporting 5 providers (OpenAI, Anthropic, Qwen, Ollama, vLLM)
+- Guardrails node: hallucination detection (LLM-as-judge), investment advice detection (regex), citation checks
+- FastAPI with SSE streaming, React + Vite + shadcn/ui frontend with live agent tracker
+- MCP server exposing all tools to Claude Desktop
+- 18 unit tests passing
+
+### Phase 2 — Persistence ✅
+
+- PostgreSQL: 5 tables (users, analysis_runs, watchlists, user_preferences, feedback)
+- Async SQLAlchemy ORM with repository pattern, dev-mode auto-table-creation
+- Redis session memory for recent tickers (2hr TTL)
+- All in-memory stores replaced — data survives server restarts
+- Bug fixes: upsert race condition, async background tasks, datetime serialization
+
+### Phase 3 — RAG Pipeline ✅
+
+- pgvector (not Qdrant — zero extra containers, SQL filtering)
+- Ingestion: loader → chunker (512 chars, sentence-aware) → embedder (BAAI/bge-small-en-v1.5) → pgvector upsert
+- 3-stage retrieval: query decomposition → dense + BM25 sparse + RRF fusion → cross-encoder reranking
+- On-demand ingestion: RAG toggle on Analyze page, auto-ingests new tickers inline
+- File upload: users can add their own TXT/PDF/CSV documents to the knowledge base
+
+### Phase 4 — Memory + Guardrails Enhancement (planned)
+
+**Guardrail enforcement:**
+- [ ] Auto-rewrite investment advice — when regex detects "you should buy" etc., LLM rewrites with hedged language ("analysts suggest", "historically associated with") instead of just flagging
+- [ ] Confidence recalibration — if hallucination score >0.5 or citations missing, automatically lower `overall_confidence` and inject warning into synthesis
+- [ ] Contradiction detection — flag when agents disagree (e.g., bullish fundamentals vs. bearish technicals)
+
+**User memory:**
+- [ ] Load saved preferences from PostgreSQL — currently analysis ignores DB prefs and uses request defaults only
+- [ ] Preference-aware synthesis — weight agents by user profile (technical heavier for short-horizon, risk heavier for conservative)
+- [ ] Conversation memory — store last 3-5 queries per session in Redis for multi-turn context
+- [ ] Analysis result caching — cache (ticker, analysis_type) in Redis with 1hr TTL to avoid duplicate runs
+- [ ] Feedback readback — load past thumbs-down for a ticker to adjust agent behavior
+
+**Validation & audit:**
+- [ ] Preference validation — enforce enum values, canonical sector list
+- [ ] Guardrail audit timestamps — `checked_at` field, immutable log
+- [ ] Per-agent guardrails — run checks after each agent, not just in batch at the end
+
+### Phase 5 — RAGAS Evaluation + MLflow/W&B (next)
+
+- [ ] Wire RAGAS online scoring into every production run (faithfulness, relevancy, context precision)
+- [ ] MLflow experiment tracking: log every analysis run with params, metrics, artifacts
+- [ ] Prompt versioning via MLflow Model Registry
+- [ ] W&B Weave integration for LLM call tracing
+- [ ] Prometheus custom metrics: RAGAS scores, token usage per agent, cost per run
+- [ ] Expand golden dataset from 10 → 50 queries for meaningful offline eval
+- [ ] Grafana dashboard: RAGAS trends, token costs, latency P50/P95
+
+### Phase 6 — Kubernetes + Monitoring
+
+- [ ] Deploy full stack to minikube/GKE
+- [ ] Verify HPA autoscaling under load
+- [ ] Prometheus metrics: token usage, cache hit rate, guardrail trigger rate
+- [ ] Grafana dashboards (system health, quality metrics, business metrics)
+
+### Phase 7 — Documentation + Demo
+
+- [ ] Architecture diagrams (Mermaid)
+- [ ] docs/model_selection.md — formal model tradeoff writeup
+- [ ] docs/evaluation_framework.md — methodology document
+- [ ] Demo video showing streaming multi-agent analysis
+- [ ] README with screenshots
+
 ## License
 
 This project is for educational and portfolio demonstration purposes.
