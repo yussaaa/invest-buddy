@@ -78,13 +78,44 @@ async def classifier_node(state: AgentState) -> dict:
 async def rag_prefetch_node(state: AgentState) -> dict:
     """Pre-fetch RAG context before parallel agent execution.
 
-    Phase 1 stub — returns empty context. Full RAG pipeline added in Phase 3.
-    The stub allows the rest of the graph to work while RAG is built.
+    Runs the 3-stage retrieval pipeline:
+      1. Query decomposition (fast model → 3 sub-queries)
+      2. Multi-vector retrieval (pgvector dense + BM25 sparse + RRF fusion)
+      3. Cross-encoder reranking
+
+    Falls back to empty context if RAG is unavailable (e.g. no documents
+    indexed yet) — agents still work, just without grounded context.
     """
-    return {
-        "retrieved_documents": [],
-        "entity_graph": {},
-    }
+    from app.rag.retrieval.pipeline import get_rag_pipeline
+    from app.rag.context.builder import build_context
+
+    t0 = time.monotonic()
+    pipeline = get_rag_pipeline()
+
+    try:
+        docs = await pipeline.retrieve(
+            query=state.get("query", ""),
+            ticker=state.get("ticker", ""),
+        )
+        context_str = build_context(docs)
+        log.info(
+            "rag_prefetch_complete",
+            ticker=state.get("ticker"),
+            docs_retrieved=len(docs),
+            context_chars=len(context_str),
+            latency_s=round(time.monotonic() - t0, 3),
+        )
+        return {
+            "retrieved_documents": docs,
+            "entity_graph": {},
+            "latency_breakdown": {"rag_prefetch": round(time.monotonic() - t0, 3)},
+        }
+    except Exception as e:
+        log.warning("rag_prefetch_fallback", error=str(e))
+        return {
+            "retrieved_documents": [],
+            "entity_graph": {},
+        }
 
 
 async def market_research_node(state: AgentState) -> dict:

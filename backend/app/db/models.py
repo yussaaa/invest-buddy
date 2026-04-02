@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models — 5 tables for Phase 2 persistence.
+"""SQLAlchemy ORM models — 6 tables for persistence + RAG.
 
 Design decisions:
 - `final_report` and `agent_results` stored as JSONB — queryable without
@@ -6,6 +6,7 @@ Design decisions:
 - PostgreSQL arrays for `tickers`, `preferred_sectors`, etc.
 - UUIDs as primary keys for analysis_runs and watchlists
 - `users` table is lightweight — just ensures FK integrity, no auth
+- `document_chunks` uses pgvector for embedding storage — no separate vector DB
 """
 
 from __future__ import annotations
@@ -194,3 +195,75 @@ class Feedback(Base):
     # Relationships
     analysis_run: Mapped["AnalysisRun"] = relationship(back_populates="feedback_entries")
     user: Mapped["User"] = relationship(back_populates="feedback_entries")
+
+
+# ── RAG: Document Chunks (pgvector) ─────────────────────────────────────────
+
+
+class DocumentChunk(Base):
+    """Chunked document with pgvector embedding for RAG retrieval.
+
+    Uses pgvector's vector type for efficient similarity search directly
+    inside PostgreSQL — no separate vector database needed.
+    """
+    __tablename__ = "document_chunks"
+
+    id: Mapped[str] = mapped_column(
+        String(255), primary_key=True  # format: {ticker}_{doc_type}_{chunk_idx}
+    )
+    ticker: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    document_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True  # sec_filing, news, earnings_call
+    )
+    source_url: Mapped[str | None] = mapped_column(Text)
+    published_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    fiscal_period: Mapped[str | None] = mapped_column(String(20))  # e.g. Q4-2024
+    section: Mapped[str | None] = mapped_column(String(100))  # risk_factors, financials
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_chunks: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    entities: Mapped[list | None] = mapped_column(ARRAY(String))  # extracted entity names
+    freshness_score: Mapped[float | None] = mapped_column(Float)  # 0-1, newer = higher
+
+    # pgvector embedding column — added via raw SQL in migration
+    # (SQLAlchemy pgvector integration handles this)
+    # embedding: Vector(384)  — dimension depends on model
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "ticker": self.ticker,
+            "document_type": self.document_type,
+            "source_url": self.source_url,
+            "published_date": self.published_date.isoformat() if self.published_date else None,
+            "fiscal_period": self.fiscal_period,
+            "section": self.section,
+            "chunk_index": self.chunk_index,
+            "total_chunks": self.total_chunks,
+            "text": self.text[:200] + "..." if len(self.text) > 200 else self.text,
+            "entities": self.entities or [],
+            "freshness_score": self.freshness_score,
+        }
+
+
+class TickerEntity(Base):
+    """Entity relationships extracted from documents for the entity graph."""
+    __tablename__ = "ticker_entities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)  # company, person, product
+    entity_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    relationship_type: Mapped[str | None] = mapped_column(String(50))  # ceo_of, competitor_of
+    related_entity: Mapped[str | None] = mapped_column(String(200))
+    source_chunk_id: Mapped[str | None] = mapped_column(String(255))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Seed the Qdrant vector store with SEC filings and news for top tickers.
+"""Seed the pgvector store with SEC filings and news for top tickers.
 
 Usage:
     python scripts/seed_rag.py
     python scripts/seed_rag.py --tickers AAPL MSFT GOOGL
     python scripts/seed_rag.py --ticker AAPL --filing-type 10-K
 
-This is the Phase 3 RAG ingestion script. Run once to populate Qdrant,
-then the RAG pipeline will retrieve from it during analysis runs.
+Runs the full ingestion pipeline:
+  1. Load documents (SEC filings + news articles)
+  2. Chunk into overlapping segments
+  3. Embed with sentence-transformers (BAAI/bge-small-en-v1.5)
+  4. Upsert into PostgreSQL via pgvector
 """
 
 import argparse
@@ -16,6 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
+
 
 # Top 20 tickers to seed by default
 DEFAULT_TICKERS = [
@@ -26,57 +30,86 @@ DEFAULT_TICKERS = [
 ]
 
 
-async def seed_ticker(ticker: str, filing_type: str = "10-K"):
-    """Download filings + news for a ticker and upsert into Qdrant."""
-    print(f"  Seeding {ticker}...")
+async def setup_db():
+    """Ensure tables + pgvector extension exist."""
+    from app.db.session import engine, Base
+    from app.db import models  # noqa: F401
 
-    from app.tools.news.sec_edgar_tool import get_sec_filings
-    from app.tools.news.newsapi_tool import get_recent_news
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
-    # Download SEC filings
-    filings = await get_sec_filings(ticker, filing_type=filing_type, limit=2)
-    filing_count = len(filings.get("filings", []))
-    print(f"    {ticker}: {filing_count} {filing_type} filings downloaded")
-
-    # Download recent news
-    news = await get_recent_news(ticker, days=30, max_results=20)
-    article_count = len(news.get("articles", []))
-    print(f"    {ticker}: {article_count} news articles fetched")
-
-    # TODO (Phase 3): chunk + embed + upsert to Qdrant
-    # from app.rag.ingestion.embedder import embed_and_upsert
-    # await embed_and_upsert(ticker, filings, news)
-
-    return {"ticker": ticker, "filings": filing_count, "articles": article_count}
+    from app.rag.pgvector_setup import setup_pgvector
+    await setup_pgvector(engine)
+    print("  DB tables + pgvector ready")
 
 
-async def main(tickers: list[str], filing_type: str):
+async def seed_ticker(ticker: str) -> dict:
+    """Run the full ingestion pipeline for one ticker."""
+    from app.rag.ingestion.loader import load_all_documents
+    from app.rag.ingestion.chunker import chunk_documents
+    from app.rag.ingestion.embedder import get_embedder
+    from app.rag.ingestion.upserter import upsert_chunks
+
+    print(f"  [{ticker}] Loading documents...")
+    docs = await load_all_documents(ticker)
+    if not docs:
+        print(f"  [{ticker}] No documents found — skipping")
+        return {"ticker": ticker, "docs": 0, "chunks": 0, "upserted": 0}
+
+    print(f"  [{ticker}] {len(docs)} documents loaded, chunking...")
+    chunks = chunk_documents(docs)
+    if not chunks:
+        print(f"  [{ticker}] No chunks produced — skipping")
+        return {"ticker": ticker, "docs": len(docs), "chunks": 0, "upserted": 0}
+
+    print(f"  [{ticker}] {len(chunks)} chunks, embedding...")
+    embedder = get_embedder()
+    texts = [c.text for c in chunks]
+    embeddings = await embedder.embed_texts(texts)
+
+    print(f"  [{ticker}] Upserting to pgvector...")
+    upserted = await upsert_chunks(chunks, embeddings)
+
+    print(f"  [{ticker}] Done: {len(docs)} docs → {len(chunks)} chunks → {upserted} upserted")
+    return {"ticker": ticker, "docs": len(docs), "chunks": len(chunks), "upserted": upserted}
+
+
+async def main(tickers: list[str]):
     print(f"\n{'='*60}")
-    print(f"Seeding RAG vector store — {len(tickers)} tickers")
-    print(f"Filing type: {filing_type}")
+    print(f"Seeding RAG pipeline — {len(tickers)} tickers")
     print(f"{'='*60}\n")
 
+    await setup_db()
+
     results = []
-    for ticker in tickers:
+    for i, ticker in enumerate(tickers, 1):
+        print(f"\n[{i}/{len(tickers)}] Processing {ticker}...")
         try:
-            result = await seed_ticker(ticker, filing_type)
+            result = await seed_ticker(ticker)
             results.append(result)
         except Exception as e:
-            print(f"  ERROR seeding {ticker}: {e}")
+            print(f"  [{ticker}] ERROR: {e}")
+            results.append({"ticker": ticker, "error": str(e)})
+
+    # Summary
+    total_docs = sum(r.get("docs", 0) for r in results)
+    total_chunks = sum(r.get("chunks", 0) for r in results)
+    total_upserted = sum(r.get("upserted", 0) for r in results)
+    errors = sum(1 for r in results if "error" in r)
 
     print(f"\n{'='*60}")
-    print(f"Seeding complete — {len(results)}/{len(tickers)} tickers processed")
-    total_filings = sum(r["filings"] for r in results)
-    total_articles = sum(r["articles"] for r in results)
-    print(f"  Total filings: {total_filings}")
-    print(f"  Total articles: {total_articles}")
+    print(f"Seeding complete")
+    print(f"  Tickers processed: {len(results)}")
+    print(f"  Total documents:   {total_docs}")
+    print(f"  Total chunks:      {total_chunks}")
+    print(f"  Total upserted:    {total_upserted}")
+    if errors:
+        print(f"  Errors:            {errors}")
     print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Seed RAG vector store")
     parser.add_argument("--tickers", nargs="+", default=DEFAULT_TICKERS)
-    parser.add_argument("--filing-type", default="10-K", choices=["10-K", "10-Q", "8-K"])
     args = parser.parse_args()
-
-    asyncio.run(main(tickers=args.tickers, filing_type=args.filing_type))
+    asyncio.run(main(tickers=args.tickers))
