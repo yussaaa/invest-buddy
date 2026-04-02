@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { cn } from '@/lib/utils'
 import { useAnalysis } from '../hooks/useAnalysis'
 import { useSSE } from '../hooks/useSSE'
 import AgentStatusTracker from '../components/analysis/AgentStatusTracker'
@@ -16,9 +17,48 @@ import FeedbackButtons from '../components/ui/FeedbackButtons'
 
 const USER_ID = 'anonymous'
 
+const ANALYSIS_TYPES = [
+  {
+    value: 'full',
+    label: 'Full Analysis',
+    query: 'Provide a comprehensive analysis covering fundamentals, technicals, sentiment, risk, and market context.',
+  },
+  {
+    value: 'fundamental',
+    label: 'Fundamental Analysis',
+    query: 'Analyze the financial statements, valuation ratios, earnings, and fundamental health.',
+  },
+  {
+    value: 'technical',
+    label: 'Technical Analysis',
+    query: 'Analyze the price action, technical indicators (RSI, MACD, Bollinger Bands), moving averages, and chart patterns.',
+  },
+  {
+    value: 'risk',
+    label: 'Risk Assessment',
+    query: 'Assess the risk profile including volatility, VaR, beta, Sharpe ratio, and maximum drawdown.',
+  },
+  {
+    value: 'sentiment',
+    label: 'Sentiment Analysis',
+    query: 'Analyze market sentiment from news, analyst ratings, and options market activity.',
+  },
+  {
+    value: 'market_research',
+    label: 'Market Research',
+    query: 'Research the company overview, recent news, SEC filings, competitive landscape, and upcoming events.',
+  },
+  {
+    value: 'other',
+    label: 'Other (Custom)',
+    query: '',
+  },
+]
+
 export default function AnalyzePage() {
   const [ticker, setTicker] = useState('')
-  const [query, setQuery] = useState('')
+  const [analysisType, setAnalysisType] = useState('full')
+  const [customInstructions, setCustomInstructions] = useState('')
 
   const {
     startAnalysis,
@@ -31,15 +71,38 @@ export default function AnalyzePage() {
     runId,
   } = useAnalysis()
 
-  // Connect SSE stream when streamUrl is set
   useSSE(streamUrl, handleSSEEvent)
+
+  // Disclaimer: only show on first visit (persisted in localStorage)
+  const [showDisclaimer, setShowDisclaimer] = useState(() => {
+    return localStorage.getItem('agent-invest-disclaimer-seen') !== 'true'
+  })
+
+  function dismissDisclaimer() {
+    localStorage.setItem('agent-invest-disclaimer-seen', 'true')
+    setShowDisclaimer(false)
+  }
+
+  const isOther = analysisType === 'other'
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const t = ticker.trim().toUpperCase()
-    const q = query.trim()
-    if (!t || !q) return
-    startAnalysis(t, q, USER_ID)
+    if (!t) return
+
+    let query: string
+    if (isOther) {
+      // "Other" mode: only use custom instructions
+      query = customInstructions.trim() || 'Provide a comprehensive analysis.'
+    } else {
+      const preset = ANALYSIS_TYPES.find(a => a.value === analysisType)
+      query = preset?.query || 'Provide a comprehensive analysis.'
+      if (customInstructions.trim()) {
+        query += `\n\nAdditional instructions: ${customInstructions.trim()}`
+      }
+    }
+
+    startAnalysis(t, query, USER_ID)
   }
 
   const finalReport = result?.result?.final_report ?? null
@@ -51,7 +114,7 @@ export default function AnalyzePage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Stock Analysis</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Enter a ticker and your question -- our AI agents will research and synthesize an answer.
+          Enter a ticker, choose an analysis type, and let our AI agents do the research.
         </p>
       </div>
 
@@ -59,8 +122,8 @@ export default function AnalyzePage() {
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {/* Row 1: Ticker + Analysis Type */}
             <div className="flex gap-3 flex-col sm:flex-row">
-              {/* Ticker */}
               <div className="flex flex-col gap-1.5 sm:w-40">
                 <Label htmlFor="ticker" className="text-xs font-medium uppercase tracking-wide">
                   Ticker
@@ -77,56 +140,74 @@ export default function AnalyzePage() {
                 />
               </div>
 
-              {/* Query */}
               <div className="flex flex-col gap-1.5 flex-1">
-                <Label htmlFor="query" className="text-xs font-medium uppercase tracking-wide">
-                  Your Question
+                <Label htmlFor="analysis-type" className="text-xs font-medium uppercase tracking-wide">
+                  Analysis Type
                 </Label>
-                <Input
-                  id="query"
-                  type="text"
-                  value={query}
-                  onChange={e => setQuery(e.target.value)}
-                  placeholder="e.g. What is the growth outlook and key risks for this stock?"
+                <select
+                  id="analysis-type"
+                  value={analysisType}
+                  onChange={e => setAnalysisType(e.target.value)}
                   disabled={isRunning}
-                />
+                  className={cn(
+                    "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm",
+                    "ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                    "text-foreground"
+                  )}
+                >
+                  {ANALYSIS_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            {/* Additional context textarea */}
+            {/* Row 2: Custom Instructions */}
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="context" className="text-xs font-medium uppercase tracking-wide">
-                Additional Context <span className="text-muted-foreground/50 normal-case">(optional)</span>
+              <Label htmlFor="custom-instructions" className="text-xs font-medium uppercase tracking-wide">
+                Custom Instructions{' '}
+                {isOther
+                  ? <span className="text-destructive normal-case">(required)</span>
+                  : <span className="text-muted-foreground/50 normal-case">(optional)</span>
+                }
               </Label>
               <Textarea
-                id="context"
+                id="custom-instructions"
                 rows={3}
-                value={''}
-                readOnly
-                placeholder="Add any specific context or constraints for the analysis..."
+                value={customInstructions}
+                onChange={e => setCustomInstructions(e.target.value)}
+                placeholder={
+                  isOther
+                    ? "Describe what you want to analyze — this will be sent directly as the query..."
+                    : "Add any specific focus areas, constraints, or questions for the analysis..."
+                }
                 disabled={isRunning}
                 className="resize-none"
               />
             </div>
 
-            <div className="flex justify-end">
-              <Button
-                type="submit"
-                disabled={isRunning || !ticker.trim() || !query.trim()}
-              >
-                {isRunning ? (
-                  <>
-                    <Loader2 size={15} className="animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Search size={15} />
-                    Analyze
-                  </>
-                )}
-              </Button>
-            </div>
+            {/* Row 3: Full-width Analyze button */}
+            <Button
+              type="submit"
+              disabled={isRunning || !ticker.trim() || (isOther && !customInstructions.trim())}
+              className="w-full"
+              size="lg"
+            >
+              {isRunning ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Search size={16} />
+                  Analyze
+                </>
+              )}
+            </Button>
           </form>
         </CardContent>
       </Card>
@@ -167,8 +248,8 @@ export default function AnalyzePage() {
         </div>
       )}
 
-      {/* Disclaimer */}
-      <DisclaimerBanner />
+      {/* Disclaimer — only on first visit */}
+      {showDisclaimer && <DisclaimerBanner onDismiss={dismissDisclaimer} />}
     </div>
   )
 }

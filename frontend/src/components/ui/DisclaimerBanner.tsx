@@ -1,13 +1,12 @@
-import { useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
-export default function DisclaimerBanner() {
-  const [dismissed, setDismissed] = useState(false)
+interface DisclaimerBannerProps {
+  onDismiss?: () => void
+}
 
-  if (dismissed) return null
-
+export default function DisclaimerBanner({ onDismiss }: DisclaimerBannerProps) {
   return (
     <Alert className="border-yellow-500/40 bg-yellow-500/10 [&>svg]:text-yellow-400">
       <AlertTriangle size={16} />
@@ -17,15 +16,17 @@ export default function DisclaimerBanner() {
           This analysis is for informational purposes only and does not constitute financial advice.
           Always do your own research and consult a qualified financial advisor before making investment decisions.
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setDismissed(true)}
-          className="shrink-0 h-6 w-6 text-yellow-400 hover:text-yellow-200 hover:bg-yellow-500/20"
-          aria-label="Dismiss disclaimer"
-        >
-          <X size={16} />
-        </Button>
+        {onDismiss && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDismiss}
+            className="shrink-0 h-6 w-6 text-yellow-400 hover:text-yellow-200 hover:bg-yellow-500/20"
+            aria-label="Dismiss disclaimer"
+          >
+            <X size={16} />
+          </Button>
+        )}
       </AlertDescription>
     </Alert>
   )
