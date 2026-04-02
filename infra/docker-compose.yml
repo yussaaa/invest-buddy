@@ -101,11 +101,13 @@ services:
 
   # ── MLflow tracking server ───────────────────────────────────────────────────
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.16.2
+    image: ghcr.io/mlflow/mlflow:v3.1.0
     ports:
       - "5050:5050"
     volumes:
       - mlflow_data:/mlflow
+    environment:
+      MLFLOW_AUTH_CONFIG_PATH: /dev/null   # Disable auth for local dev
     command:
       - mlflow
       - server
