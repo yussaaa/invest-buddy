@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: agent-invest
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  MODEL_PROVIDER: "openai"
+  OPENAI_FAST_MODEL: "gpt-4o-mini"
+  OPENAI_SMART_MODEL: "gpt-4o"
+  DATABASE_URL: "postgresql+asyncpg://agent_invest:password@postgres:5432/agent_invest"
+  REDIS_URL: "redis://redis:6379/0"
+  QDRANT_URL: "http://qdrant:6333"
+  MONITORING_BACKEND: "mlflow"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+  CORS_ORIGINS: "http://frontend:5173"
