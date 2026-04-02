@@ -1,9 +1,9 @@
 """Analysis API endpoints.
 
-POST /analysis          — trigger a new multi-agent analysis run
-GET  /analysis/{run_id} — get the completed result
-GET  /analysis/{run_id}/stream — SSE stream of live agent progress events
-GET  /analysis/history  — paginated user analysis history
+POST /analysis          -- trigger a new multi-agent analysis run
+GET  /analysis/{run_id} -- get the completed result
+GET  /analysis/{run_id}/stream -- SSE stream of live agent progress events
+GET  /analysis/history  -- paginated user analysis history
 """
 
 from __future__ import annotations
@@ -11,26 +11,33 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import datetime
 from typing import AsyncIterator, Optional
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.agents.base.schemas import UserPreferences
 from app.agents.orchestrator.graph import run_analysis
 from app.config import get_settings
+from app.db.repositories import (
+    create_run,
+    ensure_user,
+    get_run,
+    list_runs,
+    update_run_error,
+    update_run_result,
+)
+from app.db.session import AsyncSessionLocal, get_db
+from app.memory.session import add_recent_ticker
 
 log = structlog.get_logger(__name__)
 router = APIRouter()
 
-# In-memory run store (Phase 1 — replaced by Postgres in Phase 2)
-_run_store: dict[str, dict] = {}
 
-
-# ── Request / Response models ─────────────────────────────────────────────────
+# -- Request / Response models ------------------------------------------------
 
 
 class AnalysisRequest(BaseModel):
@@ -38,7 +45,7 @@ class AnalysisRequest(BaseModel):
     query: str = "Provide a comprehensive analysis"
     user_id: str = "anonymous"
     session_id: Optional[str] = None
-    depth: Optional[str] = None   # override analysis_depth
+    depth: Optional[str] = None  # override analysis_depth
     risk_tolerance: Optional[str] = None
 
 
@@ -49,26 +56,23 @@ class AnalysisResponse(BaseModel):
     created_at: str
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# -- Endpoints ----------------------------------------------------------------
 
 
 @router.post("", response_model=AnalysisResponse)
 async def trigger_analysis(
     req: AnalysisRequest,
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a new multi-agent analysis. Returns run_id immediately."""
+    """Trigger a new multi-agent analysis.  Returns run_id immediately."""
     run_id = str(uuid.uuid4())
-    _run_store[run_id] = {
-        "run_id": run_id,
-        "status": "running",
-        "ticker": req.ticker.upper(),
-        "query": req.query,
-        "user_id": req.user_id,
-        "created_at": datetime.now().isoformat(),
-        "result": None,
-        "error": None,
-    }
+
+    await ensure_user(db, req.user_id)
+    run = await create_run(db, run_id, req.user_id, req.ticker, req.query)
+
+    # Track recently analysed tickers (fire-and-forget, non-blocking)
+    asyncio.create_task(add_recent_ticker(req.user_id, req.ticker))
 
     prefs = UserPreferences(
         user_id=req.user_id,
@@ -77,36 +81,44 @@ async def trigger_analysis(
     )
 
     async def _run():
-        try:
-            state = await run_analysis(
-                query=req.query,
-                ticker=req.ticker,
-                user_id=req.user_id,
-                session_id=req.session_id,
-                user_preferences=prefs,
-            )
-            # Serialise final_report for storage
-            report = state.get("final_report")
-            _run_store[run_id]["status"] = "completed"
-            _run_store[run_id]["result"] = {
-                "final_report": report.model_dump() if report else None,
-                "agent_results": {
-                    k: state[k].model_dump() if state.get(k) else None
-                    for k in ["market_research_result", "sentiment_result",
-                               "fundamental_result", "technical_result", "risk_result"]
-                },
-                "guardrail_flags": [
-                    f.model_dump() if hasattr(f, "model_dump") else f
-                    for f in state.get("guardrail_flags", [])
-                ],
-                "hallucination_score": state.get("hallucination_score", 0.0),
-                "latency_breakdown": state.get("latency_breakdown", {}),
-                "required_agents": state.get("required_agents", []),
-            }
-        except Exception as e:
-            log.error("analysis_background_error", run_id=run_id, error=str(e))
-            _run_store[run_id]["status"] = "error"
-            _run_store[run_id]["error"] = str(e)
+        """Background task -- uses its own DB session (request scope is gone)."""
+        async with AsyncSessionLocal() as session:
+            try:
+                state = await run_analysis(
+                    query=req.query,
+                    ticker=req.ticker,
+                    user_id=req.user_id,
+                    session_id=req.session_id,
+                    user_preferences=prefs,
+                )
+                # Serialise final_report for storage
+                report = state.get("final_report")
+                result = {
+                    "final_report": report.model_dump() if report else None,
+                    "agent_results": {
+                        k: state[k].model_dump() if state.get(k) else None
+                        for k in [
+                            "market_research_result",
+                            "sentiment_result",
+                            "fundamental_result",
+                            "technical_result",
+                            "risk_result",
+                        ]
+                    },
+                    "guardrail_flags": [
+                        f.model_dump() if hasattr(f, "model_dump") else f
+                        for f in state.get("guardrail_flags", [])
+                    ],
+                    "hallucination_score": state.get("hallucination_score", 0.0),
+                    "latency_breakdown": state.get("latency_breakdown", {}),
+                    "required_agents": state.get("required_agents", []),
+                }
+                await update_run_result(session, run_id, result)
+                await session.commit()
+            except Exception as e:
+                log.error("analysis_background_error", run_id=run_id, error=str(e))
+                await update_run_error(session, run_id, str(e))
+                await session.commit()
 
     background_tasks.add_task(_run)
 
@@ -114,7 +126,7 @@ async def trigger_analysis(
         run_id=run_id,
         status="running",
         ticker=req.ticker.upper(),
-        created_at=_run_store[run_id]["created_at"],
+        created_at=run.created_at.isoformat() if run.created_at else "",
     )
 
 
@@ -123,27 +135,25 @@ async def get_history(
     user_id: str = Query("anonymous"),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
+    db: AsyncSession = Depends(get_db),
 ):
     """Return paginated analysis history for a user."""
-    user_runs = [
-        {k: v for k, v in run.items() if k != "result"}
-        for run in _run_store.values()
-        if run.get("user_id") == user_id
-    ]
-    user_runs.sort(key=lambda r: r["created_at"], reverse=True)
+    runs, total = await list_runs(db, user_id, limit=limit, offset=offset)
     return {
-        "total": len(user_runs),
-        "items": user_runs[offset : offset + limit],
+        "total": total,
+        "items": [
+            {k: v for k, v in r.to_dict().items() if k != "result"} for r in runs
+        ],
     }
 
 
 @router.get("/{run_id}")
-async def get_analysis_result(run_id: str):
+async def get_analysis_result(run_id: str, db: AsyncSession = Depends(get_db)):
     """Get the completed analysis result by run_id."""
-    run = _run_store.get(run_id)
+    run = await get_run(db, run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    return run
+    return run.to_dict()
 
 
 @router.get("/{run_id}/stream")
@@ -151,35 +161,47 @@ async def stream_analysis(run_id: str):
     """SSE stream that emits agent progress events and the final result.
 
     Events:
-      agent_started    → an agent began running
-      agent_completed  → an agent finished
-      guardrails_passed → guardrails check done
-      synthesis_started → synthesiser running
-      complete         → full result ready (includes final_report JSON)
-      error            → something went wrong
+      agent_started    -- an agent began running
+      agent_completed  -- an agent finished
+      guardrails_passed -- guardrails check done
+      synthesis_started -- synthesiser running
+      complete         -- full result ready (includes final_report JSON)
+      error            -- something went wrong
     """
+
     async def _event_generator() -> AsyncIterator[dict]:
-        # Wait for the run to exist
+        # Wait briefly for the run to appear in the DB
+        run = None
         for _ in range(50):
-            if run_id in _run_store:
+            async with AsyncSessionLocal() as session:
+                run = await get_run(session, run_id)
+            if run is not None:
                 break
             await asyncio.sleep(0.1)
 
-        run = _run_store.get(run_id)
-        if not run:
-            yield {"event": "error", "data": json.dumps({"message": f"Run {run_id} not found"})}
+        if run is None:
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": f"Run {run_id} not found"}),
+            }
             return
 
-        yield {"event": "run_started", "data": json.dumps({"run_id": run_id, "ticker": run["ticker"]})}
+        yield {
+            "event": "run_started",
+            "data": json.dumps({"run_id": run_id, "ticker": run.ticker}),
+        }
 
-        # Poll until the run completes (max 120s)
-        for _ in range(1200):
-            await asyncio.sleep(0.1)
-            current = _run_store.get(run_id, {})
-            status = current.get("status")
+        # Poll DB until the run completes (max ~120s at 0.5s intervals)
+        for _ in range(240):
+            await asyncio.sleep(0.5)
+            async with AsyncSessionLocal() as session:
+                current = await get_run(session, run_id)
 
-            if status == "completed":
-                result = current.get("result", {})
+            if current is None:
+                continue
+
+            if current.status == "completed":
+                result = current.to_dict().get("result") or {}
 
                 # Emit per-agent completion events
                 agent_results = result.get("agent_results", {})
@@ -187,35 +209,51 @@ async def stream_analysis(run_id: str):
                     if agent_result:
                         yield {
                             "event": "agent_completed",
-                            "data": json.dumps({
-                                "agent": agent_key.replace("_result", ""),
-                                "confidence": agent_result.get("confidence", 0),
-                            }),
+                            "data": json.dumps(
+                                {
+                                    "agent": agent_key.replace("_result", ""),
+                                    "confidence": agent_result.get("confidence", 0),
+                                }
+                            ),
                         }
 
-                yield {"event": "guardrails_passed", "data": json.dumps({
-                    "hallucination_score": result.get("hallucination_score", 0),
-                    "flags": len(result.get("guardrail_flags", [])),
-                })}
+                yield {
+                    "event": "guardrails_passed",
+                    "data": json.dumps(
+                        {
+                            "hallucination_score": result.get(
+                                "hallucination_score", 0
+                            ),
+                            "flags": len(result.get("guardrail_flags", [])),
+                        }
+                    ),
+                }
                 yield {"event": "synthesis_started", "data": "{}"}
 
                 yield {
                     "event": "complete",
-                    "data": json.dumps({
-                        "run_id": run_id,
-                        "status": "completed",
-                        "result": result,
-                    }),
+                    "data": json.dumps(
+                        {
+                            "run_id": run_id,
+                            "status": "completed",
+                            "result": result,
+                        }
+                    ),
                 }
                 return
 
-            elif status == "error":
+            elif current.status == "error":
                 yield {
                     "event": "error",
-                    "data": json.dumps({"message": current.get("error", "Unknown error")}),
+                    "data": json.dumps(
+                        {"message": current.error or "Unknown error"}
+                    ),
                 }
                 return
 
-        yield {"event": "error", "data": json.dumps({"message": "Timeout waiting for analysis"})}
+        yield {
+            "event": "error",
+            "data": json.dumps({"message": "Timeout waiting for analysis"}),
+        }
 
     return EventSourceResponse(_event_generator())

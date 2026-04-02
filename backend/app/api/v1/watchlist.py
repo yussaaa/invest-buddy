@@ -1,18 +1,23 @@
-"""Watchlist CRUD endpoints (in-memory store for Phase 1)."""
+"""Watchlist CRUD endpoints (DB-backed, Phase 2)."""
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.repositories import (
+    create_watchlist,
+    delete_watchlist,
+    ensure_user,
+    get_watchlists,
+    update_watchlist,
+)
+from app.db.session import get_db
 
 router = APIRouter()
-
-# In-memory store (Phase 1)
-_watchlists: dict[str, dict] = {}
 
 
 class WatchlistCreate(BaseModel):
@@ -29,42 +34,33 @@ class WatchlistUpdate(BaseModel):
 
 
 @router.get("")
-async def get_watchlists(user_id: str):
-    return [w for w in _watchlists.values() if w["user_id"] == user_id]
+async def list_watchlists(user_id: str, db: AsyncSession = Depends(get_db)):
+    wls = await get_watchlists(db, user_id)
+    return [w.to_dict() for w in wls]
 
 
 @router.post("")
-async def create_watchlist(req: WatchlistCreate):
-    wl_id = str(uuid.uuid4())
-    wl = {
-        "id": wl_id,
-        "user_id": req.user_id,
-        "name": req.name,
-        "tickers": [t.upper() for t in req.tickers],
-        "notes": req.notes,
-        "created_at": datetime.now().isoformat(),
-    }
-    _watchlists[wl_id] = wl
-    return wl
+async def create_watchlist_endpoint(
+    req: WatchlistCreate, db: AsyncSession = Depends(get_db)
+):
+    await ensure_user(db, req.user_id)
+    wl = await create_watchlist(db, req.user_id, req.name, req.tickers, req.notes)
+    return wl.to_dict()
 
 
 @router.put("/{wl_id}")
-async def update_watchlist(wl_id: str, req: WatchlistUpdate):
-    wl = _watchlists.get(wl_id)
+async def update_watchlist_endpoint(
+    wl_id: str, req: WatchlistUpdate, db: AsyncSession = Depends(get_db)
+):
+    wl = await update_watchlist(db, wl_id, req.name, req.tickers, req.notes)
     if not wl:
         raise HTTPException(status_code=404, detail="Watchlist not found")
-    if req.name is not None:
-        wl["name"] = req.name
-    if req.tickers is not None:
-        wl["tickers"] = [t.upper() for t in req.tickers]
-    if req.notes is not None:
-        wl["notes"] = req.notes
-    return wl
+    return wl.to_dict()
 
 
 @router.delete("/{wl_id}")
-async def delete_watchlist(wl_id: str):
-    if wl_id not in _watchlists:
+async def delete_watchlist_endpoint(wl_id: str, db: AsyncSession = Depends(get_db)):
+    deleted = await delete_watchlist(db, wl_id)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Watchlist not found")
-    del _watchlists[wl_id]
     return {"deleted": wl_id}

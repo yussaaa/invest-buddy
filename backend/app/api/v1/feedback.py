@@ -1,50 +1,36 @@
-"""User feedback (thumbs up/down) endpoint — feeds the evaluation loop."""
+"""User feedback (thumbs up/down) endpoint -- feeds the evaluation loop (DB-backed, Phase 2)."""
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.repositories import create_feedback, ensure_user, get_feedback_summary
+from app.db.session import get_db
 
 router = APIRouter()
-
-_feedback_store: list[dict] = []
 
 
 class FeedbackRequest(BaseModel):
     run_id: str
     user_id: str
-    score: int                   # -1 (thumbs down) or 1 (thumbs up)
+    score: int  # -1 (thumbs down) or 1 (thumbs up)
     comment: Optional[str] = None
 
 
 @router.post("")
-async def submit_feedback(req: FeedbackRequest):
+async def submit_feedback(req: FeedbackRequest, db: AsyncSession = Depends(get_db)):
     if req.score not in (-1, 1):
         raise HTTPException(status_code=400, detail="score must be -1 or 1")
-    entry = {
-        "run_id": req.run_id,
-        "user_id": req.user_id,
-        "score": req.score,
-        "comment": req.comment,
-        "created_at": datetime.now().isoformat(),
-    }
-    _feedback_store.append(entry)
+    await ensure_user(db, req.user_id)
+    await create_feedback(db, req.run_id, req.user_id, req.score, req.comment)
     return {"status": "recorded", "run_id": req.run_id}
 
 
 @router.get("/summary")
-async def feedback_summary():
-    """Aggregate feedback scores — used by the evaluation dashboard."""
-    if not _feedback_store:
-        return {"total": 0, "positive": 0, "negative": 0, "score": None}
-    pos = sum(1 for f in _feedback_store if f["score"] == 1)
-    neg = sum(1 for f in _feedback_store if f["score"] == -1)
-    return {
-        "total": len(_feedback_store),
-        "positive": pos,
-        "negative": neg,
-        "score": round(pos / len(_feedback_store), 2),
-    }
+async def feedback_summary(db: AsyncSession = Depends(get_db)):
+    """Aggregate feedback scores -- used by the evaluation dashboard."""
+    return await get_feedback_summary(db)
