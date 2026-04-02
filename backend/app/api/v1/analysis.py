@@ -47,6 +47,8 @@ class AnalysisRequest(BaseModel):
     session_id: Optional[str] = None
     depth: Optional[str] = None  # override analysis_depth
     risk_tolerance: Optional[str] = None
+    use_rag: bool = False            # Toggle: include document research (SEC filings, news, uploads)
+    file_ids: list[str] = []         # IDs of user-uploaded files for RAG ingestion
 
 
 class AnalysisResponse(BaseModel):
@@ -89,6 +91,8 @@ async def trigger_analysis(
                 user_id=req.user_id,
                 session_id=req.session_id,
                 user_preferences=prefs,
+                use_rag=req.use_rag,
+                file_ids=req.file_ids,
             )
             # Serialise final_report for storage (mode="json" converts datetimes to strings)
             report = state.get("final_report")

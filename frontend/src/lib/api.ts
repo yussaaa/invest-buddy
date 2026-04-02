@@ -23,12 +23,26 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   analysis: {
-    trigger: (ticker: string, query: string, userId = 'anonymous', depth?: string) =>
+    trigger: (
+      ticker: string,
+      query: string,
+      userId = 'anonymous',
+      depth?: string,
+      useRag = false,
+      fileIds: string[] = [],
+    ) =>
       request<{ run_id: string; status: string; ticker: string; created_at: string }>(
         '/analysis',
         {
           method: 'POST',
-          body: JSON.stringify({ ticker, query, user_id: userId, depth }),
+          body: JSON.stringify({
+            ticker,
+            query,
+            user_id: userId,
+            depth,
+            use_rag: useRag,
+            file_ids: fileIds,
+          }),
         }
       ),
 
@@ -38,6 +52,16 @@ export const api = {
       request<{ total: number; items: AnalysisResult[] }>(
         `/analysis/history?user_id=${userId}&limit=${limit}`
       ),
+  },
+
+  upload: {
+    file: async (file: File): Promise<{ file_id: string; filename: string; size_bytes: number }> => {
+      const formData = new FormData()
+      formData.append('file', file)
+      const resp = await fetch(`${BASE_URL}/upload`, { method: 'POST', body: formData })
+      if (!resp.ok) throw new Error(`Upload failed: ${resp.status}`)
+      return resp.json()
+    },
   },
 
   feedback: {

@@ -76,9 +76,13 @@ class Settings(BaseSettings):
     # ── Redis ───────────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"
 
-    # ── Qdrant ──────────────────────────────────────────────────────────────
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_collection: str = "financial_documents"
+    # ── RAG / Embeddings ─────────────────────────────────────────────────────
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_provider: Literal["local", "openai"] = "local"
+    reranker_model: str = "BAAI/bge-reranker-base"
+    rag_chunk_size: int = 512        # tokens per chunk
+    rag_chunk_overlap: int = 50      # token overlap between chunks
+    rag_top_k: int = 8               # final retrieved chunks
 
     # ── External APIs ───────────────────────────────────────────────────────
     newsapi_key: str = ""

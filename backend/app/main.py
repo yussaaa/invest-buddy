@@ -36,6 +36,11 @@ async def lifespan(app: FastAPI):
             await conn.run_sync(Base.metadata.create_all)
         log.info("dev_tables_created")
 
+        # Enable pgvector extension + create embedding column + HNSW index
+        from app.rag.pgvector_setup import setup_pgvector
+        await setup_pgvector(engine)
+        log.info("pgvector_setup_complete")
+
     log.info("startup_complete")
     yield
     log.info("shutdown")

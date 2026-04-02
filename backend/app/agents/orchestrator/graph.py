@@ -78,13 +78,70 @@ async def classifier_node(state: AgentState) -> dict:
 async def rag_prefetch_node(state: AgentState) -> dict:
     """Pre-fetch RAG context before parallel agent execution.
 
-    Phase 1 stub — returns empty context. Full RAG pipeline added in Phase 3.
-    The stub allows the rest of the graph to work while RAG is built.
+    Behavior depends on state["use_rag"]:
+      - False: skip entirely, return empty context (fast path)
+      - True: run inline ingestion if needed, then 3-stage retrieval
+
+    Inline ingestion:
+      1. Check if ticker is already indexed in pgvector
+      2. If not → run ingest_ticker() to download SEC filings + news → chunk → embed → upsert
+      3. If user uploaded files → ingest those too
+      4. Then run the normal 3-stage retrieval pipeline
     """
-    return {
-        "retrieved_documents": [],
-        "entity_graph": {},
-    }
+    use_rag = state.get("use_rag", False)
+    if not use_rag:
+        log.info("rag_skipped", ticker=state.get("ticker"))
+        return {
+            "retrieved_documents": [],
+            "entity_graph": {},
+        }
+
+    from app.rag.retrieval.pipeline import get_rag_pipeline
+    from app.rag.context.builder import build_context
+    from app.rag.ingestion.ingest import check_ticker_indexed, ingest_ticker, ingest_custom_files
+
+    t0 = time.monotonic()
+    ticker = state.get("ticker", "")
+
+    try:
+        # Step 1: Inline ingestion if ticker not yet indexed
+        if not await check_ticker_indexed(ticker):
+            log.info("rag_inline_ingestion_start", ticker=ticker)
+            result = await ingest_ticker(ticker)
+            log.info("rag_inline_ingestion_done", ticker=ticker, **result)
+
+        # Step 2: Ingest user-uploaded files if any
+        file_ids = state.get("file_ids", [])
+        if file_ids:
+            from app.api.v1.upload import get_upload_path
+            file_paths = [get_upload_path(fid) for fid in file_ids]
+            file_paths = [p for p in file_paths if p]  # filter None
+            if file_paths:
+                log.info("rag_custom_ingestion_start", ticker=ticker, files=len(file_paths))
+                await ingest_custom_files(ticker, file_paths, user_id=state.get("user_id", "anonymous"))
+
+        # Step 3: 3-stage retrieval
+        pipeline = get_rag_pipeline()
+        docs = await pipeline.retrieve(query=state.get("query", ""), ticker=ticker)
+        build_context(docs)  # validate context builds
+
+        log.info(
+            "rag_prefetch_complete",
+            ticker=ticker,
+            docs_retrieved=len(docs),
+            latency_s=round(time.monotonic() - t0, 3),
+        )
+        return {
+            "retrieved_documents": docs,
+            "entity_graph": {},
+            "latency_breakdown": {"rag_prefetch": round(time.monotonic() - t0, 3)},
+        }
+    except Exception as e:
+        log.warning("rag_prefetch_fallback", error=str(e))
+        return {
+            "retrieved_documents": [],
+            "entity_graph": {},
+        }
 
 
 async def market_research_node(state: AgentState) -> dict:
@@ -293,8 +350,14 @@ async def run_analysis(
     user_id: str = "anonymous",
     session_id: str | None = None,
     user_preferences: UserPreferences | None = None,
+    use_rag: bool = False,
+    file_ids: list[str] | None = None,
 ) -> AgentState:
     """Run the full multi-agent analysis pipeline.
+
+    Args:
+        use_rag: If True, runs inline ingestion (if needed) + 3-stage retrieval
+        file_ids: User-uploaded file IDs to include in RAG context
 
     Returns the final AgentState containing the FinalReport and all intermediate
     agent results. Callers can stream this or return it as JSON.
@@ -312,6 +375,8 @@ async def run_analysis(
         "classification": None,
         "required_agents": [],
         "analysis_depth": "standard",
+        "use_rag": use_rag,
+        "file_ids": file_ids or [],
         "retrieved_documents": [],
         "entity_graph": {},
         "market_research_result": None,

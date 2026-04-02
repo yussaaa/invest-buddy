@@ -22,6 +22,8 @@ export function useAnalysis() {
     query: string,
     userId = 'anonymous',
     depth?: string,
+    useRag = false,
+    fileIds: string[] = [],
   ) => {
     setIsRunning(true)
     setError(null)
@@ -29,7 +31,7 @@ export function useAnalysis() {
     setAgentProgress(AGENT_NAMES.map(name => ({ name, status: 'pending' })))
 
     try {
-      const { run_id } = await api.analysis.trigger(ticker, query, userId, depth)
+      const { run_id } = await api.analysis.trigger(ticker, query, userId, depth, useRag, fileIds)
       setRunId(run_id)
       setStreamUrl(`/api/v1/analysis/${run_id}/stream`)
     } catch (e) {

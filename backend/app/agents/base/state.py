@@ -49,8 +49,12 @@ class AgentState(TypedDict):
     required_agents: list[str]
     analysis_depth: str                     # "quick" | "standard" | "deep"
 
+    # ── RAG control ──────────────────────────────────────────────────────
+    use_rag: bool                           # Whether to run RAG ingestion + retrieval
+    file_ids: list[str]                     # User-uploaded file IDs for custom ingestion
+
     # ── RAG context (set by prefetch node) ───────────────────────────────
-    retrieved_documents: list[dict]         # Qdrant payloads + relevance scores
+    retrieved_documents: list[dict]         # pgvector payloads + relevance scores
     entity_graph: dict[str, Any]            # Extracted entity relationships
 
     # ── Per-agent results (populated in parallel) ─────────────────────────
