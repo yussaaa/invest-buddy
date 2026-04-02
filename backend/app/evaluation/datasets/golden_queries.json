@@ -1,0 +1,72 @@
+[
+  {
+    "question": "What is Apple's current P/E ratio and how does it compare to the technology sector average?",
+    "ticker": "AAPL",
+    "required_agents": ["fundamental"],
+    "ground_truth": "Apple's P/E ratio can be found in its financial data. A typical tech sector P/E is around 25-35x.",
+    "contexts": []
+  },
+  {
+    "question": "Is Apple technically overbought or oversold based on RSI?",
+    "ticker": "AAPL",
+    "required_agents": ["technical"],
+    "ground_truth": "RSI above 70 is considered overbought, below 30 is oversold. RSI between 30-70 is neutral.",
+    "contexts": []
+  },
+  {
+    "question": "What is Microsoft's revenue growth trend over the past 4 quarters?",
+    "ticker": "MSFT",
+    "required_agents": ["fundamental"],
+    "ground_truth": "Microsoft has shown consistent revenue growth driven by Azure cloud services and Office 365.",
+    "contexts": []
+  },
+  {
+    "question": "What is the analyst consensus rating for Tesla?",
+    "ticker": "TSLA",
+    "required_agents": ["sentiment"],
+    "ground_truth": "Analyst ratings range from strong buy to sell. The consensus can be found via aggregated analyst recommendations.",
+    "contexts": []
+  },
+  {
+    "question": "What is NVDA's beta and how volatile is it compared to the S&P 500?",
+    "ticker": "NVDA",
+    "required_agents": ["risk"],
+    "ground_truth": "NVIDIA has historically high beta (>1.5), indicating it is more volatile than the broader market.",
+    "contexts": []
+  },
+  {
+    "question": "What are Amazon's key revenue segments and which is growing fastest?",
+    "ticker": "AMZN",
+    "required_agents": ["fundamental", "market_research"],
+    "ground_truth": "Amazon's main segments are AWS (cloud), North America retail, and International. AWS is the highest margin segment.",
+    "contexts": []
+  },
+  {
+    "question": "Has Google recently had any significant news events that could affect its stock?",
+    "ticker": "GOOGL",
+    "required_agents": ["market_research", "sentiment"],
+    "ground_truth": "Recent developments for Alphabet/Google include AI product launches, regulatory actions, and earnings results.",
+    "contexts": []
+  },
+  {
+    "question": "What is the maximum drawdown for Meta over the past 5 years?",
+    "ticker": "META",
+    "required_agents": ["risk"],
+    "ground_truth": "Meta experienced a significant drawdown in 2022 (approximately -75% from peak) due to declining ad revenue and metaverse investments.",
+    "contexts": []
+  },
+  {
+    "question": "Is AMD trading above or below its 200-day moving average?",
+    "ticker": "AMD",
+    "required_agents": ["technical"],
+    "ground_truth": "A price above the 200-day SMA is generally considered bullish (long-term uptrend); below is bearish.",
+    "contexts": []
+  },
+  {
+    "question": "What is Berkshire Hathaway's debt-to-equity ratio?",
+    "ticker": "BRK-B",
+    "required_agents": ["fundamental"],
+    "ground_truth": "Berkshire Hathaway maintains a conservative balance sheet with relatively low debt-to-equity compared to financial sector peers.",
+    "contexts": []
+  }
+]
