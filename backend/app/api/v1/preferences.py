@@ -1,51 +1,50 @@
-"""User preferences (memory) endpoints."""
+"""User preferences (memory) endpoints (DB-backed, Phase 2)."""
 
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.repositories import (
+    ensure_user,
+    get_or_create_preferences,
+    update_preferences,
+)
+from app.db.session import get_db
 
 router = APIRouter()
 
-# In-memory store for Phase 1 — backed by Postgres in Phase 2
-_preferences: dict[str, dict] = {}
-
 
 class PreferencesUpdate(BaseModel):
-    risk_tolerance: Optional[str] = None         # conservative | moderate | aggressive
-    investment_horizon: Optional[str] = None     # short | medium | long
+    risk_tolerance: Optional[str] = None  # conservative | moderate | aggressive
+    investment_horizon: Optional[str] = None  # short | medium | long
     preferred_sectors: Optional[list[str]] = None
-    analysis_depth: Optional[str] = None         # quick | standard | deep
+    analysis_depth: Optional[str] = None  # quick | standard | deep
     preferred_metrics: Optional[list[str]] = None
 
 
 @router.get("")
-async def get_preferences(user_id: str):
-    return _preferences.get(user_id, {
-        "user_id": user_id,
-        "risk_tolerance": "moderate",
-        "investment_horizon": "medium",
-        "preferred_sectors": [],
-        "analysis_depth": "standard",
-        "preferred_metrics": [],
-        "recent_tickers": [],
-    })
+async def get_preferences(user_id: str, db: AsyncSession = Depends(get_db)):
+    await ensure_user(db, user_id)
+    prefs = await get_or_create_preferences(db, user_id)
+    return prefs.to_dict()
 
 
 @router.put("")
-async def update_preferences(user_id: str, req: PreferencesUpdate):
-    prefs = _preferences.get(user_id, {"user_id": user_id})
-    if req.risk_tolerance is not None:
-        prefs["risk_tolerance"] = req.risk_tolerance
-    if req.investment_horizon is not None:
-        prefs["investment_horizon"] = req.investment_horizon
-    if req.preferred_sectors is not None:
-        prefs["preferred_sectors"] = req.preferred_sectors
-    if req.analysis_depth is not None:
-        prefs["analysis_depth"] = req.analysis_depth
-    if req.preferred_metrics is not None:
-        prefs["preferred_metrics"] = req.preferred_metrics
-    _preferences[user_id] = prefs
-    return prefs
+async def update_preferences_endpoint(
+    user_id: str, req: PreferencesUpdate, db: AsyncSession = Depends(get_db)
+):
+    await ensure_user(db, user_id)
+    prefs = await update_preferences(
+        db,
+        user_id,
+        risk_tolerance=req.risk_tolerance,
+        investment_horizon=req.investment_horizon,
+        preferred_sectors=req.preferred_sectors,
+        analysis_depth=req.analysis_depth,
+        preferred_metrics=req.preferred_metrics,
+    )
+    return prefs.to_dict()

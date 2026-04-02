@@ -27,6 +27,15 @@ async def lifespan(app: FastAPI):
     from app.agents.orchestrator.graph import get_graph
     get_graph()
 
+    # In dev mode, auto-create tables (production should use alembic)
+    if settings.app_env == "development":
+        from app.db.session import Base, engine
+        from app.db import models  # noqa: F401 — register ORM models with Base
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        log.info("dev_tables_created")
+
     log.info("startup_complete")
     yield
     log.info("shutdown")
