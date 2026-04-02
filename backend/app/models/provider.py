@@ -43,6 +43,17 @@ class LLMResponse:
         self.total_tokens = prompt_tokens + completion_tokens
         self.latency_ms = latency_ms
 
+        # Emit Prometheus token + cost metrics (fire-and-forget)
+        try:
+            from app.observability.metrics import TOKEN_USAGE_TOTAL, record_token_cost
+            if prompt_tokens > 0:
+                TOKEN_USAGE_TOTAL.labels(model=model, type="prompt").inc(prompt_tokens)
+            if completion_tokens > 0:
+                TOKEN_USAGE_TOTAL.labels(model=model, type="completion").inc(completion_tokens)
+            record_token_cost(model, prompt_tokens, completion_tokens)
+        except Exception:
+            pass  # Never break LLM calls for metrics
+
 
 class ModelProvider(ABC):
     """Abstract base — every concrete provider implements these two methods."""

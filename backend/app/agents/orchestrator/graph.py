@@ -248,16 +248,87 @@ async def synthesiser_node(state: AgentState) -> dict:
 
 
 async def persistence_node(state: AgentState) -> dict:
-    """Save analysis to DB and emit metrics. Stub — full impl in Phase 2."""
+    """Save analysis to DB, score with RAGAS, log to MLflow, emit Prometheus metrics."""
+    from app.observability.metrics import record_analysis_metrics
+    from app.observability.monitoring_client import get_monitoring_client
+    from app.observability.ragas_evaluator import get_evaluator
+    from app.config import get_settings
+
     report = state.get("final_report")
+    ticker = state.get("ticker", "")
+    run_id = state.get("run_id", "")
+
+    # 1. Online RAGAS scoring (non-blocking — failures don't break the pipeline)
+    eval_scores = {}
+    try:
+        evaluator = get_evaluator()
+        answer = report.detailed_analysis if report else ""
+        contexts = [doc.get("text", "") for doc in state.get("retrieved_documents", [])][:5]
+        if answer and contexts:
+            eval_scores = await evaluator.evaluate_response(
+                question=state.get("query", ""),
+                answer=answer,
+                contexts=contexts if contexts else [answer[:500]],
+            )
+            log.info("ragas_scored", run_id=run_id, scores=eval_scores)
+    except Exception as e:
+        log.warning("ragas_scoring_failed", error=str(e))
+
+    # 2. Log to MLflow (non-blocking)
+    try:
+        settings = get_settings()
+        client = get_monitoring_client()
+
+        # Collect prompt versions
+        from app.agents.fundamental.prompts import PROMPT_VERSION as fund_v
+        from app.agents.sentiment.prompts import PROMPT_VERSION as sent_v
+        from app.agents.technical.prompts import PROMPT_VERSION as tech_v
+        from app.agents.risk.prompts import PROMPT_VERSION as risk_v
+        from app.agents.market_research.prompts import PROMPT_VERSION as mkt_v
+
+        params = {
+            "ticker": ticker,
+            "model_provider": settings.model_provider,
+            "fast_model": settings.fast_model,
+            "smart_model": settings.smart_model,
+            "analysis_depth": state.get("analysis_depth", "standard"),
+            "use_rag": str(state.get("use_rag", False)),
+            "agents": ",".join(state.get("required_agents", [])),
+            "prompt_fundamental": fund_v,
+            "prompt_sentiment": sent_v,
+            "prompt_technical": tech_v,
+            "prompt_risk": risk_v,
+            "prompt_market_research": mkt_v,
+        }
+        metrics = {
+            "overall_confidence": report.overall_confidence if report else 0,
+            "hallucination_score": state.get("hallucination_score", 0),
+            "guardrail_flags_count": len(state.get("guardrail_flags", [])),
+            **{f"latency_{k}": v for k, v in state.get("latency_breakdown", {}).items()},
+            **{f"ragas_{k}": v for k, v in eval_scores.items() if isinstance(v, (int, float)) and v >= 0},
+        }
+        client.log_analysis_run(run_id, ticker, params, metrics)
+        log.info("mlflow_logged", run_id=run_id)
+    except Exception as e:
+        log.warning("mlflow_logging_failed", error=str(e))
+
+    # 3. Emit Prometheus metrics
+    try:
+        state_with_eval = dict(state)
+        state_with_eval["eval_metadata"] = eval_scores
+        record_analysis_metrics(state_with_eval)
+    except Exception as e:
+        log.warning("prometheus_metrics_failed", error=str(e))
+
     log.info(
         "analysis_complete",
-        run_id=state.get("run_id"),
-        ticker=state.get("ticker"),
+        run_id=run_id,
+        ticker=ticker,
         confidence=report.overall_confidence if report else None,
         agents_run=state.get("required_agents"),
+        ragas=eval_scores,
     )
-    return {}
+    return {"eval_metadata": eval_scores}
 
 
 # ── Fan-out router — decides parallel execution ──────────────────────────────

@@ -7,6 +7,8 @@ The agent is prompted to behave as a CFA-level fundamental analyst who:
   - Flags when data is stale, incomplete, or inconsistent
 """
 
+PROMPT_VERSION = "v1"
+
 # ── Tool list ──────────────────────────────────────────────────────────────────
 
 TOOL_LIST: list[str] = [

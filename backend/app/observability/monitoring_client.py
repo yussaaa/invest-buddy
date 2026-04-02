@@ -40,11 +40,18 @@ class MLflowClient(MonitoringClient):
     def __init__(self, tracking_uri: str, experiment_name: str = "agent-invest"):
         import mlflow
         mlflow.set_tracking_uri(tracking_uri)
-        mlflow.set_experiment(experiment_name)
         self._mlflow = mlflow
+        self._experiment_name = experiment_name
+        self._experiment_set = False
+
+    def _ensure_experiment(self):
+        if not self._experiment_set:
+            self._mlflow.set_experiment(self._experiment_name)
+            self._experiment_set = True
 
     def log_analysis_run(self, run_id: str, ticker: str, params: dict, metrics: dict, artifacts: dict = {}) -> None:
         try:
+            self._ensure_experiment()
             with self._mlflow.start_run(run_name=f"{ticker}_{run_id[:8]}"):
                 self._mlflow.log_params({"ticker": ticker, "run_id": run_id, **params})
                 self._mlflow.log_metrics({k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))})

@@ -6,6 +6,8 @@ management quality, and upcoming catalysts — drawing on company filings,
 earnings data, news, and web intelligence.
 """
 
+PROMPT_VERSION = "v1"
+
 # ── Tool list ──────────────────────────────────────────────────────────────────
 
 TOOL_LIST: list[str] = [
