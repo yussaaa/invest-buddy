@@ -142,6 +142,53 @@ infra/
 | GET | `/api/v1/ready` | Kubernetes readiness probe |
 | GET | `/metrics` | Prometheus scrape endpoint |
 
+## Architectural Decisions
+
+### Vector Database: pgvector over Qdrant
+
+We evaluated five vector database options for the RAG pipeline:
+
+| | pgvector | Qdrant | Pinecone | Weaviate | ChromaDB |
+|---|---|---|---|---|---|
+| Deployment | PostgreSQL extension | Self-hosted Docker | Cloud-only | Self-hosted | In-process |
+| Cost | Free (reuses existing Postgres) | Free (self-hosted) | Paid after free tier | Free (self-hosted) | Free |
+| Filtering | SQL WHERE + vector search | Payload filters | Metadata filters | GraphQL filters | Basic |
+| Extra infra | None | +1 container + StatefulSet | None (SaaS) | +1 container | None |
+| Performance | Good for <1M vectors | Excellent (Rust, HNSW) | Excellent (managed) | Good | Poor at scale |
+
+**Decision: pgvector** for three reasons:
+
+1. **Zero additional infrastructure** — we already run PostgreSQL for persistence. Adding `CREATE EXTENSION vector` is one migration. No extra container in Docker Compose, no extra StatefulSet in K8s, no extra health check in the readiness probe.
+
+2. **Natural SQL filtering** — financial RAG requires filtering by `ticker`, `document_type`, and `published_date` *before* vector search. In pgvector this is a standard `WHERE` clause. In Qdrant this requires payload filters with different syntax. SQL is more expressive and familiar.
+
+3. **Right-sized for the workload** — with ~50 tickers and ~500 chunks per ticker, we're at ~25K vectors. pgvector with HNSW indexing handles this in single-digit milliseconds. A dedicated vector DB becomes necessary at 10M+ vectors — the retrieval layer is abstracted behind a `VectorStore` interface so migrating to Qdrant is a config change, not a rewrite.
+
+**When we'd switch to Qdrant**: If the document corpus grew beyond 1M vectors, or if we needed real-time index updates during high-throughput ingestion, or if vector search latency at p99 exceeded 50ms.
+
+### LLM Provider: OpenAI Default, 5 Providers Swappable
+
+All LLM calls go through a `ModelProvider` abstraction. Swapping providers is one env var (`MODEL_PROVIDER=ollama`). See [Model Provider Tiers](#model-provider-tiers) above.
+
+The cost/latency split (fast model for classification + cheap agents, smart model for reasoning + synthesis) is a deliberate design choice — running Sonnet-tier models for every agent call would cost ~5x more with marginal quality improvement on data extraction tasks.
+
+### LangGraph over Plain LangChain
+
+LangGraph gives explicit state management, conditional edges, and streaming checkpoints. This is essential for a multi-agent system where you need to:
+- Inspect partial results mid-pipeline
+- Retry individual agents without rerunning the entire graph
+- Stream per-agent progress events to the frontend via SSE
+
+Plain LangChain `AgentExecutor` is a black box that doesn't support any of these.
+
+### Structured Outputs Everywhere
+
+Every LLM call returns a Pydantic-validated `AgentResult`, not free-form text. This:
+- Prevents prompt injection from propagating through the pipeline
+- Makes evaluation programmatic (compare JSON fields, not prose)
+- Forces the LLM to produce citable, auditable outputs
+- Enables the guardrails node to check specific fields (confidence, citations)
+
 ## License
 
 This project is for educational and portfolio demonstration purposes.
