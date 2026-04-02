@@ -18,16 +18,20 @@ from app.db.models import AnalysisRun, Feedback, User, UserPreferencesRow, Watch
 
 
 async def ensure_user(session: AsyncSession, user_id: str) -> User:
-    """Get or create a user row.  Lightweight — just ensures FK integrity."""
+    """Get or create a user row.  Lightweight — just ensures FK integrity.
+
+    Uses INSERT ... ON CONFLICT DO NOTHING to handle concurrent requests
+    that both try to create the same user simultaneously.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = pg_insert(User).values(id=user_id).on_conflict_do_nothing(index_elements=["id"])
+    await session.execute(stmt)
+    await session.flush()
+
     result = await session.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        user = User(id=user_id)
-        session.add(user)
-        await session.flush()
-    else:
-        # Touch last_active timestamp
-        user.last_active = datetime.now(timezone.utc)
+    user = result.scalar_one()
+    user.last_active = datetime.now(timezone.utc)
     return user
 
 

@@ -14,7 +14,7 @@ import uuid
 from typing import AsyncIterator, Optional
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -62,7 +62,6 @@ class AnalysisResponse(BaseModel):
 @router.post("", response_model=AnalysisResponse)
 async def trigger_analysis(
     req: AnalysisRequest,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger a new multi-agent analysis.  Returns run_id immediately."""
@@ -82,45 +81,52 @@ async def trigger_analysis(
 
     async def _run():
         """Background task -- uses its own DB session (request scope is gone)."""
-        async with AsyncSessionLocal() as session:
-            try:
-                state = await run_analysis(
-                    query=req.query,
-                    ticker=req.ticker,
-                    user_id=req.user_id,
-                    session_id=req.session_id,
-                    user_preferences=prefs,
-                )
-                # Serialise final_report for storage
-                report = state.get("final_report")
-                result = {
-                    "final_report": report.model_dump() if report else None,
-                    "agent_results": {
-                        k: state[k].model_dump() if state.get(k) else None
-                        for k in [
-                            "market_research_result",
-                            "sentiment_result",
-                            "fundamental_result",
-                            "technical_result",
-                            "risk_result",
-                        ]
-                    },
-                    "guardrail_flags": [
-                        f.model_dump() if hasattr(f, "model_dump") else f
-                        for f in state.get("guardrail_flags", [])
-                    ],
-                    "hallucination_score": state.get("hallucination_score", 0.0),
-                    "latency_breakdown": state.get("latency_breakdown", {}),
-                    "required_agents": state.get("required_agents", []),
-                }
+        log.info("analysis_background_start", run_id=run_id, ticker=req.ticker)
+        try:
+            state = await run_analysis(
+                query=req.query,
+                ticker=req.ticker,
+                user_id=req.user_id,
+                session_id=req.session_id,
+                user_preferences=prefs,
+            )
+            # Serialise final_report for storage (mode="json" converts datetimes to strings)
+            report = state.get("final_report")
+            result = {
+                "final_report": report.model_dump(mode="json") if report else None,
+                "agent_results": {
+                    k: state[k].model_dump(mode="json") if state.get(k) else None
+                    for k in [
+                        "market_research_result",
+                        "sentiment_result",
+                        "fundamental_result",
+                        "technical_result",
+                        "risk_result",
+                    ]
+                },
+                "guardrail_flags": [
+                    f.model_dump(mode="json") if hasattr(f, "model_dump") else f
+                    for f in state.get("guardrail_flags", [])
+                ],
+                "hallucination_score": state.get("hallucination_score", 0.0),
+                "latency_breakdown": state.get("latency_breakdown", {}),
+                "required_agents": state.get("required_agents", []),
+            }
+            async with AsyncSessionLocal() as session:
                 await update_run_result(session, run_id, result)
                 await session.commit()
-            except Exception as e:
-                log.error("analysis_background_error", run_id=run_id, error=str(e))
-                await update_run_error(session, run_id, str(e))
-                await session.commit()
+            log.info("analysis_background_saved", run_id=run_id)
+        except Exception as e:
+            log.error("analysis_background_error", run_id=run_id, error=str(e), exc_info=True)
+            try:
+                async with AsyncSessionLocal() as session:
+                    await update_run_error(session, run_id, str(e))
+                    await session.commit()
+            except Exception as db_err:
+                log.error("analysis_background_db_error", run_id=run_id, error=str(db_err))
 
-    background_tasks.add_task(_run)
+    # Use asyncio.create_task for proper async execution (not BackgroundTasks)
+    asyncio.create_task(_run())
 
     return AnalysisResponse(
         run_id=run_id,
