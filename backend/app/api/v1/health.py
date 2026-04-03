@@ -13,19 +13,14 @@ async def liveness():
 
 @router.get("/ready")
 async def readiness():
-    """Readiness probe — checks all backing services."""
+    """Readiness probe — checks all backing services.
+
+    Checks: PostgreSQL (+ pgvector), Redis.
+    Note: Qdrant was removed in Phase 3 — vector store is pgvector inside Postgres.
+    """
     checks = {"api": "ok"}
 
-    # Check Redis
-    try:
-        from app.cache.redis_client import get_redis
-        r = await get_redis()
-        await r.ping()
-        checks["redis"] = "ok"
-    except Exception as e:
-        checks["redis"] = f"error: {str(e)[:50]}"
-
-    # Check Postgres
+    # Check Postgres (includes pgvector)
     try:
         from app.db.session import get_db
         async for db in get_db():
@@ -35,16 +30,14 @@ async def readiness():
     except Exception as e:
         checks["postgres"] = f"error: {str(e)[:50]}"
 
-    # Check Qdrant
+    # Check Redis
     try:
-        from app.config import get_settings
-        import httpx
-        settings = get_settings()
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{settings.qdrant_url}/healthz", timeout=2.0)
-            checks["qdrant"] = "ok" if resp.status_code == 200 else f"http_{resp.status_code}"
+        from app.cache.redis_client import get_redis
+        r = await get_redis()
+        await r.ping()
+        checks["redis"] = "ok"
     except Exception as e:
-        checks["qdrant"] = f"error: {str(e)[:50]}"
+        checks["redis"] = f"error: {str(e)[:50]}"
 
     all_ok = all(v == "ok" for v in checks.values())
     return {"status": "ready" if all_ok else "degraded", "checks": checks}
