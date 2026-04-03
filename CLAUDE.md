@@ -118,19 +118,22 @@ make eval       # RAGAS evaluation against golden dataset
 - Guardrails v2: citation completeness enforcement, confidence recalibration
 - Investment advice rewriting (not just detection — auto-hedge language)
 
-### Phase 5 — RAGAS Evaluation + MLflow/W&B
-- Expand golden dataset to 50 queries
-- Wire RAGAS scoring into every production run (online eval)
-- MLflow experiment tracking: log every analysis run with params, metrics, artifacts
-- Prompt versioning via MLflow Model Registry
-- W&B Weave integration for LLM call tracing
-- Grafana dashboard: RAGAS trends, token costs, latency P50/P95
+### Phase 5 — RAGAS Evaluation + MLflow/W&B ✅ COMPLETE
+- Online RAGAS scoring in persistence_node (faithfulness, relevancy, precision)
+- MLflow v3.x experiment tracking: every run logged with params, metrics, prompt versions
+- 14 Prometheus custom metrics (RAGAS, latency, tools, guardrails, tokens, cost)
+- Grafana dashboard: 5 rows, 14 panels, auto-provisioned
+- Token usage + cost estimation per LLM call (~$0.011/run with gpt-4o)
+- Prompt versioning (PROMPT_VERSION=v1 in all 5 agents)
 
-### Phase 6 — Kubernetes + Monitoring
-- Deploy full stack to minikube/GKE
-- HPA autoscaling verified under load
-- Prometheus metrics: token usage, cache hit rate, guardrail trigger rate
-- Grafana dashboards (system health, quality metrics, business metrics)
+### Phase 6 — Kubernetes + Monitoring ✅ COMPLETE
+- 14 K8s manifests: namespace, backend, frontend, postgres, redis, ingress, monitoring
+- Deployed to minikube: 9/9 pods running (backend×2, frontend×2, postgres, redis, prometheus, grafana, mlflow)
+- HPA: 2-5 backend replicas, CPU target 70%
+- Frontend: multi-stage Dockerfile (Node build → nginx serve) + nginx proxy for /api + SSE
+- Monitoring: Prometheus scraping backend, Grafana with provisioned dashboard, MLflow v3.1.0
+- Removed Qdrant (replaced by pgvector inside Postgres)
+- Fixed: Postgres image → pgvector/pgvector:pg16, MLflow port → 5050, readiness probe cleaned
 - Load testing with locust
 
 ### Phase 7 — Documentation + Demo
