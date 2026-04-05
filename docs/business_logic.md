@@ -31,32 +31,254 @@ Each analysis type maps to a pre-built query that the backend's classifier route
 
 The backend classifier (LLM-powered) can override these defaults — e.g., a "Full Analysis" query might skip the Technical agent if the classifier determines the user's custom instructions focus only on fundamentals.
 
+## Data Sources & External APIs
+
+### Overview
+
+| Source | Library | API Key Required | Data Provided |
+|--------|---------|-----------------|---------------|
+| **Yahoo Finance** | `yfinance` | No | Price history, financial statements, analyst ratings, options chains, company info |
+| **Technical Indicators** | `ta` (TA-Lib) | No | RSI, MACD, Bollinger Bands, moving averages (computed locally from price data) |
+| **Risk Calculations** | `scipy`, `numpy` | No | VaR, beta, Sharpe/Sortino, volatility, drawdown (computed locally from returns) |
+| **SEC EDGAR** | `sec-edgar-downloader` | No | 10-K, 10-Q, 8-K filings (full text, public API) |
+| **News Articles** | `newsapi-python` | Yes (free tier) | Headlines, descriptions, sources, dates (degrades gracefully without key) |
+| **Web Search** | `tavily-python` | Yes (free tier) | Structured web search results + AI-synthesized answer (degrades gracefully) |
+
+### yfinance — Market Data (no API key)
+
+**`get_company_overview(ticker)`** — `yf.Ticker(ticker).info`
+- Returns: name, sector, industry, description (500 chars), market cap, employees, country, website, exchange, currency, 52-week high/low, current price, avg volume
+- Cache: 1 hour
+
+**`get_price_history(ticker, period="1y", interval="1d")`** — `yf.Ticker(ticker).history()`
+- Returns: OHLCV (open, high, low, close, volume) per date
+- Periods: 1mo, 3mo, 1y, 5y | Intervals: 1d, 1wk, 1mo
+- Cache: 5 minutes
+
+**`get_income_statement(ticker, quarterly=False)`** — `yf.Ticker(ticker).financials`
+- Returns: all income statement line items (revenue, COGS, gross profit, operating income, net income, etc.) per period
+- Cache: 24 hours
+
+**`get_balance_sheet(ticker, quarterly=False)`** — `yf.Ticker(ticker).balance_sheet`
+- Returns: all balance sheet items (total assets, liabilities, equity, cash, debt, etc.) per period
+- Cache: 24 hours
+
+**`get_cash_flow(ticker, quarterly=False)`** — `yf.Ticker(ticker).cashflow`
+- Returns: all cash flow items (operating CF, investing CF, financing CF, free cash flow, etc.) per period
+- Cache: 24 hours
+
+**`get_analyst_ratings(ticker)`** — `yf.Ticker(ticker).info` + `.recommendations`
+- Returns: consensus (buy/hold/sell), recommendation mean (1=strong buy, 5=strong sell), price targets (mean/high/low), number of analysts, last 10 upgrades/downgrades with firm name, grade, action
+- Cache: 1 hour
+
+**`get_options_chain(ticker)`** — `yf.Ticker(ticker).option_chain(nearest_expiry)`
+- Returns: put/call ratio (put open interest / call open interest), total OI for calls and puts, average implied volatility for calls and puts, IV skew (put IV - call IV)
+- Interpretation: put/call ratio >1.0 = bearish sentiment
+- Cache: 15 minutes
+
+**`get_earnings_calendar(ticker)`** — `yf.Ticker(ticker).calendar` + `.earnings_history`
+- Returns: next earnings date, last 8 earnings (EPS estimate, EPS actual, surprise %)
+- Cache: 1 hour
+
+### Technical Indicators — `ta` library (computed locally)
+
+All indicators use `yfinance` price data as input and compute values locally using the `ta` Python library. No external API calls.
+
+**`compute_rsi(ticker, period=14)`** — `ta.momentum.RSIIndicator`
+- Formula: RSI = 100 - [100 / (1 + RS)], where RS = average gain / average loss over `period` days
+- Output: current RSI value (0-100), zone classification:
+  - RSI ≥ 70: "overbought" (potential pullback)
+  - RSI ≤ 30: "oversold" (potential bounce)
+  - 30-70: "neutral"
+- Also returns last 20 historical RSI values
+- Cache: 5 minutes
+
+**`compute_macd(ticker)`** — `ta.trend.MACD`
+- Parameters: fast=12, slow=26, signal=9 (standard)
+- Calculation:
+  - MACD line = 12-day EMA - 26-day EMA
+  - Signal line = 9-day EMA of MACD line
+  - Histogram = MACD line - Signal line
+- Crossover detection: compares current vs previous histogram sign
+  - Bullish crossover: histogram switches from negative to positive
+  - Bearish crossover: histogram switches from positive to negative
+- Cache: 5 minutes
+
+**`compute_bollinger_bands(ticker, window=20)`** — `ta.volatility.BollingerBands`
+- Calculation:
+  - Middle band = 20-day SMA
+  - Upper band = SMA + 2 × standard deviation
+  - Lower band = SMA - 2 × standard deviation
+  - %B = (price - lower) / (upper - lower)
+  - Bandwidth = (upper - lower) / middle
+- Zone classification based on %B:
+  - >1.0: above upper band | 0.8-1.0: near upper | 0.2-0.8: middle | 0.0-0.2: near lower | <0.0: below lower
+- Cache: 5 minutes
+
+**`compute_moving_averages(ticker)`** — native pandas (not `ta`)
+- Computes SMA and EMA for three windows: **20-day, 50-day, 200-day**
+- Uses 2 years of price data
+- Signal generation:
+  - "Price above/below X-day SMA" for each window
+  - **Golden cross**: 50-day SMA crosses above 200-day SMA (strong bullish)
+  - **Death cross**: 50-day SMA crosses below 200-day SMA (strong bearish)
+- Cache: 5 minutes
+
+**`compute_support_resistance(ticker)`** — custom algorithm (not `ta`)
+- Algorithm: rolling pivot point method with ±10 bar window
+- Uses 1 year of high/low price data
+- For each bar: if it's the local maximum within ±10 bars → resistance level; if local minimum → support level
+- Returns: 3 nearest resistance levels (above current price), 3 nearest support levels (below)
+- Cache: 1 hour
+
+### Financial Ratios — computed from yfinance data
+
+**`compute_financial_ratios(ticker)`** — `yf.Ticker(ticker).info`
+
+All ratios are read directly from yfinance's pre-computed fields, except FCF Yield which is calculated:
+
+| Category | Ratio | yfinance Field | Interpretation |
+|----------|-------|---------------|----------------|
+| **Valuation** | P/E (TTM) | `trailingPE` | >30 flagged as "high — growth expectations priced in" |
+| | P/E (Forward) | `forwardPE` | |
+| | Price/Book | `priceToBook` | |
+| | Price/Sales | `priceToSalesTrailing12Months` | |
+| | EV/EBITDA | `enterpriseToEbitda` | |
+| | EV/Revenue | `enterpriseToRevenue` | |
+| | PEG Ratio | `pegRatio` | |
+| **Profitability** | Gross Margin | `grossMargins` | |
+| | Operating Margin | `operatingMargins` | |
+| | Net Margin | `profitMargins` | >20% flagged as "high net margin" |
+| | ROE | `returnOnEquity` | >15% flagged as "strong ROE" |
+| | ROA | `returnOnAssets` | |
+| **Leverage** | Current Ratio | `currentRatio` | |
+| | Quick Ratio | `quickRatio` | |
+| | Debt/Equity | `debtToEquity` | >2.0 flagged as "high leverage" |
+| **Growth** | Revenue Growth YoY | `revenueGrowth` | |
+| | Earnings Growth YoY | `earningsGrowth` | |
+| **Income** | Dividend Yield | `dividendYield` | |
+| | EPS (TTM) | `trailingEps` | |
+| | EPS (Forward) | `forwardEps` | |
+| **Calculated** | FCF Yield | `freeCashflow / marketCap` | Custom calculation |
+
+Cache: 1 hour
+
+### Risk Metrics — scipy + numpy (computed locally)
+
+All risk calculations use daily returns from `yfinance` price history, computed via `close.pct_change()`.
+
+**`compute_historical_volatility(ticker, window=30)`**
+- Formula: `rolling_std × √252` (annualized from daily std dev)
+- Data: 2 years of daily returns
+- Classification: <20% = low, 20-40% = medium, >40% = high
+- Cache: 1 hour
+
+**`compute_var(ticker, confidence=0.95)`** — Three methods:
+
+| Method | Formula | Assumption |
+|--------|---------|------------|
+| **Parametric** | `-(μ + z × σ)` where z = `scipy.stats.norm.ppf(1-α)` | Returns are normally distributed |
+| **Historical** | `numpy.percentile(returns, (1-α) × 100)` | No distribution assumption, uses actual return history |
+| **Monte Carlo** | Generate 10,000 random normal samples, take percentile | Assumes normal but with simulation variance |
+
+- Holding period: 1 day
+- Data: 2 years of daily returns
+- Default confidence: 95% (5% worst-case daily loss)
+- Cache: 1 hour
+
+**`compute_beta(ticker, benchmark="SPY")`**
+- Formula: `Cov(stock, benchmark) / Var(benchmark)`
+- Data: 2 years of daily returns, aligned on common trading dates
+- Minimum: 20 overlapping data points required
+- Interpretation: β < 0.8 = defensive, 0.8-1.2 = market, >1.2 = amplified risk
+- Cache: 1 hour
+
+**`compute_sharpe_sortino(ticker)`**
+- Risk-free rate: 5% annualized (≈ 0.0198% daily)
+- Sharpe: `(mean_excess_return / std_all_returns) × √252`
+- Sortino: `(mean_excess_return / std_negative_returns_only) × √252`
+- Interpretation: Sharpe >2 = excellent, 1-2 = good, 0-1 = acceptable, <0 = underperforming risk-free
+- Cache: 1 hour
+
+**`compute_max_drawdown(ticker)`**
+- Formula: `drawdown = (price - running_max) / running_max`
+- Data: 5 years of daily close prices
+- Returns: worst drawdown %, peak date, trough date, recovery date (or "Not yet recovered")
+- Cache: 1 hour
+
+### SEC EDGAR — Filing Downloads (no API key)
+
+**`get_sec_filings(ticker, filing_type="10-K", limit=3)`**
+- Library: `sec-edgar-downloader` (wraps the public SEC EDGAR API)
+- Registration: company="AgentInvest", email="agent@invest.example.com"
+- Process:
+  1. Downloads filing documents to a temp directory
+  2. Scans for `.txt` and `.htm` files in each filing folder
+  3. Reads the primary document file
+  4. Extracts first 2000 characters as an excerpt
+- Filing types: 10-K (annual report), 10-Q (quarterly), 8-K (current events)
+- Returns: accession number, file path, excerpt, SEC browse URL
+- Cache: 24 hours
+- No API key required — SEC EDGAR is a free public API
+
+### NewsAPI — Headlines & Articles (API key optional)
+
+**`get_recent_news(ticker, days=7, max_results=10)`**
+- API: NewsAPI `get_everything()` endpoint
+- Query: `'"AAPL" OR "Apple Inc"'` (ticker + company name from yfinance)
+- Filters: English, sorted by relevancy, date range from `days` ago
+- Returns: title, source name, URL, published date, description (300 chars)
+- Graceful degradation: returns empty array + caveat if no API key
+- Cache: 15 minutes
+
+### Tavily — Web Search (API key optional)
+
+**`search_web(query, max_results=5)`**
+- API: Tavily search (purpose-built for LLM agents)
+- Mode: "advanced" search depth
+- Returns: Tavily AI-synthesized answer + array of search results (title, URL, content snippet up to 500 chars, relevance score, published date)
+- Graceful degradation: returns empty results + caveat if no API key
+- Cache: 15 minutes
+
+### Tool Caching Strategy
+
+All tools are cached in-process with tiered TTLs reflecting data freshness needs:
+
+| TTL | Data Type | Tools |
+|-----|-----------|-------|
+| **5 min** | Real-time price & indicator data | price_history, rsi, macd, bollinger_bands, moving_averages |
+| **15 min** | News & search results | recent_news, search_web, options_chain |
+| **1 hour** | Relatively stable data | company_overview, analyst_ratings, financial_ratios, all risk metrics, earnings_calendar, support_resistance |
+| **24 hours** | Infrequently changing data | income_statement, balance_sheet, cash_flow, sec_filings |
+
+Cache key format: `{tool_name}:{sorted(arguments)}`. Parallel agents analyzing the same ticker share cache hits — if the Fundamental and Risk agents both call `get_price_history("AAPL")`, the second call is a cache hit.
+
 ## Agent Responsibilities
 
 ### Fundamental Analysis Agent
-- **Data sources**: yfinance (income statement, balance sheet, cash flow, financial ratios, earnings calendar)
-- **Output**: P/E, P/B, EV/EBITDA, ROE, ROA, debt/equity, FCF yield, revenue growth trends
-- **Model**: Smart tier — requires multi-step reasoning to connect ratios to industry context
+- **Tools called**: `get_income_statement` (annual + quarterly), `get_balance_sheet`, `get_cash_flow`, `compute_financial_ratios`, `get_earnings_calendar`
+- **Model**: Smart tier (gpt-4o) — requires multi-step reasoning to connect ratios to industry context
+- **Output**: Financial health narrative, key ratios with interpretations, earnings trends, valuation assessment
 
 ### Sentiment Analysis Agent
-- **Data sources**: NewsAPI (headlines), yfinance (analyst ratings, options chain), Tavily (web search)
-- **Output**: News sentiment score, analyst consensus (buy/hold/sell), put/call ratio, IV skew
-- **Model**: Fast tier — pattern classification with few-shot examples
+- **Tools called**: `get_recent_news`, `get_analyst_ratings`, `get_options_chain`, `search_web`
+- **Model**: Fast tier (gpt-4o-mini) — pattern classification with few-shot examples
+- **Output**: News sentiment score, analyst consensus, put/call ratio interpretation, overall market mood
 
 ### Technical Analysis Agent
-- **Data sources**: yfinance (price history), `ta` library (RSI, MACD, Bollinger Bands, moving averages)
-- **Output**: RSI zone (overbought/oversold/neutral), MACD crossovers, Bollinger %B, support/resistance levels, golden/death cross detection
-- **Model**: Fast tier — interprets computed numbers, no complex reasoning
+- **Tools called**: `get_price_history`, `compute_rsi`, `compute_macd`, `compute_bollinger_bands`, `compute_moving_averages`, `compute_support_resistance`
+- **Model**: Fast tier (gpt-4o-mini) — interprets computed numbers, no complex reasoning
+- **Output**: Trend direction, momentum signals, overbought/oversold zones, key price levels
 
 ### Risk Assessment Agent
-- **Data sources**: yfinance (price history), scipy (VaR), numpy (Monte Carlo)
-- **Output**: Annualized volatility, VaR (parametric + historical + Monte Carlo), beta vs SPY, Sharpe/Sortino ratios, max drawdown with recovery period
-- **Model**: Smart tier — multi-factor correlation reasoning and tail risk narratives
+- **Tools called**: `compute_historical_volatility`, `compute_var`, `compute_beta`, `compute_sharpe_sortino`, `compute_max_drawdown`
+- **Model**: Smart tier (gpt-4o) — multi-factor correlation reasoning and tail risk narratives
+- **Output**: Risk profile, worst-case scenarios, risk-adjusted return quality, benchmark comparison
 
 ### Market Research Agent
-- **Data sources**: yfinance (company overview), SEC EDGAR (10-K, 10-Q, 8-K filings), NewsAPI, Tavily
-- **Output**: Company profile, recent news summary, SEC filing excerpts, competitive landscape, upcoming earnings
-- **Model**: Fast tier — fact extraction and summarization from retrieved context
+- **Tools called**: `get_company_overview`, `get_recent_news`, `get_sec_filings`, `search_web`, `get_earnings_calendar`
+- **Model**: Fast tier (gpt-4o-mini) — fact extraction and summarization from retrieved context
+- **Output**: Company profile, competitive landscape, recent developments, upcoming catalysts
 
 ## RAG (Document Research) Flow
 
