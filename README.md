@@ -6,23 +6,51 @@ A production-grade system that orchestrates 5 specialist AI agents to analyze st
 
 ## Architecture
 
-```
-User Query → [Classifier] → [RAG Prefetch]
-                                    │
-                    ┌───────────────┼───────────────────┐
-                    │               │                   │
-             [Market Research] [Sentiment] [Fundamental] [Technical] [Risk]
-                    │               │                   │
-                    └───────────────┼───────────────────┘
-                                    │
-                             [Guardrails] → hallucination check, advice detection
-                                    │
-                             [Synthesizer] → final report with confidence score
-                                    │
-                              SSE Stream → Frontend
+```mermaid
+graph TD
+    A[User Query] --> B[Classifier Node<br/><i>gpt-4o-mini</i>]
+    B --> C[RAG Prefetch<br/><i>pgvector + BM25 + reranker</i>]
+    C --> D{Parallel Fan-out<br/>via LangGraph Send}
+    D --> E[Market Research<br/><i>gpt-4o-mini</i>]
+    D --> F[Sentiment<br/><i>gpt-4o-mini</i>]
+    D --> G[Fundamental<br/><i>gpt-4o</i>]
+    D --> H[Technical<br/><i>gpt-4o-mini</i>]
+    D --> I[Risk<br/><i>gpt-4o</i>]
+    E --> J[Guardrails Node<br/><i>hallucination + advice detection</i>]
+    F --> J
+    G --> J
+    H --> J
+    I --> J
+    J --> K[Synthesizer<br/><i>gpt-4o, chain-of-thought</i>]
+    K --> L[Persistence Node<br/><i>PostgreSQL + MLflow + Prometheus</i>]
+    L --> M[SSE Stream → Frontend]
+
+    style D fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    style J fill:#7f1d1d,stroke:#ef4444,color:#fff
+    style K fill:#14532d,stroke:#22c55e,color:#fff
 ```
 
-**Key design**: All 5 agents run in parallel via LangGraph's `Send` primitive. Total latency ≈ slowest single agent (~15s), not sum of all (~60s).
+**Key design**: All 5 agents run in parallel via LangGraph's `Send` primitive. Total latency ≈ slowest single agent (~15s), not sum of all (~60s). Each agent returns a validated Pydantic `AgentResult` — not free-form text.
+
+### Observability Stack
+
+```mermaid
+graph LR
+    A[Backend<br/>/metrics] -->|scrape 15s| B[Prometheus<br/>14 custom metrics]
+    B --> C[Grafana<br/>5-row dashboard]
+    A -->|per-run| D[MLflow v3<br/>params + metrics + prompts]
+    A -->|per-run| E[RAGAS<br/>faithfulness, relevancy]
+
+    style B fill:#e65100,stroke:#ff9800,color:#fff
+    style C fill:#1b5e20,stroke:#4caf50,color:#fff
+    style D fill:#0d47a1,stroke:#2196f3,color:#fff
+```
+
+### Documentation
+
+- **[Business Logic](docs/business_logic.md)** — user flows, analysis types, agent responsibilities, guardrail rules, RAG flow
+- **[Model Selection Tradeoffs](docs/model_selection.md)** — when to use frontier APIs vs open-weight models, measured cost analysis
+- **[Evaluation Framework](docs/evaluation_framework.md)** — RAGAS metrics, guardrails methodology, prompt versioning workflow
 
 ## Features
 
@@ -43,7 +71,7 @@ User Query → [Classifier] → [RAG Prefetch]
 | Frontend | React 18, Vite, TypeScript, Tailwind CSS |
 | LLM | OpenAI gpt-4o/4o-mini (default) + 4 other providers |
 | Data | yfinance, ta, SEC EDGAR, NewsAPI, Tavily |
-| Vector Store | Qdrant |
+| Vector Store | pgvector (inside PostgreSQL) |
 | Database | PostgreSQL, Redis |
 | Monitoring | Prometheus, Grafana, MLflow, Weights & Biases |
 | Deployment | Docker Compose, Kubernetes (HPA, StatefulSets) |
@@ -237,22 +265,23 @@ Every LLM call returns a Pydantic-validated `AgentResult`, not free-form text. T
 - [ ] Guardrail audit timestamps — `checked_at` field, immutable log
 - [ ] Per-agent guardrails — run checks after each agent, not just in batch at the end
 
-### Phase 5 — RAGAS Evaluation + MLflow/W&B (next)
+### Phase 5 — Evaluation + Observability ✅
 
-- [ ] Wire RAGAS online scoring into every production run (faithfulness, relevancy, context precision)
-- [ ] MLflow experiment tracking: log every analysis run with params, metrics, artifacts
-- [ ] Prompt versioning via MLflow Model Registry
-- [ ] W&B Weave integration for LLM call tracing
-- [ ] Prometheus custom metrics: RAGAS scores, token usage per agent, cost per run
-- [ ] Expand golden dataset from 10 → 50 queries for meaningful offline eval
-- [ ] Grafana dashboard: RAGAS trends, token costs, latency P50/P95
+- Online RAGAS scoring in every production run (faithfulness, relevancy, precision)
+- MLflow v3 experiment tracking: every run logged with params, metrics, prompt versions
+- 14 Prometheus custom metrics + Grafana dashboard (5 rows, 14 panels)
+- Token usage + cost estimation per LLM call (~$0.011/run with gpt-4o)
+- Prompt versioning (PROMPT_VERSION in all 5 agents)
+- [ ] Expand golden dataset from 10 → 50 queries (deferred)
+- [ ] W&B Weave integration for LLM call tracing (deferred)
 
-### Phase 6 — Kubernetes + Monitoring
+### Phase 6 — Kubernetes ✅
 
-- [ ] Deploy full stack to minikube/GKE
-- [ ] Verify HPA autoscaling under load
-- [ ] Prometheus metrics: token usage, cache hit rate, guardrail trigger rate
-- [ ] Grafana dashboards (system health, quality metrics, business metrics)
+- 14 K8s manifests deployed to minikube: 9/9 pods running
+- Backend (2 replicas + HPA 2-5), Frontend (2 replicas, nginx), Postgres (pgvector), Redis
+- Monitoring: Prometheus, Grafana (auto-provisioned dashboard), MLflow v3
+- Frontend: multi-stage Dockerfile (Node build → nginx serve) with /api proxy + SSE support
+- Ingress with NGINX controller, SSE proxy buffering disabled
 
 ### Phase 7 — Documentation + Demo
 
