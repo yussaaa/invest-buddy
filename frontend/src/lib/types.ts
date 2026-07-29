@@ -99,6 +99,16 @@ export interface UserPreferences {
   recent_tickers: string[]
 }
 
+export interface Quote {
+  symbol: string
+  last?: number
+  prev_close?: number
+  change?: number
+  change_percent?: number
+  volume?: number | null
+  error?: string
+}
+
 export interface Watchlist {
   id: string
   user_id: string

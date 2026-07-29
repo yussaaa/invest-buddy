@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Search, Loader2, AlertCircle, FileText, Upload, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -75,7 +76,8 @@ interface UploadedFile {
 }
 
 export default function AnalyzePage() {
-  const [ticker, setTicker] = useState('')
+  const [searchParams] = useSearchParams()
+  const [ticker, setTicker] = useState(() => searchParams.get('ticker')?.toUpperCase() ?? '')
   const [analysisType, setAnalysisType] = useState('full')
   const [customInstructions, setCustomInstructions] = useState('')
   const [useRag, setUseRag] = useState(false)
@@ -95,6 +97,12 @@ export default function AnalyzePage() {
   } = useAnalysis()
 
   useSSE(streamUrl, handleSSEEvent)
+
+  // Selecting a symbol in the watchlist panel updates ?ticker= — mirror it into the form.
+  const tickerParam = searchParams.get('ticker')
+  useEffect(() => {
+    if (tickerParam) setTicker(tickerParam.toUpperCase())
+  }, [tickerParam])
 
   // Disclaimer: only show on first visit
   const [showDisclaimer, setShowDisclaimer] = useState(() => {

@@ -3,7 +3,7 @@
  * Uses native fetch; no external HTTP library needed.
  */
 
-import type { AnalysisResult, UserPreferences, Watchlist } from './types'
+import type { AnalysisResult, Quote, UserPreferences, Watchlist } from './types'
 
 const BASE_URL = '/api/v1'
 
@@ -101,6 +101,14 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(prefs),
       }),
+  },
+
+  market: {
+    quotes: (symbols: string[], signal?: AbortSignal) =>
+      request<{ quotes: Quote[]; as_of: number }>(
+        `/market/quotes?symbols=${encodeURIComponent(symbols.join(','))}`,
+        { signal }
+      ),
   },
 
   health: {

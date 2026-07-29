@@ -1,8 +1,17 @@
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom'
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  NavLink,
+  Navigate,
+  useNavigate,
+  useSearchParams,
+} from 'react-router-dom'
 import { BarChart2, Clock, List, Settings, TrendingUp } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
+import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
 import WatchlistPage from './pages/WatchlistPage'
 import HistoryPage from './pages/HistoryPage'
@@ -57,22 +66,36 @@ function Sidebar() {
   )
 }
 
+function AppShell() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const selectedTicker = searchParams.get('ticker') ?? undefined
+
+  return (
+    <div className="flex min-h-screen bg-background text-foreground">
+      <Sidebar />
+      <main className="flex-1 min-w-0 overflow-y-auto">
+        <Routes>
+          <Route path="/" element={<Navigate to="/analyze" replace />} />
+          <Route path="/analyze" element={<AnalyzePage />} />
+          <Route path="/watchlist" element={<WatchlistPage />} />
+          <Route path="/history" element={<HistoryPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Routes>
+      </main>
+      <MarketWatchlist
+        selectedTicker={selectedTicker}
+        onSelectTicker={t => navigate(`/analyze?ticker=${encodeURIComponent(t)}`)}
+      />
+    </div>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <TooltipProvider>
-        <div className="flex min-h-screen bg-background text-foreground">
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto">
-            <Routes>
-              <Route path="/" element={<Navigate to="/analyze" replace />} />
-              <Route path="/analyze" element={<AnalyzePage />} />
-              <Route path="/watchlist" element={<WatchlistPage />} />
-              <Route path="/history" element={<HistoryPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Routes>
-          </main>
-        </div>
+        <AppShell />
       </TooltipProvider>
     </BrowserRouter>
   )
