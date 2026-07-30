@@ -1,0 +1,783 @@
+"""Market data for the UI: quotes, chart history, index overview, week events.
+
+These feed dashboard views that poll every few seconds, so everything here is
+batched into as few upstream calls as possible and served from a TTL cache.
+Separate from app/tools/ — those are agent tools, these are plain HTTP reads.
+
+Data source is yfinance (delayed quotes) plus, optionally, the FRED release
+calendar when FRED_API_KEY is configured.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from io import StringIO
+from typing import Any, Callable
+
+import httpx
+import pandas as pd
+import structlog
+import yfinance as yf
+
+from app.config import get_settings
+
+log = structlog.get_logger(__name__)
+
+# ── groups shown on the market overview ───────────────────────────────────────
+
+INDICES = [
+    {"symbol": "^GSPC", "label": "S&P 500", "note": "US large cap"},
+    {"symbol": "^IXIC", "label": "Nasdaq Composite", "note": "US tech-heavy"},
+    {"symbol": "^DJI", "label": "Dow Jones", "note": "US blue chip"},
+    {"symbol": "^RUT", "label": "Russell 2000", "note": "US small cap"},
+    {"symbol": "^VIX", "label": "VIX", "note": "Volatility"},
+]
+
+SECTORS = [
+    {"symbol": "XLK", "label": "Technology"},
+    {"symbol": "XLF", "label": "Financials"},
+    {"symbol": "XLV", "label": "Health Care"},
+    {"symbol": "XLY", "label": "Cons. Discretionary"},
+    {"symbol": "XLP", "label": "Cons. Staples"},
+    {"symbol": "XLE", "label": "Energy"},
+    {"symbol": "XLI", "label": "Industrials"},
+    {"symbol": "XLB", "label": "Materials"},
+    {"symbol": "XLRE", "label": "Real Estate"},
+    {"symbol": "XLU", "label": "Utilities"},
+    {"symbol": "XLC", "label": "Comm. Services"},
+]
+
+MACRO = [
+    {"symbol": "^TNX", "label": "US 10Y Yield", "unit": "%"},
+    {"symbol": "DX-Y.NYB", "label": "Dollar Index"},
+    {"symbol": "GC=F", "label": "Gold"},
+    {"symbol": "CL=F", "label": "Crude Oil"},
+    {"symbol": "BTC-USD", "label": "Bitcoin"},
+    {"symbol": "ETH-USD", "label": "Ethereum"},
+]
+
+# Universe scanned for the "earnings this week" panel.
+EARNINGS_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "BRK-B",
+    "JPM", "V", "MA", "UNH", "XOM", "JNJ", "WMT", "PG", "HD", "COST", "ORCL",
+    "AMD", "NFLX", "CRM", "ADBE", "INTC", "QCOM", "CSCO", "PEP", "KO", "MCD",
+    "BAC", "GS", "MS", "PFE", "MRK", "LLY", "CVX", "BA", "CAT", "DIS",
+]
+
+# FRED releases worth surfacing — everything else is noise for a markets view.
+MAJOR_FRED_RELEASES = {
+    "employment situation": "high",
+    "consumer price index": "high",
+    "producer price index": "high",
+    "gross domestic product": "high",
+    "personal income and outlays": "high",
+    "advance monthly sales for retail and food services": "high",
+    "job openings and labor turnover survey": "medium",
+    "industrial production and capacity utilization": "medium",
+    "new residential construction": "medium",
+    "consumer credit": "medium",
+    "university of michigan: consumer sentiment": "medium",
+    "h.4.1 factors affecting reserve balances": "medium",
+}
+
+# Index membership for the heatmap. Constituents come from Wikipedia's tables
+# (the only free source with GICS sectors attached); Dow 30 is small and stable
+# enough to also serve as the offline fallback.
+INDEX_SOURCES: dict[str, dict] = {
+    "sp500": {
+        "label": "S&P 500",
+        "url": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        "symbol_col": "Symbol",
+        "name_col": "Security",
+        "sector_col": "GICS Sector",
+    },
+    "nasdaq100": {
+        # Wikipedia dropped its components table, so membership comes from
+        # Slickcharts and sectors are filled in from the S&P 500 table.
+        "label": "Nasdaq 100",
+        "url": "https://www.slickcharts.com/nasdaq100",
+        "symbol_col": "Symbol",
+        "name_col": "Company",
+        "sector_col": None,
+    },
+    "dow30": {
+        "label": "Dow Jones 30",
+        "url": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average",
+        "symbol_col": "Symbol",
+        "name_col": "Company",
+        "sector_col": "Sector",
+    },
+}
+
+DOW30_FALLBACK = [
+    "AAPL", "AMGN", "AMZN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS",
+    "GS", "HD", "HON", "IBM", "JNJ", "JPM", "KO", "MCD", "MMM", "MRK",
+    "MSFT", "NKE", "NVDA", "PG", "SHW", "TRV", "UNH", "V", "VZ", "WMT",
+]
+
+# Heatmap performance windows -> yfinance period.
+HEATMAP_RANGES: dict[str, str] = {
+    "1D": "5d",
+    "1W": "1mo",
+    "1M": "3mo",
+    "3M": "6mo",
+    "6M": "1y",
+    "YTD": "ytd",
+    "1Y": "2y",
+}
+
+# How far back within the downloaded window each range should look.
+HEATMAP_LOOKBACK_DAYS: dict[str, int | None] = {
+    "1D": 1,
+    "1W": 7,
+    "1M": 30,
+    "3M": 91,
+    "6M": 182,
+    "YTD": None,  # anchored to the first bar of the ytd download
+    "1Y": 365,
+}
+
+# range -> (yfinance period, yfinance interval)
+RANGE_PRESETS: dict[str, tuple[str, str]] = {
+    "1D": ("1d", "5m"),
+    "5D": ("5d", "15m"),
+    "1M": ("1mo", "1h"),
+    "3M": ("3mo", "1d"),
+    "6M": ("6mo", "1d"),
+    "YTD": ("ytd", "1d"),
+    "1Y": ("1y", "1d"),
+    "5Y": ("5y", "1wk"),
+    "MAX": ("max", "1mo"),
+}
+
+INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"}
+
+# ── tiny TTL cache ────────────────────────────────────────────────────────────
+
+_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+async def _cached(
+    key: str,
+    ttl: float,
+    fn: Callable[[], Any],
+    should_cache: Callable[[Any], bool] | None = None,
+) -> Any:
+    """Run the blocking `fn` off-thread unless a fresh cached value exists.
+
+    `should_cache` guards against pinning a partial upstream response — yfinance
+    occasionally drops symbols from a batch, and caching that would show gaps
+    for the whole TTL instead of self-healing on the next poll.
+    """
+    hit = _CACHE.get(key)
+    now = time.time()
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    value = await asyncio.to_thread(fn)
+    if should_cache is None or should_cache(value):
+        _CACHE[key] = (now, value)
+    return value
+
+
+def _safe(val: Any) -> Any:
+    if val is None:
+        return None
+    if isinstance(val, float) and (pd.isna(val) or val in (float("inf"), float("-inf"))):
+        return None
+    return val
+
+
+def _round(val: Any, digits: int = 4) -> Any:
+    val = _safe(val)
+    return round(float(val), digits) if val is not None else None
+
+
+# ── quotes ────────────────────────────────────────────────────────────────────
+
+QUOTES_TTL = 10.0
+MAX_SYMBOLS = 60
+
+
+def _frame_for(raw: pd.DataFrame, symbol: str) -> pd.DataFrame | None:
+    """Pull one symbol's frame out of a (possibly multi-index) batch download."""
+    if raw is None or raw.empty:
+        return None
+    if isinstance(raw.columns, pd.MultiIndex):
+        if symbol not in raw.columns.get_level_values(0):
+            return None
+        return raw[symbol]
+    return raw
+
+
+def _quote_from_frame(symbol: str, df: pd.DataFrame) -> dict:
+    closes = df["Close"].dropna() if "Close" in df else pd.Series(dtype=float)
+    if closes.empty:
+        return {"symbol": symbol, "error": "no data"}
+
+    last = float(closes.iloc[-1])
+    prev = float(closes.iloc[-2]) if len(closes) > 1 else last
+    change = last - prev
+
+    volume = None
+    if "Volume" in df:
+        vols = df["Volume"].dropna()
+        if not vols.empty:
+            volume = int(vols.iloc[-1])
+
+    return {
+        "symbol": symbol,
+        "last": _round(last),
+        "prev_close": _round(prev),
+        "change": _round(change),
+        "change_percent": _round(change / prev * 100.0 if prev else 0.0),
+        "volume": volume,
+    }
+
+
+def _download(symbols: list[str], period: str = "5d", interval: str = "1d") -> pd.DataFrame:
+    return yf.download(
+        tickers=symbols,
+        period=period,
+        interval=interval,
+        group_by="ticker",
+        auto_adjust=False,
+        progress=False,
+        threads=True,
+    )
+
+
+async def get_quotes(symbols: list[str]) -> list[dict]:
+    """Last price / change / volume for a batch of symbols."""
+    symbols = symbols[:MAX_SYMBOLS]
+    now = time.time()
+
+    out: dict[str, dict] = {}
+    missing: list[str] = []
+    for sym in symbols:
+        hit = _CACHE.get(f"quote:{sym}")
+        if hit and now - hit[0] < QUOTES_TTL:
+            out[sym] = hit[1]
+        else:
+            missing.append(sym)
+
+    if missing:
+        def fetch() -> dict[str, dict]:
+            raw = _download(missing)
+            result = {}
+            for sym in missing:
+                frame = _frame_for(raw, sym)
+                result[sym] = (
+                    _quote_from_frame(sym, frame)
+                    if frame is not None
+                    else {"symbol": sym, "error": "no data"}
+                )
+            return result
+
+        try:
+            fetched = await asyncio.to_thread(fetch)
+        except Exception as e:
+            log.error("quotes_fetch_failed", symbols=missing, error=str(e))
+            fetched = {s: {"symbol": s, "error": str(e)} for s in missing}
+
+        for sym, quote in fetched.items():
+            if "error" not in quote:
+                _CACHE[f"quote:{sym}"] = (now, quote)
+            out[sym] = quote
+
+    return [out.get(s, {"symbol": s, "error": "not found"}) for s in symbols]
+
+
+# ── chart history ─────────────────────────────────────────────────────────────
+
+HISTORY_TTL = 30.0
+
+
+async def get_history(symbol: str, range_key: str = "1Y") -> dict:
+    """OHLCV candles for the charting view."""
+    range_key = range_key.upper()
+    period, interval = RANGE_PRESETS.get(range_key, RANGE_PRESETS["1Y"])
+    symbol = symbol.upper()
+
+    def fetch() -> dict:
+        hist = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=False)
+        if hist is None or hist.empty:
+            return {
+                "symbol": symbol,
+                "range": range_key,
+                "interval": interval,
+                "candles": [],
+                "error": "no data",
+            }
+
+        intraday = interval in INTRADAY_INTERVALS
+        candles = []
+        for idx, row in hist.iterrows():
+            close = _safe(row.get("Close"))
+            if close is None:
+                continue
+            ts = idx.to_pydatetime()
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            candles.append({
+                # Lightweight Charts takes unix seconds for intraday and a
+                # calendar date for daily-and-coarser series.
+                "time": int(ts.timestamp()) if intraday else ts.strftime("%Y-%m-%d"),
+                "open": _round(row.get("Open"), 4),
+                "high": _round(row.get("High"), 4),
+                "low": _round(row.get("Low"), 4),
+                "close": _round(close, 4),
+                "volume": int(row["Volume"]) if _safe(row.get("Volume")) else 0,
+            })
+
+        first_close = candles[0]["close"] if candles else None
+        last_close = candles[-1]["close"] if candles else None
+        change = (last_close - first_close) if (first_close and last_close) else None
+
+        return {
+            "symbol": symbol,
+            "range": range_key,
+            "interval": interval,
+            "intraday": intraday,
+            "candles": candles,
+            "period_change": _round(change),
+            "period_change_percent": _round(
+                change / first_close * 100.0 if change is not None and first_close else None
+            ),
+        }
+
+    try:
+        return await _cached(f"hist:{symbol}:{range_key}", HISTORY_TTL, fetch)
+    except Exception as e:
+        log.error("history_fetch_failed", symbol=symbol, range=range_key, error=str(e))
+        return {"symbol": symbol, "range": range_key, "candles": [], "error": str(e)}
+
+
+# ── instrument profile (chart header) ─────────────────────────────────────────
+
+PROFILE_TTL = 600.0
+
+
+async def get_profile(symbol: str) -> dict:
+    """Name, exchange and the key stats shown above the chart."""
+    symbol = symbol.upper()
+
+    def fetch() -> dict:
+        info = yf.Ticker(symbol).info or {}
+        return {
+            "symbol": symbol,
+            "name": info.get("longName") or info.get("shortName") or symbol,
+            "exchange": info.get("fullExchangeName") or info.get("exchange"),
+            "currency": info.get("currency"),
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "market_cap": _safe(info.get("marketCap")),
+            "pe_ratio": _round(info.get("trailingPE"), 2),
+            "forward_pe": _round(info.get("forwardPE"), 2),
+            "dividend_yield": _round(info.get("dividendYield"), 4),
+            "beta": _round(info.get("beta"), 2),
+            "day_low": _round(info.get("dayLow"), 2),
+            "day_high": _round(info.get("dayHigh"), 2),
+            "week52_low": _round(info.get("fiftyTwoWeekLow"), 2),
+            "week52_high": _round(info.get("fiftyTwoWeekHigh"), 2),
+            "avg_volume": _safe(info.get("averageVolume")),
+            "next_earnings": None,
+        }
+
+    try:
+        return await _cached(f"profile:{symbol}", PROFILE_TTL, fetch)
+    except Exception as e:
+        log.error("profile_fetch_failed", symbol=symbol, error=str(e))
+        return {"symbol": symbol, "name": symbol, "error": str(e)}
+
+
+# ── market overview ───────────────────────────────────────────────────────────
+
+OVERVIEW_TTL = 30.0
+SPARKLINE_POINTS = 30
+
+
+def _group_snapshot(raw: pd.DataFrame, group: list[dict]) -> list[dict]:
+    rows = []
+    for entry in group:
+        sym = entry["symbol"]
+        frame = _frame_for(raw, sym)
+        closes = (
+            frame["Close"].dropna()
+            if frame is not None and "Close" in frame
+            else pd.Series(dtype=float)
+        )
+        if closes.empty:
+            rows.append({**entry, "error": "no data"})
+            continue
+
+        last = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2]) if len(closes) > 1 else last
+        first = float(closes.iloc[0])
+        change = last - prev
+
+        rows.append({
+            **entry,
+            "last": _round(last, 2),
+            "prev_close": _round(prev, 2),
+            "change": _round(change, 2),
+            "change_percent": _round(change / prev * 100.0 if prev else 0.0, 2),
+            "period_change_percent": _round(
+                (last - first) / first * 100.0 if first else 0.0, 2
+            ),
+            "sparkline": [round(float(c), 4) for c in closes.tail(SPARKLINE_POINTS)],
+        })
+    return rows
+
+
+async def get_overview() -> dict:
+    """Indices, sector performance and macro benchmarks in one batch."""
+    groups = INDICES + SECTORS + MACRO
+    symbols = [g["symbol"] for g in groups]
+
+    def fetch() -> dict:
+        raw = _download(symbols, period="1mo", interval="1d")
+        indices = _group_snapshot(raw, INDICES)
+        sectors = _group_snapshot(raw, SECTORS)
+        macro = _group_snapshot(raw, MACRO)
+
+        scored = [s for s in sectors if s.get("change_percent") is not None]
+        advancing = sum(1 for s in scored if s["change_percent"] > 0)
+        sectors_sorted = sorted(
+            scored, key=lambda s: s["change_percent"], reverse=True
+        )
+
+        return {
+            "indices": indices,
+            "sectors": sectors_sorted,
+            "macro": macro,
+            "breadth": {
+                "sectors_advancing": advancing,
+                "sectors_total": len(scored),
+                "best": sectors_sorted[0] if sectors_sorted else None,
+                "worst": sectors_sorted[-1] if sectors_sorted else None,
+            },
+            "as_of": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def complete(result: dict) -> bool:
+        return all(row.get("last") is not None for row in result["indices"])
+
+    try:
+        return await _cached("overview", OVERVIEW_TTL, fetch, should_cache=complete)
+    except Exception as e:
+        log.error("overview_fetch_failed", error=str(e))
+        return {"indices": [], "sectors": [], "macro": [], "error": str(e)}
+
+
+# ── week ahead: earnings + economic releases ──────────────────────────────────
+
+EVENTS_TTL = 1800.0
+
+
+def _week_bounds(days: int) -> tuple[date, date]:
+    """Today through +days.
+
+    yfinance only exposes each company's *next* scheduled report, so a
+    Monday-anchored week would silently drop anyone who already reported.
+    A forward-looking window is what the data can actually support.
+    """
+    today = datetime.now(timezone.utc).date()
+    return today, today + timedelta(days=days)
+
+
+def _earnings_for(symbol: str) -> dict | None:
+    """Next scheduled earnings date for one symbol, or None."""
+    try:
+        cal = yf.Ticker(symbol).calendar or {}
+    except Exception:
+        return None
+
+    dates = cal.get("Earnings Date") or []
+    if isinstance(dates, (date, datetime)):
+        dates = [dates]
+    if not dates:
+        return None
+
+    first = dates[0]
+    when = first.date() if isinstance(first, datetime) else first
+    return {
+        "symbol": symbol,
+        "date": when.isoformat(),
+        "eps_estimate": _round(cal.get("Earnings Average"), 3),
+        "revenue_estimate": _safe(cal.get("Revenue Average")),
+    }
+
+
+def _fetch_earnings(universe: list[str], start: date, end: date) -> list[dict]:
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(_earnings_for, universe))
+
+    within = []
+    for r in results:
+        if not r:
+            continue
+        when = date.fromisoformat(r["date"])
+        if start <= when <= end:
+            within.append(r)
+    return sorted(within, key=lambda r: (r["date"], r["symbol"]))
+
+
+def _fetch_economic(start: date, end: date) -> dict:
+    """Economic releases from FRED. Requires FRED_API_KEY; empty without it."""
+    api_key = get_settings().fred_api_key
+    if not api_key:
+        return {"events": [], "source": "fred", "available": False}
+
+    try:
+        resp = httpx.get(
+            "https://api.stlouisfed.org/fred/releases/dates",
+            params={
+                "api_key": api_key,
+                "file_type": "json",
+                "realtime_start": start.isoformat(),
+                "realtime_end": end.isoformat(),
+                "include_release_dates_with_no_data": "true",
+                "sort_order": "asc",
+                "limit": 1000,
+            },
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as e:
+        log.error("fred_fetch_failed", error=str(e))
+        return {"events": [], "source": "fred", "available": False, "error": str(e)}
+
+    events, seen = [], set()
+    for item in payload.get("release_dates", []):
+        name = (item.get("release_name") or "").strip()
+        lowered = name.lower()
+        importance = next(
+            (imp for key, imp in MAJOR_FRED_RELEASES.items() if key in lowered), None
+        )
+        if not importance:
+            continue
+        key = (name, item.get("date"))
+        if key in seen:
+            continue
+        seen.add(key)
+        events.append({
+            "name": name,
+            "date": item.get("date"),
+            "importance": importance,
+            "source": "FRED",
+        })
+
+    return {
+        "events": sorted(events, key=lambda e: (e["date"], e["name"])),
+        "source": "fred",
+        "available": True,
+    }
+
+
+# ── finviz-style heatmap ──────────────────────────────────────────────────────
+
+CONSTITUENTS_TTL = 86400.0     # membership changes a few times a year
+MARKET_CAP_TTL = 43200.0       # tile sizes only need to be same-day accurate
+HEATMAP_TTL = 60.0
+
+_SCRAPE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; agent-invest/0.1; portfolio project)"
+}
+
+
+def _fetch_constituents(index_key: str) -> list[dict]:
+    """Scrape index membership (and sector, where the source has one)."""
+    source = INDEX_SOURCES[index_key]
+    resp = httpx.get(source["url"], headers=_SCRAPE_HEADERS, timeout=20.0, follow_redirects=True)
+    resp.raise_for_status()
+
+    for table in pd.read_html(StringIO(resp.text)):
+        if source["symbol_col"] not in set(table.columns):
+            continue
+        rows = []
+        for _, row in table.iterrows():
+            # Wikipedia writes class shares as BRK.B; yfinance wants BRK-B.
+            symbol = str(row[source["symbol_col"]]).strip().upper().replace(".", "-")
+            if not symbol or symbol == "NAN":
+                continue
+            sector_col = source["sector_col"]
+            rows.append({
+                "symbol": symbol,
+                "name": str(row.get(source["name_col"], symbol)),
+                "sector": str(row.get(sector_col, "Other")) if sector_col else "Other",
+            })
+        if len(rows) >= 20:  # skip small unrelated tables on the same page
+            return rows
+
+    raise ValueError(f"no constituent table found for {index_key}")
+
+
+def _sector_lookup() -> dict[str, str]:
+    """GICS sector by symbol, borrowed from the S&P 500 table."""
+    try:
+        return {m["symbol"]: m["sector"] for m in _fetch_constituents("sp500")}
+    except Exception as e:
+        log.warning("sector_lookup_failed", error=str(e))
+        return {}
+
+
+def _constituents_with_fallback(index_key: str) -> list[dict]:
+    try:
+        members = _fetch_constituents(index_key)
+    except Exception as e:
+        log.error("constituents_fetch_failed", index=index_key, error=str(e))
+        if index_key == "dow30":
+            return [{"symbol": s, "name": s, "sector": "Other"} for s in DOW30_FALLBACK]
+        return []
+
+    if not INDEX_SOURCES[index_key]["sector_col"]:
+        lookup = _sector_lookup()
+        for m in members:
+            m["sector"] = lookup.get(m["symbol"], "Other")
+    return members
+
+
+def _market_cap(symbol: str) -> float | None:
+    try:
+        return float(yf.Ticker(symbol).fast_info["marketCap"])
+    except Exception:
+        return None
+
+
+def _fetch_market_caps(symbols: list[str]) -> dict[str, float]:
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        caps = list(pool.map(_market_cap, symbols))
+    return {s: c for s, c in zip(symbols, caps) if c}
+
+
+def _performance(raw: pd.DataFrame, symbol: str, range_key: str) -> tuple[float | None, float | None]:
+    """(% change over the window, last close) for one symbol."""
+    frame = _frame_for(raw, symbol)
+    if frame is None or "Close" not in frame:
+        return None, None
+    closes = frame["Close"].dropna()
+    if closes.empty:
+        return None, None
+
+    last = float(closes.iloc[-1])
+    lookback = HEATMAP_LOOKBACK_DAYS.get(range_key)
+
+    if lookback is None:                      # YTD — first bar of the ytd window
+        base = float(closes.iloc[0])
+    elif lookback == 1:                       # 1D — previous session's close
+        base = float(closes.iloc[-2]) if len(closes) > 1 else last
+    else:
+        cutoff = closes.index[-1] - pd.Timedelta(days=lookback)
+        earlier = closes[closes.index <= cutoff]
+        base = float(earlier.iloc[-1]) if not earlier.empty else float(closes.iloc[0])
+
+    if not base:
+        return None, _round(last, 2)
+    return _round((last - base) / base * 100.0, 2), _round(last, 2)
+
+
+async def get_heatmap(index_key: str = "sp500", range_key: str = "1D", limit: int = 150) -> dict:
+    """Constituents sized by market cap and coloured by performance."""
+    index_key = index_key.lower()
+    range_key = range_key.upper()
+    if index_key not in INDEX_SOURCES:
+        index_key = "sp500"
+    if range_key not in HEATMAP_RANGES:
+        range_key = "1D"
+
+    members = await _cached(
+        f"constituents:{index_key}", CONSTITUENTS_TTL,
+        lambda: _constituents_with_fallback(index_key),
+    )
+    if not members:
+        return {
+            "index": index_key,
+            "index_label": INDEX_SOURCES[index_key]["label"],
+            "range": range_key,
+            "tiles": [],
+            "error": "constituent list unavailable",
+        }
+
+    symbols = [m["symbol"] for m in members]
+    caps = await _cached(
+        f"caps:{index_key}", MARKET_CAP_TTL, lambda: _fetch_market_caps(symbols)
+    )
+
+    # Largest names first; the tail is unreadable at tile size anyway.
+    ranked = sorted(members, key=lambda m: caps.get(m["symbol"], 0.0), reverse=True)[:limit]
+    ranked_symbols = [m["symbol"] for m in ranked]
+
+    def fetch() -> list[dict]:
+        raw = _download(ranked_symbols, period=HEATMAP_RANGES[range_key], interval="1d")
+        tiles = []
+        for member in ranked:
+            change, last = _performance(raw, member["symbol"], range_key)
+            if change is None:
+                continue
+            tiles.append({
+                **member,
+                "market_cap": caps.get(member["symbol"]),
+                "last": last,
+                "change_percent": change,
+            })
+        return tiles
+
+    try:
+        tiles = await _cached(
+            f"heatmap:{index_key}:{range_key}:{limit}",
+            HEATMAP_TTL,
+            fetch,
+            should_cache=lambda t: len(t) > len(ranked) * 0.8,
+        )
+    except Exception as e:
+        log.error("heatmap_fetch_failed", index=index_key, range=range_key, error=str(e))
+        return {
+            "index": index_key,
+            "index_label": INDEX_SOURCES[index_key]["label"],
+            "range": range_key,
+            "tiles": [],
+            "error": str(e),
+        }
+
+    advancing = sum(1 for t in tiles if t["change_percent"] > 0)
+    return {
+        "index": index_key,
+        "index_label": INDEX_SOURCES[index_key]["label"],
+        "range": range_key,
+        "tiles": tiles,
+        "universe_size": len(members),
+        "advancing": advancing,
+        "declining": len(tiles) - advancing,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def get_events(days: int = 7, extra_symbols: list[str] | None = None) -> dict:
+    """Earnings and economic releases for the current week."""
+    start, end = _week_bounds(days)
+    universe = list(dict.fromkeys(EARNINGS_UNIVERSE + [s.upper() for s in (extra_symbols or [])]))
+    cache_key = f"events:{start}:{end}:{','.join(universe)}"
+
+    def fetch() -> dict:
+        return {
+            "week_start": start.isoformat(),
+            "week_end": end.isoformat(),
+            "earnings": _fetch_earnings(universe, start, end),
+            "economic": _fetch_economic(start, end),
+        }
+
+    try:
+        return await _cached(cache_key, EVENTS_TTL, fetch)
+    except Exception as e:
+        log.error("events_fetch_failed", error=str(e))
+        return {
+            "week_start": start.isoformat(),
+            "week_end": end.isoformat(),
+            "earnings": [],
+            "economic": {"events": [], "available": False},
+            "error": str(e),
+        }

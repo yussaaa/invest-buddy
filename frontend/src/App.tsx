@@ -4,20 +4,33 @@ import {
   Route,
   NavLink,
   Navigate,
+  useLocation,
   useNavigate,
   useSearchParams,
 } from 'react-router-dom'
-import { BarChart2, Clock, List, Settings, TrendingUp } from 'lucide-react'
+import {
+  BarChart2,
+  CandlestickChart,
+  Clock,
+  Globe2,
+  List,
+  Settings,
+  TrendingUp,
+} from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
+import ChartingPage from './pages/ChartingPage'
+import MarketPage from './pages/MarketPage'
 import WatchlistPage from './pages/WatchlistPage'
 import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
 
 const NAV_ITEMS = [
+  { to: '/charting', label: 'Charting', icon: CandlestickChart },
+  { to: '/market', label: 'Market', icon: Globe2 },
   { to: '/analyze', label: 'Analyze', icon: TrendingUp },
   { to: '/watchlist', label: 'Watchlist', icon: List },
   { to: '/history', label: 'History', icon: Clock },
@@ -66,27 +79,36 @@ function Sidebar() {
   )
 }
 
+// Pages that take a ?ticker= — a watchlist click stays on the current one
+// instead of yanking the user over to Analyze.
+const TICKER_AWARE_PATHS = ['/charting', '/analyze']
+
 function AppShell() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const selectedTicker = searchParams.get('ticker') ?? undefined
+
+  function selectTicker(ticker: string) {
+    const current = TICKER_AWARE_PATHS.find(p => location.pathname.startsWith(p))
+    navigate(`${current ?? '/charting'}?ticker=${encodeURIComponent(ticker)}`)
+  }
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <Sidebar />
       <main className="flex-1 min-w-0 overflow-y-auto">
         <Routes>
-          <Route path="/" element={<Navigate to="/analyze" replace />} />
+          <Route path="/" element={<Navigate to="/charting" replace />} />
+          <Route path="/charting" element={<ChartingPage />} />
+          <Route path="/market" element={<MarketPage />} />
           <Route path="/analyze" element={<AnalyzePage />} />
           <Route path="/watchlist" element={<WatchlistPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
-      <MarketWatchlist
-        selectedTicker={selectedTicker}
-        onSelectTicker={t => navigate(`/analyze?ticker=${encodeURIComponent(t)}`)}
-      />
+      <MarketWatchlist selectedTicker={selectedTicker} onSelectTicker={selectTicker} />
     </div>
   )
 }

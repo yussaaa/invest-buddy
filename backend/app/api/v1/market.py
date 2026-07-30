@@ -1,124 +1,65 @@
-"""Lightweight market quote endpoints for the watchlist panel.
+"""Market data endpoints backing the watchlist, charting and market pages.
 
-Separate from the agent tools: the watchlist polls this every few seconds, so
-it batches all symbols into a single yfinance download and caches the result
-for a short TTL to avoid hammering the upstream API.
+Thin routes — all fetching, batching and caching lives in
+app/services/market_data.py.
 """
 
 from __future__ import annotations
 
-import asyncio
-import time
-from typing import Any
-
-import pandas as pd
-import structlog
-import yfinance as yf
 from fastapi import APIRouter, Query
 
-log = structlog.get_logger(__name__)
+from app.services import market_data
 
 router = APIRouter()
-
-# symbol -> (fetched_at, quote dict)
-_CACHE: dict[str, tuple[float, dict]] = {}
-_CACHE_TTL_SECONDS = 10.0
-_MAX_SYMBOLS = 60
-
-
-def _safe(val: Any) -> Any:
-    if val is None:
-        return None
-    if isinstance(val, float) and (pd.isna(val) or val in (float("inf"), float("-inf"))):
-        return None
-    return val
-
-
-def _quote_from_frame(symbol: str, df: pd.DataFrame) -> dict:
-    """Build a quote dict from a single symbol's OHLCV frame."""
-    closes = df["Close"].dropna() if "Close" in df else pd.Series(dtype=float)
-    if closes.empty:
-        return {"symbol": symbol, "error": "no data"}
-
-    last = float(closes.iloc[-1])
-    prev = float(closes.iloc[-2]) if len(closes) > 1 else last
-    change = last - prev
-    change_pct = (change / prev * 100.0) if prev else 0.0
-
-    volume = None
-    if "Volume" in df:
-        vols = df["Volume"].dropna()
-        if not vols.empty:
-            volume = int(vols.iloc[-1])
-
-    return {
-        "symbol": symbol,
-        "last": round(last, 4),
-        "prev_close": round(prev, 4),
-        "change": round(change, 4),
-        "change_percent": round(change_pct, 4),
-        "volume": _safe(volume),
-    }
-
-
-def _download(symbols: list[str]) -> dict[str, dict]:
-    """Batch-fetch the last few daily bars for every symbol in one call."""
-    raw = yf.download(
-        tickers=symbols,
-        period="5d",
-        interval="1d",
-        group_by="ticker",
-        auto_adjust=False,
-        progress=False,
-        threads=True,
-    )
-
-    quotes: dict[str, dict] = {}
-    if raw is None or raw.empty:
-        return {s: {"symbol": s, "error": "no data"} for s in symbols}
-
-    multi = isinstance(raw.columns, pd.MultiIndex)
-    for sym in symbols:
-        try:
-            frame = raw[sym] if multi else raw
-            quotes[sym] = _quote_from_frame(sym, frame)
-        except Exception as e:  # symbol missing from the batch response
-            quotes[sym] = {"symbol": sym, "error": str(e)}
-    return quotes
 
 
 @router.get("/quotes")
 async def get_quotes(
     symbols: str = Query(..., description="Comma-separated tickers, e.g. AAPL,MSFT,SPY"),
 ) -> dict:
-    """Return last price, change, change % and volume for each symbol."""
-    requested = [s.strip().upper() for s in symbols.split(",") if s.strip()][:_MAX_SYMBOLS]
+    """Last price, change, change % and volume for each symbol."""
+    requested = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     if not requested:
         return {"quotes": []}
+    return {"quotes": await market_data.get_quotes(requested)}
 
-    now = time.time()
-    fresh: dict[str, dict] = {}
-    stale: list[str] = []
-    for sym in requested:
-        cached = _CACHE.get(sym)
-        if cached and now - cached[0] < _CACHE_TTL_SECONDS:
-            fresh[sym] = cached[1]
-        else:
-            stale.append(sym)
 
-    if stale:
-        try:
-            fetched = await asyncio.to_thread(_download, stale)
-        except Exception as e:
-            log.error("quotes_fetch_failed", symbols=stale, error=str(e))
-            fetched = {s: {"symbol": s, "error": str(e)} for s in stale}
-        for sym, quote in fetched.items():
-            # Only cache good quotes so failures retry on the next poll.
-            if "error" not in quote:
-                _CACHE[sym] = (now, quote)
-            fresh[sym] = quote
+@router.get("/history")
+async def get_history(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    range: str = Query("1Y", description="1D, 5D, 1M, 3M, 6M, YTD, 1Y, 5Y, MAX"),
+) -> dict:
+    """OHLCV candles for the charting view."""
+    return await market_data.get_history(symbol, range)
 
-    return {
-        "quotes": [fresh.get(s, {"symbol": s, "error": "not found"}) for s in requested],
-        "as_of": now,
-    }
+
+@router.get("/profile")
+async def get_profile(symbol: str = Query(..., description="Ticker, e.g. AAPL")) -> dict:
+    """Instrument name, exchange and key stats shown above the chart."""
+    return await market_data.get_profile(symbol)
+
+
+@router.get("/overview")
+async def get_overview() -> dict:
+    """Indices, sector performance and macro benchmarks."""
+    return await market_data.get_overview()
+
+
+@router.get("/heatmap")
+async def get_heatmap(
+    index: str = Query("sp500", description="sp500 | nasdaq100 | dow30"),
+    range: str = Query("1D", description="1D, 1W, 1M, 3M, 6M, YTD, 1Y"),
+    limit: int = Query(150, ge=10, le=500, description="Largest N constituents to plot"),
+) -> dict:
+    """Index constituents sized by market cap and coloured by performance."""
+    return await market_data.get_heatmap(index, range, limit)
+
+
+@router.get("/events")
+async def get_events(
+    days: int = Query(7, ge=1, le=31),
+    symbols: str = Query("", description="Extra tickers to include in the earnings scan"),
+) -> dict:
+    """Earnings and economic releases for the current week."""
+    extra = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return await market_data.get_events(days, extra)

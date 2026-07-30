@@ -3,7 +3,17 @@
  * Uses native fetch; no external HTTP library needed.
  */
 
-import type { AnalysisResult, Quote, UserPreferences, Watchlist } from './types'
+import type {
+  AnalysisResult,
+  Heatmap,
+  History,
+  InstrumentProfile,
+  MarketEvents,
+  MarketOverview,
+  Quote,
+  UserPreferences,
+  Watchlist,
+} from './types'
 
 const BASE_URL = '/api/v1'
 
@@ -109,6 +119,27 @@ export const api = {
         `/market/quotes?symbols=${encodeURIComponent(symbols.join(','))}`,
         { signal }
       ),
+
+    history: (symbol: string, range: string, signal?: AbortSignal) =>
+      request<History>(
+        `/market/history?symbol=${encodeURIComponent(symbol)}&range=${range}`,
+        { signal }
+      ),
+
+    profile: (symbol: string, signal?: AbortSignal) =>
+      request<InstrumentProfile>(`/market/profile?symbol=${encodeURIComponent(symbol)}`, { signal }),
+
+    overview: (signal?: AbortSignal) =>
+      request<MarketOverview>('/market/overview', { signal }),
+
+    heatmap: (index: string, range: string, limit = 150, signal?: AbortSignal) =>
+      request<Heatmap>(
+        `/market/heatmap?index=${index}&range=${range}&limit=${limit}`,
+        { signal }
+      ),
+
+    events: (days = 7, signal?: AbortSignal) =>
+      request<MarketEvents>(`/market/events?days=${days}`, { signal }),
   },
 
   health: {
