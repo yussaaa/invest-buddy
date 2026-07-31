@@ -60,6 +60,12 @@ function MaRow({ level, price }: { level: MaLevel; price?: number }) {
       ? `${level.direction} ${signed(level.slope_percent_5d)}% over 5 sessions`
       : 'slope unavailable'
 
+  // Arrow and colour both come from the distance itself, so they can never
+  // disagree with the number they sit next to. The MA's own slope is in the
+  // row tooltip — it describes the average, not price's position against it.
+  const distance = level.distance_percent
+  const arrow = distance == null || distance === 0 ? '' : distance > 0 ? '↑' : '↓'
+
   return (
     <div
       className="flex items-center gap-2 border-b border-border/40 py-1.5 last:border-b-0"
@@ -76,13 +82,11 @@ function MaRow({ level, price }: { level: MaLevel; price?: number }) {
       <span
         className={cn(
           'w-[62px] shrink-0 text-right text-[11px] font-medium tabular-nums',
-          level.above ? 'text-emerald-400' : 'text-rose-400'
+          tone(distance)
         )}
       >
-        <span className="text-muted-foreground/60">
-          {level.direction === 'rising' ? '↑' : level.direction === 'falling' ? '↓' : ''}
-        </span>
-        {signed(level.distance_percent)}%
+        {arrow}
+        {signed(distance)}%
       </span>
     </div>
   )
