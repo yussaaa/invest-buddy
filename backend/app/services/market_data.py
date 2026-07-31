@@ -24,7 +24,7 @@ import structlog
 import yfinance as yf
 
 from app.config import get_settings
-from app.services.cache import cached as _cached, get_fresh, put
+from app.services.cache import cached as _cached, get_fresh_many, put_many
 
 log = structlog.get_logger(__name__)
 
@@ -225,15 +225,22 @@ def _download(symbols: list[str], period: str = "5d", interval: str = "1d") -> p
 
 
 async def get_quotes(symbols: list[str]) -> list[dict]:
-    """Last price / change / volume for a batch of symbols."""
+    """Last price / change / volume for a batch of symbols.
+
+    Batches its own fetch rather than going through `cached()` per symbol: one
+    download covers every stale symbol, so the cache is read and written in
+    bulk too.
+    """
     symbols = symbols[:MAX_SYMBOLS]
+
+    cache_keys = {sym: f"quote:{sym}" for sym in symbols}
+    hits = await get_fresh_many(list(cache_keys.values()), QUOTES_TTL)
 
     out: dict[str, dict] = {}
     missing: list[str] = []
-    for sym in symbols:
-        hit = get_fresh(f"quote:{sym}", QUOTES_TTL)
-        if hit is not None:
-            out[sym] = hit
+    for sym, key in cache_keys.items():
+        if key in hits:
+            out[sym] = hits[key]
         else:
             missing.append(sym)
 
@@ -256,10 +263,14 @@ async def get_quotes(symbols: list[str]) -> list[dict]:
             log.error("quotes_fetch_failed", symbols=missing, error=str(e))
             fetched = {s: {"symbol": s, "error": str(e)} for s in missing}
 
-        for sym, quote in fetched.items():
-            if "error" not in quote:
-                put(f"quote:{sym}", quote)
-            out[sym] = quote
+        # Only good quotes are cached, so a failed symbol retries next poll.
+        to_cache = {
+            cache_keys[sym]: quote
+            for sym, quote in fetched.items()
+            if "error" not in quote
+        }
+        await put_many(to_cache, QUOTES_TTL)
+        out.update(fetched)
 
     return [out.get(s, {"symbol": s, "error": "not found"}) for s in symbols]
 
@@ -440,7 +451,9 @@ async def get_overview() -> dict:
         return all(row.get("last") is not None for row in result["indices"])
 
     try:
-        return await _cached("overview", OVERVIEW_TTL, fetch, should_cache=complete)
+        return await _cached(
+            "overview", OVERVIEW_TTL, fetch, should_cache=complete, lock=True
+        )
     except Exception as e:
         log.error("overview_fetch_failed", error=str(e))
         return {"indices": [], "sectors": [], "macro": [], "error": str(e)}
@@ -833,7 +846,9 @@ async def get_breadth() -> dict:
         return counted / expected >= 0.95
 
     try:
-        rows = await _cached("breadth", BREADTH_TTL, fetch, should_cache=well_covered)
+        rows = await _cached(
+            "breadth", BREADTH_TTL, fetch, should_cache=well_covered, lock=True
+        )
     except Exception as e:
         log.error("breadth_fetch_failed", error=str(e))
         return {"indices": [], "error": str(e)}
