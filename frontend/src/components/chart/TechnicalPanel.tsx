@@ -281,7 +281,7 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
               <div className="flex items-baseline justify-between">
                 <span className="text-[13px] font-semibold text-foreground">Moving averages</span>
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
-                  vs price
+                  price vs MA
                 </span>
               </div>
 
@@ -310,7 +310,7 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                       {ladder?.alignment ?? '—'} stack
                     </Badge>
                     <span className="text-[10px] text-muted-foreground/60">
-                      above {ladder?.above_count ?? 0}/{ladder?.total_count ?? 0}
+                      price above {ladder?.above_count ?? 0} of {ladder?.total_count ?? 0}
                     </span>
                     {(ladder?.crosses ?? []).map(c => (
                       <Badge
