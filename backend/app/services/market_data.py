@@ -111,17 +111,6 @@ INDEX_SOURCES: dict[str, dict] = {
         "name_col": "Company",
         "sector_col": "Sector",
     },
-    # Small-cap gauge. The Russell 2000 would be the obvious choice, but its
-    # membership isn't published anywhere free and scrapeable (iShares blocks
-    # the IWM holdings download), and pricing 2000 names a minute would get us
-    # rate limited. The S&P 600 is the closest complete small-cap index.
-    "sp600": {
-        "label": "S&P 600 SmallCap",
-        "url": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
-        "symbol_col": "Symbol",
-        "name_col": "Security",
-        "sector_col": "GICS Sector",
-    },
 }
 
 DOW30_FALLBACK = [
@@ -775,7 +764,7 @@ async def get_heatmap(index_key: str = "sp500", range_key: str = "1D", limit: in
 
 BREADTH_TTL = 60.0
 
-BREADTH_INDICES = ["sp500", "nasdaq100", "dow30", "sp600"]
+BREADTH_INDICES = ["sp500", "nasdaq100", "dow30"]
 
 
 def _day_change(raw: pd.DataFrame, symbol: str) -> float | None:

@@ -32,6 +32,9 @@ const USER_ID = 'anonymous'
 const PANEL_KEY = 'agent-invest-watchlist-panel'
 const SECTIONS_KEY = 'agent-invest-watchlist-collapsed'
 const SEEDED_KEY = 'agent-invest-watchlist-seeded'
+// Collapsed is remembered per scope: pages that want the rail out of the way
+// by default shouldn't force that choice onto the pages that don't.
+const PANEL_COLLAPSE_KEY = 'agent-invest-watchlist-collapsed-by-scope'
 
 const MIN_WIDTH = 220
 const MAX_WIDTH = 480
@@ -332,15 +335,31 @@ function Section({
 interface MarketWatchlistProps {
   selectedTicker?: string
   onSelectTicker: (ticker: string) => void
+  /** Collapse state is stored under this key, so it can differ per page. */
+  scope?: string
+  /** Used until the user collapses or expands the panel within this scope. */
+  defaultCollapsed?: boolean
 }
 
-export default function MarketWatchlist({ selectedTicker, onSelectTicker }: MarketWatchlistProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(
-    () => readJSON(PANEL_KEY, { collapsed: false, width: DEFAULT_WIDTH }).collapsed
-  )
+function readCollapsed(scope: string, fallback: boolean): boolean {
+  return readJSON<Record<string, boolean>>(PANEL_COLLAPSE_KEY, {})[scope] ?? fallback
+}
+
+export default function MarketWatchlist({
+  selectedTicker,
+  onSelectTicker,
+  scope = 'default',
+  defaultCollapsed = false,
+}: MarketWatchlistProps) {
+  const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed(scope, defaultCollapsed))
   const [width, setWidth] = useState<number>(
-    () => readJSON(PANEL_KEY, { collapsed: false, width: DEFAULT_WIDTH }).width
+    () => readJSON(PANEL_KEY, { width: DEFAULT_WIDTH }).width ?? DEFAULT_WIDTH
   )
+
+  // Moving between pages swaps in that page's own collapse preference.
+  useEffect(() => {
+    setCollapsed(readCollapsed(scope, defaultCollapsed))
+  }, [scope, defaultCollapsed])
   const [collapsedSections, setCollapsedSections] = useState<string[]>(() =>
     readJSON<string[]>(SECTIONS_KEY, [])
   )
@@ -353,8 +372,16 @@ export default function MarketWatchlist({ selectedTicker, onSelectTicker }: Mark
 
   // Persist panel + section state
   useEffect(() => {
-    localStorage.setItem(PANEL_KEY, JSON.stringify({ collapsed, width }))
-  }, [collapsed, width])
+    localStorage.setItem(PANEL_KEY, JSON.stringify({ width }))
+  }, [width])
+
+  useEffect(() => {
+    const stored = readJSON<Record<string, boolean>>(PANEL_COLLAPSE_KEY, {})
+    localStorage.setItem(
+      PANEL_COLLAPSE_KEY,
+      JSON.stringify({ ...stored, [scope]: collapsed })
+    )
+  }, [scope, collapsed])
 
   useEffect(() => {
     localStorage.setItem(SECTIONS_KEY, JSON.stringify(collapsedSections))

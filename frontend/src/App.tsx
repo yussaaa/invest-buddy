@@ -88,6 +88,7 @@ function AppShell() {
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const selectedTicker = searchParams.get('ticker') ?? undefined
+  const isMarketPage = location.pathname.startsWith('/market')
 
   function selectTicker(ticker: string) {
     const current = TICKER_AWARE_PATHS.find(p => location.pathname.startsWith(p))
@@ -108,7 +109,14 @@ function AppShell() {
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
-      <MarketWatchlist selectedTicker={selectedTicker} onSelectTicker={selectTicker} />
+      <MarketWatchlist
+        selectedTicker={selectedTicker}
+        onSelectTicker={selectTicker}
+        // The Market page is a dashboard in its own right — the rail starts
+        // out of the way there, and the user's choice per page is remembered.
+        scope={isMarketPage ? 'market' : 'default'}
+        defaultCollapsed={isMarketPage}
+      />
     </div>
   )
 }

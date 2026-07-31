@@ -521,17 +521,11 @@ export default function MarketPage() {
             Counting advancers and decliners…
           </div>
         ) : (
-          <>
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-              {(indexBreadth?.indices ?? []).map(row => (
-                <BreadthCard key={row.index} row={row} />
-              ))}
-            </div>
-            <p className="text-[10px] text-muted-foreground/50">
-              Small caps use the S&P 600 — Russell 2000 membership isn't published by any free
-              source we can read.
-            </p>
-          </>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {(indexBreadth?.indices ?? []).map(row => (
+              <BreadthCard key={row.index} row={row} />
+            ))}
+          </div>
         )}
       </div>
 
