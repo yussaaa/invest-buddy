@@ -5,7 +5,6 @@
 
 import type {
   AnalysisResult,
-  Heatmap,
   History,
   MarketBreadth,
   InstrumentProfile,
@@ -137,12 +136,6 @@ export const api = {
 
     breadth: (signal?: AbortSignal) =>
       request<MarketBreadth>('/market/breadth', { signal }),
-
-    heatmap: (index: string, range: string, limit = 150, signal?: AbortSignal) =>
-      request<Heatmap>(
-        `/market/heatmap?index=${index}&range=${range}&limit=${limit}`,
-        { signal }
-      ),
 
     technicals: (symbol: string, signal?: AbortSignal) =>
       request<Technicals>(`/market/technicals?symbol=${encodeURIComponent(symbol)}`, { signal }),

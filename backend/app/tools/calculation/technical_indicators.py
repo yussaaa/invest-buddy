@@ -18,11 +18,29 @@ import yfinance as yf
 
 
 def _get_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
-    """Fetch OHLCV as a DataFrame (sync helper)."""
+    """Fetch OHLCV as a DataFrame (sync helper).
+
+    Note the adjusted default: yfinance's `auto_adjust` is True here, so these
+    are split- and dividend-adjusted closes. Indicators want that — a raw
+    series would show a phantom gap on every split.
+    """
     hist = yf.Ticker(ticker).history(period=period)
     if hist.empty:
         raise ValueError(f"No price data found for {ticker}")
     return hist
+
+
+def _closes_for(ticker: str, period: str, closes: Optional[pd.Series]) -> pd.Series:
+    """Use a caller-supplied close series, or fetch one.
+
+    Callers that already hold the history — the charting service reads it once
+    from the local store — pass it in so three indicators don't trigger three
+    downloads of the same prices. Agent tools call with just a ticker and get
+    the fetching behaviour they have always had.
+    """
+    if closes is not None and not closes.empty:
+        return closes
+    return _get_ohlcv(ticker, period)["Close"]
 
 
 def _safe(val) -> Optional[float]:
@@ -35,12 +53,13 @@ def _safe(val) -> Optional[float]:
         return None
 
 
-async def compute_rsi(ticker: str, period: int = 14) -> dict:
+async def compute_rsi(
+    ticker: str, period: int = 14, closes: Optional[pd.Series] = None
+) -> dict:
     """Compute RSI and interpret the current value."""
     def _calc():
         import ta
-        hist = _get_ohlcv(ticker)
-        close = hist["Close"]
+        close = _closes_for(ticker, "1y", closes)
 
         rsi_series = ta.momentum.RSIIndicator(close=close, window=period).rsi()
         if rsi_series is None or rsi_series.empty:
@@ -66,12 +85,11 @@ async def compute_rsi(ticker: str, period: int = 14) -> dict:
     return await asyncio.to_thread(_calc)
 
 
-async def compute_macd(ticker: str) -> dict:
+async def compute_macd(ticker: str, closes: Optional[pd.Series] = None) -> dict:
     """Compute MACD, signal line, and histogram."""
     def _calc():
         import ta
-        hist = _get_ohlcv(ticker)
-        close = hist["Close"]
+        close = _closes_for(ticker, "1y", closes)
 
         macd_ind = ta.trend.MACD(close=close)
         macd_val = _safe(macd_ind.macd().iloc[-1])
@@ -192,7 +210,9 @@ async def compute_moving_averages(ticker: str) -> dict:
 
 
 async def compute_ma_ladder(
-    ticker: str, windows: tuple[int, ...] = (5, 20, 50, 250)
+    ticker: str,
+    windows: tuple[int, ...] = (5, 20, 50, 250),
+    closes: Optional[pd.Series] = None,
 ) -> dict:
     """Compare several SMAs at once: distance from price, slope, stacking order.
 
@@ -201,8 +221,7 @@ async def compute_ma_ladder(
     the averages are stacked bullishly (each faster MA above the slower one).
     """
     def _calc():
-        hist = _get_ohlcv(ticker, period="5y")
-        close = hist["Close"]
+        close = _closes_for(ticker, "5y", closes)
         current = _safe(close.iloc[-1])
 
         levels = []

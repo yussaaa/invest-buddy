@@ -63,16 +63,6 @@ async def get_breadth() -> dict:
     return await market_data.get_breadth()
 
 
-@router.get("/heatmap")
-async def get_heatmap(
-    index: str = Query("sp500", description="sp500 | nasdaq100 | dow30"),
-    range: str = Query("1D", description="1D, 1W, 1M, 3M, 6M, YTD, 1Y"),
-    limit: int = Query(150, ge=10, le=500, description="Largest N constituents to plot"),
-) -> dict:
-    """Index constituents sized by market cap and coloured by performance."""
-    return await market_data.get_heatmap(index, range, limit)
-
-
 @router.get("/events")
 async def get_events(
     days: int = Query(7, ge=1, le=31),

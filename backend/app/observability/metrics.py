@@ -85,6 +85,23 @@ TOOL_LATENCY_SECONDS = Histogram(
     buckets=[0.1, 0.25, 0.5, 1, 2, 3, 5, 10],
 )
 
+# ── Market Data Cache Metrics ─────────────────────────────────────────────────
+
+# `key_kind` is deliberately the key PREFIX (quote, hist, breadth…), never the
+# symbol — per-symbol labels would be thousands of series for no insight.
+MARKET_CACHE_REQUESTS_TOTAL = Counter(
+    "market_cache_requests_total",
+    "Market data cache lookups by tier served",
+    ["key_kind", "tier"],  # l1 | l2 | miss | stale | error
+)
+
+MARKET_FETCH_SECONDS = Histogram(
+    "market_fetch_seconds",
+    "Upstream market data fetch latency in seconds (cache misses only)",
+    ["key_kind"],
+    buckets=[0.25, 0.5, 1, 2, 5, 10, 20, 40],
+)
+
 # ── Token / Cost Metrics ──────────────────────────────────────────────────────
 
 TOKEN_USAGE_TOTAL = Counter(
@@ -181,3 +198,16 @@ def record_tool_call(tool_name: str, success: bool, cache_hit: bool, latency_ms:
         success=str(success).lower(),
     ).inc()
     TOOL_LATENCY_SECONDS.labels(tool_name=tool_name).observe(latency_ms / 1000.0)
+
+
+def record_cache_lookup(key_kind: str, tier: str) -> None:
+    """Record which tier answered a market data cache lookup.
+
+    Called from app/services/cache.py.
+    """
+    MARKET_CACHE_REQUESTS_TOTAL.labels(key_kind=key_kind, tier=tier).inc()
+
+
+def record_cache_fetch(key_kind: str, seconds: float) -> None:
+    """Record how long an upstream fetch took, on cache misses only."""
+    MARKET_FETCH_SECONDS.labels(key_kind=key_kind).observe(seconds)
