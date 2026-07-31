@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
   CalendarDays,
+  ExternalLink,
   Loader2,
   RefreshCw,
   TrendingDown,
@@ -48,6 +49,17 @@ const HEATMAP_RANGES = [
   { value: 'Perf.YTD', label: 'YTD' },
   { value: 'Perf.Y', label: '1Y' },
 ]
+
+/** The same view on tradingview.com, so the widget can be opened full size. */
+function heatmapSourceUrl(dataSource: string, blockColor: string): string {
+  const params = new URLSearchParams({
+    color: blockColor,
+    dataset: dataSource,
+    group: 'sector',
+    size: 'market_cap_basic',
+  })
+  return `https://www.tradingview.com/heatmap/stock/?${params}`
+}
 
 function tone(v?: number | null) {
   if (v == null || v === 0) return 'text-muted-foreground'
@@ -193,35 +205,35 @@ function BreadthCard({ row }: { row: IndexBreadth }) {
 
         {hasData ? (
           <>
-            <div className="flex items-end justify-between gap-2">
+            <div className="flex items-end justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-2xl font-bold leading-none tabular-nums text-emerald-400">
-                  {up.toFixed(1)}%
-                </p>
-                <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
-                  up
-                </p>
-              </div>
-              <div className="min-w-0 text-right">
-                <p className="text-2xl font-bold leading-none tabular-nums text-rose-400">
+                <p className="text-xl font-bold leading-none tabular-nums text-rose-400">
                   {down.toFixed(1)}%
                 </p>
                 <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
                   down
                 </p>
               </div>
+              <div className="min-w-0 text-right">
+                <p className="text-xl font-bold leading-none tabular-nums text-emerald-400">
+                  {up.toFixed(1)}%
+                </p>
+                <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  up
+                </p>
+              </div>
             </div>
 
-            {/* Stacked advance / unchanged / decline bar */}
+            {/* Decline / unchanged / advance, mirroring the figures above it */}
             <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
-              <div className="bg-emerald-500" style={{ width: `${up}%` }} />
-              <div className="bg-muted-foreground/40" style={{ width: `${flat}%` }} />
               <div className="bg-rose-500" style={{ width: `${down}%` }} />
+              <div className="bg-muted-foreground/40" style={{ width: `${flat}%` }} />
+              <div className="bg-emerald-500" style={{ width: `${up}%` }} />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
               <span className="tabular-nums">
-                {row.advancing} up · {row.declining} down
+                {row.declining} down · {row.advancing} up
                 {row.unchanged ? ` · ${row.unchanged} flat` : ''}
               </span>
               <span className={cn('shrink-0 tabular-nums', tone(row.median_change_percent))}>
@@ -509,19 +521,35 @@ export default function MarketPage() {
             Counting advancers and decliners…
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {(indexBreadth?.indices ?? []).map(row => (
-              <BreadthCard key={row.index} row={row} />
-            ))}
-          </div>
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+              {(indexBreadth?.indices ?? []).map(row => (
+                <BreadthCard key={row.index} row={row} />
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground/50">
+              Small caps use the S&P 600 — Russell 2000 membership isn't published by any free
+              source we can read.
+            </p>
+          </>
         )}
       </div>
 
       {/* Heatmap */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Heatmap
+            <a
+              href={heatmapSourceUrl(index, blockColor)}
+              target="_blank"
+              rel="noreferrer noopener"
+              title="Open this heatmap on TradingView"
+              className="flex items-center gap-1 text-[11px] font-medium normal-case tracking-normal text-muted-foreground/60 transition-colors hover:text-primary"
+            >
+              TradingView
+              <ExternalLink size={11} />
+            </a>
           </h2>
 
           <div className="flex flex-wrap items-center gap-2">
