@@ -44,6 +44,9 @@ test-all:  ## Run all tests
 eval:  ## Run offline RAGAS evaluation against golden dataset
 	cd backend && source .venv/bin/activate && python ../scripts/run_evals.py
 
+migrate:  ## Apply database migrations
+	cd backend && source .venv/bin/activate && alembic upgrade head
+
 lint:  ## Run ruff linter on backend
 	cd backend && source .venv/bin/activate && ruff check app tests
 

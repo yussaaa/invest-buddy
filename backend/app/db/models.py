@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models — 6 tables for persistence + RAG.
+"""SQLAlchemy ORM models — persistence, RAG and the market data store.
 
 Design decisions:
 - `final_report` and `agent_results` stored as JSONB — queryable without
@@ -7,18 +7,23 @@ Design decisions:
 - UUIDs as primary keys for analysis_runs and watchlists
 - `users` table is lightweight — just ensures FK integrity, no auth
 - `document_chunks` uses pgvector for embedding storage — no separate vector DB
+- `daily_bars` is a local store of settled price history, so charts and
+  indicators stop depending on the upstream provider being reachable
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     ARRAY,
+    BigInteger,
+    Date,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     SmallInteger,
     String,
@@ -267,3 +272,88 @@ class TickerEntity(Base):
     extracted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class DailyBar(Base):
+    """One settled end-of-day bar.
+
+    Rows here are immutable in normal operation — a session's close does not
+    change once the market shuts. That is what makes this a store rather than a
+    cache: there is no TTL, and a five-year indicator window is one query.
+
+    Today's in-progress session is deliberately never written; a partial bar
+    persisted here would be served to every replica until someone deleted it.
+
+    Both raw and adjusted closes are kept because the two consumers disagree:
+    the chart wants raw prices, while the indicators run on the split- and
+    dividend-adjusted series. Storing one silently changes the other.
+    """
+    __tablename__ = "daily_bars"
+
+    # Wider than the String(10) used elsewhere — FX and index symbols such as
+    # DX-Y.NYB run long, and the extra bytes cost nothing.
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    bar_date: Mapped[date] = mapped_column(Date, primary_key=True)
+
+    open: Mapped[float | None] = mapped_column(Float)
+    high: Mapped[float | None] = mapped_column(Float)
+    low: Mapped[float | None] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    adj_close: Mapped[float | None] = mapped_column(Float)
+    # Crypto and index volumes exceed a 32-bit int — BTC-USD trades ~4e10/day.
+    volume: Mapped[int | None] = mapped_column(BigInteger)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # The composite PK covers "this symbol over a date range"; the standalone
+    # date index covers breadth's "every symbol on one date".
+    __table_args__ = (Index("ix_daily_bars_bar_date", "bar_date"),)
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "date": self.bar_date.isoformat() if self.bar_date else None,
+            "open": self.open,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
+            "adj_close": self.adj_close,
+            "volume": self.volume,
+        }
+
+
+class BarCoverage(Base):
+    """What we can honestly claim to hold for a symbol.
+
+    MIN/MAX over daily_bars cannot answer this: a missing date is
+    indistinguishable between "market holiday" and "never fetched", and a
+    request for full history would silently return a truncated series when we
+    only ever backfilled two years.
+    """
+    __tablename__ = "bar_coverage"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    first_bar_date: Mapped[date | None] = mapped_column(Date)
+    last_bar_date: Mapped[date | None] = mapped_column(Date)
+    bar_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # How far back we asked for, so a MAX request knows whether we can serve it.
+    requested_span: Mapped[str] = mapped_column(String(8), default="2y", nullable=False)
+    last_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_bar_coverage_last_refresh", "last_refresh_at"),)
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "first_bar_date": self.first_bar_date.isoformat() if self.first_bar_date else None,
+            "last_bar_date": self.last_bar_date.isoformat() if self.last_bar_date else None,
+            "bar_count": self.bar_count,
+            "requested_span": self.requested_span,
+            "last_refresh_at": (
+                self.last_refresh_at.isoformat() if self.last_refresh_at else None
+            ),
+            "last_error": self.last_error,
+        }
