@@ -85,9 +85,9 @@ MAJOR_FRED_RELEASES = {
     "h.4.1 factors affecting reserve balances": "medium",
 }
 
-# Index membership for the heatmap. Constituents come from Wikipedia's tables
-# (the only free source with GICS sectors attached); Dow 30 is small and stable
-# enough to also serve as the offline fallback.
+# Index membership for the breadth panel. Constituents come from Wikipedia's
+# tables (the only free source with GICS sectors attached); Dow 30 is small and
+# stable enough to also serve as the offline fallback.
 INDEX_SOURCES: dict[str, dict] = {
     "sp500": {
         "label": "S&P 500",
@@ -119,28 +119,6 @@ DOW30_FALLBACK = [
     "GS", "HD", "HON", "IBM", "JNJ", "JPM", "KO", "MCD", "MMM", "MRK",
     "MSFT", "NKE", "NVDA", "PG", "SHW", "TRV", "UNH", "V", "VZ", "WMT",
 ]
-
-# Heatmap performance windows -> yfinance period.
-HEATMAP_RANGES: dict[str, str] = {
-    "1D": "5d",
-    "1W": "1mo",
-    "1M": "3mo",
-    "3M": "6mo",
-    "6M": "1y",
-    "YTD": "ytd",
-    "1Y": "2y",
-}
-
-# How far back within the downloaded window each range should look.
-HEATMAP_LOOKBACK_DAYS: dict[str, int | None] = {
-    "1D": 1,
-    "1W": 7,
-    "1M": 30,
-    "3M": 91,
-    "6M": 182,
-    "YTD": None,  # anchored to the first bar of the ytd download
-    "1Y": 365,
-}
 
 # range -> (yfinance period, yfinance interval)
 RANGE_PRESETS: dict[str, tuple[str, str]] = {
@@ -568,11 +546,9 @@ def _fetch_economic(start: date, end: date) -> dict:
     }
 
 
-# ── finviz-style heatmap ──────────────────────────────────────────────────────
+# ── index constituents ────────────────────────────────────────────────────────
 
 CONSTITUENTS_TTL = 86400.0     # membership changes a few times a year
-MARKET_CAP_TTL = 43200.0       # tile sizes only need to be same-day accurate
-HEATMAP_TTL = 60.0
 
 _SCRAPE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; agent-invest/0.1; portfolio project)"
@@ -629,121 +605,6 @@ def _constituents_with_fallback(index_key: str) -> list[dict]:
         for m in members:
             m["sector"] = lookup.get(m["symbol"], "Other")
     return members
-
-
-def _market_cap(symbol: str) -> float | None:
-    try:
-        return float(yf.Ticker(symbol).fast_info["marketCap"])
-    except Exception:
-        return None
-
-
-def _fetch_market_caps(symbols: list[str]) -> dict[str, float]:
-    with ThreadPoolExecutor(max_workers=16) as pool:
-        caps = list(pool.map(_market_cap, symbols))
-    return {s: c for s, c in zip(symbols, caps) if c}
-
-
-def _performance(raw: pd.DataFrame, symbol: str, range_key: str) -> tuple[float | None, float | None]:
-    """(% change over the window, last close) for one symbol."""
-    frame = _frame_for(raw, symbol)
-    if frame is None or "Close" not in frame:
-        return None, None
-    closes = frame["Close"].dropna()
-    if closes.empty:
-        return None, None
-
-    last = float(closes.iloc[-1])
-    lookback = HEATMAP_LOOKBACK_DAYS.get(range_key)
-
-    if lookback is None:                      # YTD — first bar of the ytd window
-        base = float(closes.iloc[0])
-    elif lookback == 1:                       # 1D — previous session's close
-        base = float(closes.iloc[-2]) if len(closes) > 1 else last
-    else:
-        cutoff = closes.index[-1] - pd.Timedelta(days=lookback)
-        earlier = closes[closes.index <= cutoff]
-        base = float(earlier.iloc[-1]) if not earlier.empty else float(closes.iloc[0])
-
-    if not base:
-        return None, _round(last, 2)
-    return _round((last - base) / base * 100.0, 2), _round(last, 2)
-
-
-async def get_heatmap(index_key: str = "sp500", range_key: str = "1D", limit: int = 150) -> dict:
-    """Constituents sized by market cap and coloured by performance."""
-    index_key = index_key.lower()
-    range_key = range_key.upper()
-    if index_key not in INDEX_SOURCES:
-        index_key = "sp500"
-    if range_key not in HEATMAP_RANGES:
-        range_key = "1D"
-
-    members = await _cached(
-        f"constituents:{index_key}", CONSTITUENTS_TTL,
-        lambda: _constituents_with_fallback(index_key),
-    )
-    if not members:
-        return {
-            "index": index_key,
-            "index_label": INDEX_SOURCES[index_key]["label"],
-            "range": range_key,
-            "tiles": [],
-            "error": "constituent list unavailable",
-        }
-
-    symbols = [m["symbol"] for m in members]
-    caps = await _cached(
-        f"caps:{index_key}", MARKET_CAP_TTL, lambda: _fetch_market_caps(symbols)
-    )
-
-    # Largest names first; the tail is unreadable at tile size anyway.
-    ranked = sorted(members, key=lambda m: caps.get(m["symbol"], 0.0), reverse=True)[:limit]
-    ranked_symbols = [m["symbol"] for m in ranked]
-
-    def fetch() -> list[dict]:
-        raw = _download(ranked_symbols, period=HEATMAP_RANGES[range_key], interval="1d")
-        tiles = []
-        for member in ranked:
-            change, last = _performance(raw, member["symbol"], range_key)
-            if change is None:
-                continue
-            tiles.append({
-                **member,
-                "market_cap": caps.get(member["symbol"]),
-                "last": last,
-                "change_percent": change,
-            })
-        return tiles
-
-    try:
-        tiles = await _cached(
-            f"heatmap:{index_key}:{range_key}:{limit}",
-            HEATMAP_TTL,
-            fetch,
-            should_cache=lambda t: len(t) > len(ranked) * 0.8,
-        )
-    except Exception as e:
-        log.error("heatmap_fetch_failed", index=index_key, range=range_key, error=str(e))
-        return {
-            "index": index_key,
-            "index_label": INDEX_SOURCES[index_key]["label"],
-            "range": range_key,
-            "tiles": [],
-            "error": str(e),
-        }
-
-    advancing = sum(1 for t in tiles if t["change_percent"] > 0)
-    return {
-        "index": index_key,
-        "index_label": INDEX_SOURCES[index_key]["label"],
-        "range": range_key,
-        "tiles": tiles,
-        "universe_size": len(members),
-        "advancing": advancing,
-        "declining": len(tiles) - advancing,
-        "as_of": datetime.now(timezone.utc).isoformat(),
-    }
 
 
 # ── advance/decline breadth ───────────────────────────────────────────────────

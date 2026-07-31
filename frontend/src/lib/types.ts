@@ -258,27 +258,6 @@ export interface MarketBreadth {
   error?: string
 }
 
-export interface HeatmapTile {
-  symbol: string
-  name: string
-  sector: string
-  market_cap?: number
-  last?: number
-  change_percent: number
-}
-
-export interface Heatmap {
-  index: string
-  index_label: string
-  range: string
-  tiles: HeatmapTile[]
-  universe_size?: number
-  advancing?: number
-  declining?: number
-  as_of?: string
-  error?: string
-}
-
 export interface EarningsEvent {
   symbol: string
   date: string
