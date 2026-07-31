@@ -45,6 +45,12 @@ async def get_overview() -> dict:
     return await market_data.get_overview()
 
 
+@router.get("/breadth")
+async def get_breadth() -> dict:
+    """Advancing vs declining constituents for each major index."""
+    return await market_data.get_breadth()
+
+
 @router.get("/heatmap")
 async def get_heatmap(
     index: str = Query("sp500", description="sp500 | nasdaq100 | dow30"),

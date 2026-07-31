@@ -7,6 +7,7 @@ import type {
   AnalysisResult,
   Heatmap,
   History,
+  MarketBreadth,
   InstrumentProfile,
   MarketEvents,
   MarketOverview,
@@ -131,6 +132,9 @@ export const api = {
 
     overview: (signal?: AbortSignal) =>
       request<MarketOverview>('/market/overview', { signal }),
+
+    breadth: (signal?: AbortSignal) =>
+      request<MarketBreadth>('/market/breadth', { signal }),
 
     heatmap: (index: string, range: string, limit = 150, signal?: AbortSignal) =>
       request<Heatmap>(

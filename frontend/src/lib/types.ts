@@ -177,6 +177,28 @@ export interface MarketOverview {
   error?: string
 }
 
+export interface IndexBreadth {
+  index: string
+  label: string
+  advancing?: number
+  declining?: number
+  unchanged?: number
+  counted?: number
+  constituents?: number
+  advancing_percent?: number
+  declining_percent?: number
+  unchanged_percent?: number
+  avg_change_percent?: number
+  median_change_percent?: number
+  error?: string
+}
+
+export interface MarketBreadth {
+  indices: IndexBreadth[]
+  as_of?: string
+  error?: string
+}
+
 export interface HeatmapTile {
   symbol: string
   name: string

@@ -760,6 +760,114 @@ async def get_heatmap(index_key: str = "sp500", range_key: str = "1D", limit: in
     }
 
 
+# ── advance/decline breadth ───────────────────────────────────────────────────
+
+BREADTH_TTL = 60.0
+
+BREADTH_INDICES = ["sp500", "nasdaq100", "dow30"]
+
+
+def _day_change(raw: pd.DataFrame, symbol: str) -> float | None:
+    """Percent change vs the previous session's close."""
+    frame = _frame_for(raw, symbol)
+    if frame is None or "Close" not in frame:
+        return None
+    closes = frame["Close"].dropna()
+    if len(closes) < 2:
+        return None
+    prev = float(closes.iloc[-2])
+    if not prev:
+        return None
+    return (float(closes.iloc[-1]) - prev) / prev * 100.0
+
+
+async def get_breadth() -> dict:
+    """How many constituents of each index are up vs down on the day."""
+    members_by_index = {}
+    for key in BREADTH_INDICES:
+        members_by_index[key] = await _cached(
+            f"constituents:{key}",
+            CONSTITUENTS_TTL,
+            lambda k=key: _constituents_with_fallback(k),
+        )
+
+    # Indices overlap heavily — price every distinct symbol exactly once.
+    universe = sorted({m["symbol"] for members in members_by_index.values() for m in members})
+    if not universe:
+        return {"indices": [], "error": "constituent lists unavailable"}
+
+    def fetch() -> list[dict]:
+        raw = _download(universe, period="5d", interval="1d")
+        changes = {s: _day_change(raw, s) for s in universe}
+
+        # A batch this size usually drops a handful of symbols; one retry over
+        # just those recovers them and keeps the percentages honest.
+        missing = [s for s, change in changes.items() if change is None]
+        if missing:
+            try:
+                retry = _download(missing, period="5d", interval="1d")
+                for sym in missing:
+                    changes[sym] = _day_change(retry, sym)
+            except Exception as e:
+                # A failed retry must not discard the symbols we did price.
+                log.warning("breadth_retry_failed", count=len(missing), error=str(e))
+            else:
+                log.info(
+                    "breadth_retry",
+                    missing=len(missing),
+                    recovered=sum(1 for s in missing if changes[s] is not None),
+                )
+
+        rows = []
+        for key, members in members_by_index.items():
+            scored = [
+                changes[m["symbol"]]
+                for m in members
+                if changes.get(m["symbol"]) is not None
+            ]
+            if not scored:
+                rows.append({
+                    "index": key,
+                    "label": INDEX_SOURCES[key]["label"],
+                    "error": "no data",
+                })
+                continue
+
+            advancing = sum(1 for c in scored if c > 0)
+            declining = sum(1 for c in scored if c < 0)
+            unchanged = len(scored) - advancing - declining
+
+            rows.append({
+                "index": key,
+                "label": INDEX_SOURCES[key]["label"],
+                "advancing": advancing,
+                "declining": declining,
+                "unchanged": unchanged,
+                "counted": len(scored),
+                "constituents": len(members),
+                "advancing_percent": _round(advancing / len(scored) * 100.0, 1),
+                "declining_percent": _round(declining / len(scored) * 100.0, 1),
+                "unchanged_percent": _round(unchanged / len(scored) * 100.0, 1),
+                "avg_change_percent": _round(sum(scored) / len(scored), 2),
+                "median_change_percent": _round(sorted(scored)[len(scored) // 2], 2),
+            })
+        return rows
+
+    def well_covered(rows: list[dict]) -> bool:
+        """Don't pin a thin scan for the whole TTL — let the next poll retry."""
+        counted = sum(row.get("counted", 0) for row in rows)
+        expected = sum(row.get("constituents", 0) for row in rows) or 1
+        return counted / expected >= 0.95
+
+    try:
+        rows = await _cached("breadth", BREADTH_TTL, fetch, should_cache=well_covered)
+    except Exception as e:
+        log.error("breadth_fetch_failed", error=str(e))
+        return {"indices": [], "error": str(e)}
+
+    return {"indices": rows, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
 async def get_events(days: int = 7, extra_symbols: list[str] | None = None) -> dict:
     """Earnings and economic releases for the current week."""
     start, end = _week_bounds(days)

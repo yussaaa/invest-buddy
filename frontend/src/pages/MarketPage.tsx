@@ -1,7 +1,7 @@
 /**
- * MarketPage — overall market conditions: index cards, a finviz-style heatmap
- * with index/timeframe pickers, sector performance, macro benchmarks, and the
- * week's earnings and economic releases.
+ * MarketPage — overall market conditions: index cards, advance/decline breadth,
+ * TradingView's live heatmap with index/timeframe pickers, sector performance,
+ * macro benchmarks, and the week's earnings and economic releases.
  */
 
 import { useEffect, useState } from 'react'
@@ -20,7 +20,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
-import type { EarningsEvent, MarketEvents, MarketOverview, MarketRow } from '@/lib/types'
+import type {
+  EarningsEvent,
+  IndexBreadth,
+  MarketBreadth,
+  MarketEvents,
+  MarketOverview,
+  MarketRow,
+} from '@/lib/types'
 import TradingViewHeatmap from '@/components/market/TradingViewHeatmap'
 
 // TradingView heatmap identifiers — `dataSource` picks the universe,
@@ -162,6 +169,72 @@ function mergeOverview(prev: MarketOverview | null, next: MarketOverview): Marke
     sectors: mergeRows(prev.sectors, next.sectors),
     macro: mergeRows(prev.macro, next.macro),
   }
+}
+
+/**
+ * Advance/decline for one index: a stacked up/flat/down bar with the split
+ * spelled out, so "index is green but most of its stocks are red" is visible.
+ */
+function BreadthCard({ row }: { row: IndexBreadth }) {
+  const up = row.advancing_percent ?? 0
+  const down = row.declining_percent ?? 0
+  const flat = row.unchanged_percent ?? 0
+  const hasData = (row.counted ?? 0) > 0
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 py-4">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-[13px] font-semibold text-foreground">{row.label}</p>
+          <span className="text-[10px] text-muted-foreground/60">
+            {hasData ? `${row.counted} stocks` : '—'}
+          </span>
+        </div>
+
+        {hasData ? (
+          <>
+            <div className="flex items-end justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-2xl font-bold leading-none tabular-nums text-emerald-400">
+                  {up.toFixed(1)}%
+                </p>
+                <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  up
+                </p>
+              </div>
+              <div className="min-w-0 text-right">
+                <p className="text-2xl font-bold leading-none tabular-nums text-rose-400">
+                  {down.toFixed(1)}%
+                </p>
+                <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  down
+                </p>
+              </div>
+            </div>
+
+            {/* Stacked advance / unchanged / decline bar */}
+            <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
+              <div className="bg-emerald-500" style={{ width: `${up}%` }} />
+              <div className="bg-muted-foreground/40" style={{ width: `${flat}%` }} />
+              <div className="bg-rose-500" style={{ width: `${down}%` }} />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+              <span className="tabular-nums">
+                {row.advancing} up · {row.declining} down
+                {row.unchanged ? ` · ${row.unchanged} flat` : ''}
+              </span>
+              <span className={cn('shrink-0 tabular-nums', tone(row.median_change_percent))}>
+                median {pct(row.median_change_percent)}
+              </span>
+            </div>
+          </>
+        ) : (
+          <p className="py-3 text-xs text-muted-foreground/60">{row.error ?? 'No data'}</p>
+        )}
+      </CardContent>
+    </Card>
+  )
 }
 
 /**
@@ -309,6 +382,9 @@ export default function MarketPage() {
   const [index, setIndex] = useState('SPX500')
   const [blockColor, setBlockColor] = useState('change')
 
+  const [indexBreadth, setIndexBreadth] = useState<MarketBreadth | null>(null)
+  const [loadingBreadth, setLoadingBreadth] = useState(true)
+
   const [events, setEvents] = useState<MarketEvents | null>(null)
   const [loadingEvents, setLoadingEvents] = useState(true)
 
@@ -332,6 +408,29 @@ export default function MarketPage() {
 
     load()
     const id = setInterval(load, 30000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  // Advance/decline — one full constituent scan, so poll gently
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      try {
+        const data = await api.market.breadth()
+        if (!cancelled && data.indices.length) setIndexBreadth(data)
+      } catch {
+        /* keep whatever we already showed */
+      } finally {
+        if (!cancelled) setLoadingBreadth(false)
+      }
+    }
+
+    load()
+    const id = setInterval(load, 60000)
     return () => {
       cancelled = true
       clearInterval(id)
@@ -392,6 +491,31 @@ export default function MarketPage() {
           ))}
         </div>
       )}
+
+      {/* Advance / decline breadth */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Advancers vs decliners
+          </h2>
+          <span className="text-[11px] text-muted-foreground/60">
+            Share of each index's constituents up or down on the day
+          </span>
+        </div>
+
+        {loadingBreadth && !indexBreadth ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Loader2 size={16} className="animate-spin" />
+            Counting advancers and decliners…
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {(indexBreadth?.indices ?? []).map(row => (
+              <BreadthCard key={row.index} row={row} />
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Heatmap */}
       <div className="flex flex-col gap-3">
