@@ -12,6 +12,8 @@ import type {
   MarketEvents,
   MarketOverview,
   Quote,
+  Technicals,
+  TechnicalsExplanation,
   UserPreferences,
   Watchlist,
 } from './types'
@@ -139,6 +141,15 @@ export const api = {
     heatmap: (index: string, range: string, limit = 150, signal?: AbortSignal) =>
       request<Heatmap>(
         `/market/heatmap?index=${index}&range=${range}&limit=${limit}`,
+        { signal }
+      ),
+
+    technicals: (symbol: string, signal?: AbortSignal) =>
+      request<Technicals>(`/market/technicals?symbol=${encodeURIComponent(symbol)}`, { signal }),
+
+    explainTechnicals: (symbol: string, signal?: AbortSignal) =>
+      request<TechnicalsExplanation>(
+        `/market/technicals/explain?symbol=${encodeURIComponent(symbol)}`,
         { signal }
       ),
 

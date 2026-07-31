@@ -24,6 +24,7 @@ import structlog
 import yfinance as yf
 
 from app.config import get_settings
+from app.services.cache import cached as _cached, get_fresh, put
 
 log = structlog.get_logger(__name__)
 
@@ -156,33 +157,6 @@ RANGE_PRESETS: dict[str, tuple[str, str]] = {
 
 INTRADAY_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"}
 
-# ── tiny TTL cache ────────────────────────────────────────────────────────────
-
-_CACHE: dict[str, tuple[float, Any]] = {}
-
-
-async def _cached(
-    key: str,
-    ttl: float,
-    fn: Callable[[], Any],
-    should_cache: Callable[[Any], bool] | None = None,
-) -> Any:
-    """Run the blocking `fn` off-thread unless a fresh cached value exists.
-
-    `should_cache` guards against pinning a partial upstream response — yfinance
-    occasionally drops symbols from a batch, and caching that would show gaps
-    for the whole TTL instead of self-healing on the next poll.
-    """
-    hit = _CACHE.get(key)
-    now = time.time()
-    if hit and now - hit[0] < ttl:
-        return hit[1]
-    value = await asyncio.to_thread(fn)
-    if should_cache is None or should_cache(value):
-        _CACHE[key] = (now, value)
-    return value
-
-
 def _safe(val: Any) -> Any:
     if val is None:
         return None
@@ -253,14 +227,13 @@ def _download(symbols: list[str], period: str = "5d", interval: str = "1d") -> p
 async def get_quotes(symbols: list[str]) -> list[dict]:
     """Last price / change / volume for a batch of symbols."""
     symbols = symbols[:MAX_SYMBOLS]
-    now = time.time()
 
     out: dict[str, dict] = {}
     missing: list[str] = []
     for sym in symbols:
-        hit = _CACHE.get(f"quote:{sym}")
-        if hit and now - hit[0] < QUOTES_TTL:
-            out[sym] = hit[1]
+        hit = get_fresh(f"quote:{sym}", QUOTES_TTL)
+        if hit is not None:
+            out[sym] = hit
         else:
             missing.append(sym)
 
@@ -285,7 +258,7 @@ async def get_quotes(symbols: list[str]) -> list[dict]:
 
         for sym, quote in fetched.items():
             if "error" not in quote:
-                _CACHE[f"quote:{sym}"] = (now, quote)
+                put(f"quote:{sym}", quote)
             out[sym] = quote
 
     return [out.get(s, {"symbol": s, "error": "not found"}) for s in symbols]

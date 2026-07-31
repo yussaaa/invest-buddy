@@ -149,6 +149,65 @@ export interface InstrumentProfile {
   error?: string
 }
 
+export interface RsiReading {
+  current_rsi?: number
+  period?: number
+  zone?: 'overbought' | 'oversold' | 'neutral'
+  interpretation?: string
+  historical?: number[]
+  error?: string
+}
+
+export interface MacdReading {
+  macd?: number
+  signal?: number
+  histogram?: number
+  bullish_crossover?: boolean
+  bearish_crossover?: boolean
+  trend?: 'bullish' | 'bearish'
+  interpretation?: string
+  error?: string
+}
+
+export interface MaLevel {
+  window: number
+  sma?: number
+  available: boolean
+  above?: boolean
+  distance_percent?: number
+  slope_percent_5d?: number
+  direction?: 'rising' | 'falling'
+}
+
+export interface MaLadder {
+  current_price?: number
+  levels: MaLevel[]
+  crosses: { fast: number; slow: number; type: 'bullish' | 'bearish' }[]
+  alignment?: 'bullish' | 'bearish' | 'mixed'
+  above_count?: number
+  total_count?: number
+  interpretation?: string
+  error?: string
+}
+
+export interface Technicals {
+  symbol: string
+  rsi: RsiReading
+  macd: MacdReading
+  moving_averages: MaLadder
+  as_of?: string
+}
+
+export interface TechnicalsExplanation {
+  symbol: string
+  available: boolean
+  explanation?: string
+  model?: string
+  disclaimer?: string
+  reason?: string
+  as_of?: string
+}
+
 export interface MarketRow {
   symbol: string
   label: string

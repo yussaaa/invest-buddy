@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.services import market_data
+from app.services import market_data, technicals
 
 router = APIRouter()
 
@@ -43,6 +43,18 @@ async def get_profile(symbol: str = Query(..., description="Ticker, e.g. AAPL"))
 async def get_overview() -> dict:
     """Indices, sector performance and macro benchmarks."""
     return await market_data.get_overview()
+
+
+@router.get("/technicals")
+async def get_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL")) -> dict:
+    """RSI, MACD and the 5/20/50/250 moving-average ladder."""
+    return await technicals.get_technicals(symbol)
+
+
+@router.get("/technicals/explain")
+async def explain_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL")) -> dict:
+    """Plain-English read of the indicators above, written by the fast model."""
+    return await technicals.explain_technicals(symbol)
 
 
 @router.get("/breadth")
