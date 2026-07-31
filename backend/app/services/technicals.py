@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
+import pandas as pd
 import structlog
 
 from app.config import get_settings
 from app.models.factory import get_provider
+from app.services import bar_store, market_data
 from app.services.cache import cached_async
 from app.tools.calculation.technical_indicators import (
     compute_ma_ladder,
@@ -56,15 +58,72 @@ DISCLAIMER = (
 )
 
 
+# The longest window is MA250, which needs a year of bars plus history for the
+# slope; five years keeps every indicator comfortably inside one read.
+INDICATOR_LOOKBACK_DAYS = 365 * 5
+
+
+async def _adjusted_closes(symbol: str) -> pd.Series | None:
+    """Split/dividend-adjusted closes from the local store.
+
+    Indicators must run on the adjusted series — a raw one shows a phantom gap
+    at every split. Returns None if the store can't answer, in which case the
+    indicators fall back to fetching for themselves.
+    """
+    try:
+        rows = await bar_store.daily_bars_for(
+            symbol,
+            start=date.today() - timedelta(days=INDICATOR_LOOKBACK_DAYS),
+            adjusted=True,
+            span="5y",
+        )
+    except Exception as e:
+        log.warning("technicals_store_unavailable", symbol=symbol, error=str(e))
+        return None
+
+    if not rows:
+        return None
+
+    dates = [r.bar_date for r in rows]
+    closes = [r.close for r in rows]
+
+    # The store deliberately holds settled sessions only, but an indicator that
+    # ignores today is answering a different question than the one on screen —
+    # on a day when a stock moves 15%, RSI computed to yesterday's close is off
+    # by twenty points. Append the live price so the readings match the chart.
+    today = await _todays_close(symbol)
+    if today is not None:
+        dates.append(date.today())
+        closes.append(today)
+
+    return pd.Series(closes, index=pd.to_datetime(dates))
+
+
+async def _todays_close(symbol: str) -> float | None:
+    """Current price from the shared quote cache, if the session has one."""
+    try:
+        quotes = await market_data.get_quotes([symbol])
+    except Exception:
+        return None
+    if not quotes:
+        return None
+    last = quotes[0].get("last")
+    return float(last) if last is not None else None
+
+
 async def get_technicals(symbol: str) -> dict:
     """RSI, MACD and the moving-average ladder for one symbol."""
     symbol = symbol.upper()
 
     async def fetch() -> dict:
+        # One read of the adjusted series feeds all three indicators. Without
+        # this each one downloads its own copy of the same prices.
+        closes = await _adjusted_closes(symbol)
+
         rsi, macd, ladder = await asyncio.gather(
-            compute_rsi(symbol),
-            compute_macd(symbol),
-            compute_ma_ladder(symbol, MA_WINDOWS),
+            compute_rsi(symbol, closes=closes),
+            compute_macd(symbol, closes=closes),
+            compute_ma_ladder(symbol, MA_WINDOWS, closes=closes),
             return_exceptions=True,
         )
 
