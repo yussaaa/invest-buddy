@@ -20,16 +20,27 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
-import type { Heatmap as HeatmapData, MarketEvents, MarketOverview, MarketRow } from '@/lib/types'
-import Heatmap from '@/components/market/Heatmap'
+import type { EarningsEvent, MarketEvents, MarketOverview, MarketRow } from '@/lib/types'
+import TradingViewHeatmap from '@/components/market/TradingViewHeatmap'
 
+// TradingView heatmap identifiers — `dataSource` picks the universe,
+// `blockColor` the performance window used to colour each tile.
 const INDEX_OPTIONS = [
-  { value: 'sp500', label: 'S&P 500' },
-  { value: 'nasdaq100', label: 'Nasdaq 100' },
-  { value: 'dow30', label: 'Dow Jones 30' },
+  { value: 'SPX500', label: 'S&P 500' },
+  { value: 'NASDAQ100', label: 'Nasdaq 100' },
+  { value: 'DJDJI', label: 'Dow Jones 30' },
+  { value: 'AllUSA', label: 'All US' },
 ]
 
-const HEATMAP_RANGES = ['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y']
+const HEATMAP_RANGES = [
+  { value: 'change', label: '1D' },
+  { value: 'Perf.W', label: '1W' },
+  { value: 'Perf.1M', label: '1M' },
+  { value: 'Perf.3M', label: '3M' },
+  { value: 'Perf.6M', label: '6M' },
+  { value: 'Perf.YTD', label: 'YTD' },
+  { value: 'Perf.Y', label: '1Y' },
+]
 
 function tone(v?: number | null) {
   if (v == null || v === 0) return 'text-muted-foreground'
@@ -153,6 +164,119 @@ function mergeOverview(prev: MarketOverview | null, next: MarketOverview): Marke
   }
 }
 
+/**
+ * The next `count` trading days from `startIso` (weekends skipped).
+ *
+ * The start comes from the API, which anchors to US market time — deriving it
+ * from the browser clock would put the columns a day off for anyone whose
+ * local date differs from New York's.
+ */
+function businessDays(startIso: string, count = 5): Date[] {
+  const [y, m, d] = startIso.split('-').map(Number)
+  const cursor = y && m && d ? new Date(y, m - 1, d) : new Date()
+  cursor.setHours(0, 0, 0, 0)
+
+  const days: Date[] = []
+  while (days.length < count) {
+    const weekday = cursor.getDay()
+    if (weekday !== 0 && weekday !== 6) days.push(new Date(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return days
+}
+
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Mon–Fri style calendar: one column per trading day, tickers stacked inside. */
+function EarningsWeek({
+  earnings,
+  startIso,
+  onSelect,
+}: {
+  earnings: EarningsEvent[]
+  startIso: string
+  onSelect: (symbol: string) => void
+}) {
+  const days = businessDays(startIso, 5)
+  const today = startIso
+
+  const byDay = new Map<string, EarningsEvent[]>()
+  for (const e of earnings) {
+    const list = byDay.get(e.date) ?? []
+    list.push(e)
+    byDay.set(e.date, list)
+  }
+
+  return (
+    <div className="grid grid-cols-5 gap-1.5">
+      {days.map(day => {
+        const key = isoDay(day)
+        const items = byDay.get(key) ?? []
+        const isToday = key === today
+
+        return (
+          <div
+            key={key}
+            className={cn(
+              'flex min-h-[132px] flex-col rounded-md border',
+              isToday ? 'border-primary/40 bg-primary/5' : 'border-border/60 bg-muted/20'
+            )}
+          >
+            <div
+              className={cn(
+                'flex items-baseline justify-between gap-1 border-b px-2 py-1.5',
+                isToday ? 'border-primary/30' : 'border-border/50'
+              )}
+            >
+              <span
+                className={cn(
+                  'text-[10px] font-semibold uppercase tracking-wide',
+                  isToday ? 'text-primary' : 'text-muted-foreground'
+                )}
+              >
+                {day.toLocaleDateString('en-US', { weekday: 'short' })}
+              </span>
+              <span className="text-[10px] tabular-nums text-muted-foreground/60">
+                {day.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+              </span>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-1 p-1.5">
+              {items.length === 0 ? (
+                <span className="mt-3 text-center text-[10px] text-muted-foreground/30">—</span>
+              ) : (
+                items.map(e => (
+                  <button
+                    key={e.symbol}
+                    onClick={() => onSelect(e.symbol)}
+                    title={
+                      e.eps_estimate != null
+                        ? `${e.symbol} · EPS est. ${e.eps_estimate.toFixed(2)}`
+                        : e.symbol
+                    }
+                    className="flex flex-col rounded bg-card px-1.5 py-1 text-left transition-colors hover:bg-muted"
+                  >
+                    <span className="font-mono text-[11px] font-semibold text-foreground">
+                      {e.symbol}
+                    </span>
+                    {e.eps_estimate != null && (
+                      <span className="text-[9px] tabular-nums text-muted-foreground/70">
+                        est. {e.eps_estimate.toFixed(2)}
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function PerformanceBar({ row }: { row: MarketRow }) {
   const v = row.change_percent ?? 0
   const width = Math.min(100, Math.abs(v) * 25)  // ±4% fills the half-bar
@@ -182,11 +306,8 @@ export default function MarketPage() {
   const [overviewError, setOverviewError] = useState<string | null>(null)
   const [loadingOverview, setLoadingOverview] = useState(true)
 
-  const [index, setIndex] = useState('sp500')
-  const [range, setRange] = useState('1D')
-  const [heatmap, setHeatmap] = useState<HeatmapData | null>(null)
-  const [loadingHeatmap, setLoadingHeatmap] = useState(true)
-  const [heatmapError, setHeatmapError] = useState<string | null>(null)
+  const [index, setIndex] = useState('SPX500')
+  const [blockColor, setBlockColor] = useState('change')
 
   const [events, setEvents] = useState<MarketEvents | null>(null)
   const [loadingEvents, setLoadingEvents] = useState(true)
@@ -216,31 +337,6 @@ export default function MarketPage() {
       clearInterval(id)
     }
   }, [])
-
-  // Heatmap — reloads whenever the index or window changes
-  useEffect(() => {
-    const controller = new AbortController()
-    setLoadingHeatmap(true)
-    setHeatmapError(null)
-
-    api.market
-      .heatmap(index, range, 150, controller.signal)
-      .then(data => {
-        if (controller.signal.aborted) return
-        setHeatmap(data)
-        setHeatmapError(data.error ?? null)
-      })
-      .catch(e => {
-        if (!controller.signal.aborted) {
-          setHeatmapError(e instanceof Error ? e.message : 'Failed to load heatmap')
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadingHeatmap(false)
-      })
-
-    return () => controller.abort()
-  }, [index, range])
 
   useEffect(() => {
     api.market
@@ -323,18 +419,18 @@ export default function MarketPage() {
             </div>
 
             <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-              {HEATMAP_RANGES.map(r => (
+              {HEATMAP_RANGES.map(opt => (
                 <button
-                  key={r}
-                  onClick={() => setRange(r)}
+                  key={opt.value}
+                  onClick={() => setBlockColor(opt.value)}
                   className={cn(
                     'h-7 rounded px-2 text-xs font-medium transition-colors',
-                    range === r
+                    blockColor === opt.value
                       ? 'bg-primary/20 text-primary'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   )}
                 >
-                  {r}
+                  {opt.label}
                 </button>
               ))}
             </div>
@@ -343,44 +439,10 @@ export default function MarketPage() {
 
         <Card>
           <CardContent className="p-3">
-            {heatmapError && (
-              <Alert variant="destructive" className="mb-3">
-                <AlertCircle size={16} />
-                <AlertDescription>{heatmapError}</AlertDescription>
-              </Alert>
-            )}
-
-            {loadingHeatmap && !heatmap?.tiles.length ? (
-              <div className="flex h-[620px] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-                <Loader2 size={18} className="animate-spin" />
-                Building heatmap…
-                <span className="text-xs text-muted-foreground/60">
-                  First load fetches index membership and market caps
-                </span>
-              </div>
-            ) : (
-              <>
-                <Heatmap
-                  tiles={heatmap?.tiles ?? []}
-                  height={620}
-                  onSelect={symbol => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)}
-                />
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1 text-[10px] text-muted-foreground/60">
-                  <span>
-                    {heatmap?.index_label} · top {heatmap?.tiles.length} of{' '}
-                    {heatmap?.universe_size} by market cap · {range} performance
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="text-rose-400">▉ −3%</span>
-                    <span>▉ 0%</span>
-                    <span className="text-emerald-400">▉ +3%</span>
-                    <span>
-                      {heatmap?.advancing} up / {heatmap?.declining} down
-                    </span>
-                  </span>
-                </div>
-              </>
-            )}
+            <TradingViewHeatmap dataSource={index} blockColor={blockColor} height={620} />
+            <p className="mt-1 px-1 text-[10px] text-muted-foreground/60">
+              Live heatmap by TradingView · tiles sized by market cap, grouped by sector
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -449,13 +511,13 @@ export default function MarketPage() {
           Week ahead
           {events && (
             <span className="normal-case tracking-normal text-[11px] text-muted-foreground/60">
-              {events.week_start} → {events.week_end}
+              {formatDay(events.week_start)} → {formatDay(events.week_end)}
             </span>
           )}
         </h2>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          {/* Earnings */}
+        <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
+          {/* Earnings — laid out as a working-week calendar */}
           <Card>
             <CardContent className="flex flex-col gap-3 py-4">
               <h3 className="text-sm font-semibold text-foreground">
@@ -468,32 +530,12 @@ export default function MarketPage() {
                   <Loader2 size={14} className="animate-spin" />
                   Scanning large caps…
                 </div>
-              ) : earnings.length === 0 ? (
-                <p className="py-6 text-center text-xs text-muted-foreground/60">
-                  No large-cap reports scheduled in the next 7 days.
-                </p>
               ) : (
-                <div className="flex flex-col">
-                  {earnings.map(e => (
-                    <button
-                      key={`${e.symbol}-${e.date}`}
-                      onClick={() => navigate(`/charting?ticker=${e.symbol}`)}
-                      className="flex items-center justify-between gap-2 border-b border-border/40 py-2 text-left last:border-b-0 hover:bg-muted/40"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Badge variant="outline" className="font-mono text-[11px]">
-                          {e.symbol}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDay(e.date)}
-                        </span>
-                      </div>
-                      <span className="text-[11px] tabular-nums text-muted-foreground">
-                        {e.eps_estimate != null ? `EPS est. ${e.eps_estimate.toFixed(2)}` : ''}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                <EarningsWeek
+                  earnings={earnings}
+                  startIso={events?.week_start ?? isoDay(new Date())}
+                  onSelect={symbol => navigate(`/charting?ticker=${symbol}`)}
+                />
               )}
             </CardContent>
           </Card>

@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
@@ -478,13 +479,16 @@ EVENTS_TTL = 1800.0
 
 
 def _week_bounds(days: int) -> tuple[date, date]:
-    """Today through +days.
+    """Today through +days, anchored to US market time.
 
     yfinance only exposes each company's *next* scheduled report, so a
     Monday-anchored week would silently drop anyone who already reported.
     A forward-looking window is what the data can actually support.
+
+    The anchor is New York rather than UTC: after 8pm ET, UTC has already
+    rolled over and today's reports would drop off the calendar.
     """
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(ZoneInfo("America/New_York")).date()
     return today, today + timedelta(days=days)
 
 
