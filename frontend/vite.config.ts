@@ -13,7 +13,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // In a container the API is a sibling service, not localhost — inside
+        // the frontend container localhost is the frontend itself.
+        target: process.env.VITE_API_PROXY || 'http://localhost:8000',
         changeOrigin: true,
       },
     },

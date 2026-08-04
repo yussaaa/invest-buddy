@@ -27,6 +27,13 @@ def _get_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
     hist = yf.Ticker(ticker).history(period=period)
     if hist.empty:
         raise ValueError(f"No price data found for {ticker}")
+
+    # The provider sometimes emits a trailing row with no close — an empty stub
+    # for a session that has not printed yet. Every indicator here reads
+    # .iloc[-1], so one such row makes all of them return null. Drop them.
+    hist = hist[hist["Close"].notna()]
+    if hist.empty:
+        raise ValueError(f"No usable closes for {ticker}")
     return hist
 
 
@@ -39,7 +46,7 @@ def _closes_for(ticker: str, period: str, closes: Optional[pd.Series]) -> pd.Ser
     the fetching behaviour they have always had.
     """
     if closes is not None and not closes.empty:
-        return closes
+        return closes.dropna()
     return _get_ohlcv(ticker, period)["Close"]
 
 

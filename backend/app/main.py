@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
@@ -12,6 +13,29 @@ from app.config import get_settings
 from app.api.v1.router import api_router
 
 log = structlog.get_logger(__name__)
+
+
+def _stamp_alembic_head(connection) -> None:
+    """Mark a create_all-built schema as being at the latest revision.
+
+    Runs inside `connection.run_sync`, so Alembic's synchronous API is fine
+    here. No-op if the database is already stamped.
+    """
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    if MigrationContext.configure(connection).get_current_revision() is not None:
+        return
+
+    root = Path(__file__).resolve().parent.parent  # backend/
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "alembic"))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if head:
+        MigrationContext.configure(connection).stamp(
+            ScriptDirectory.from_config(config), head
+        )
 
 
 @asynccontextmanager
@@ -35,6 +59,11 @@ async def lifespan(app: FastAPI):
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # create_all builds the schema without telling Alembic, so a later
+            # `alembic upgrade head` would try to re-create these tables and
+            # fail on "relation already exists". Stamping the current head
+            # here keeps the two paths from colliding on the same database.
+            await conn.run_sync(_stamp_alembic_head)
         log.info("dev_tables_created")
 
         # Enable pgvector extension + create embedding column + HNSW index
