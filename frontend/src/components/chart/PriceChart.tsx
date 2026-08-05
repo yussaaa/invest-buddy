@@ -25,7 +25,21 @@ export type ChartType = 'candles' | 'line' | 'area'
 
 const UP = '#26a69a'
 const DOWN = '#ef5350'
-const MA_COLORS: Record<number, string> = { 20: '#f0b90b', 50: '#5b8def', 200: '#c94fd1' }
+
+/** Series colour per MA period.
+ *
+ * Exported so the toolbar's swatches read from the same source as the lines —
+ * the two drifting apart would mislabel the chart rather than just look untidy.
+ * Anything not listed falls back to grey, so a new period needs an entry here.
+ */
+export const MA_COLORS: Record<number, string> = {
+  5: '#10b981',    // emerald — kept clear of the blue price line
+  20: '#f0b90b',
+  50: '#5b8def',
+  200: '#c94fd1',
+}
+
+export const MA_FALLBACK_COLOR = '#94a3b8'
 
 interface PriceChartProps {
   candles: Candle[]
@@ -190,7 +204,7 @@ export default function PriceChart({
       let series = maRefs.current.get(period)
       if (!series) {
         series = chart.addSeries(LineSeries, {
-          color: MA_COLORS[period] ?? '#94a3b8',
+          color: MA_COLORS[period] ?? MA_FALLBACK_COLOR,
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,

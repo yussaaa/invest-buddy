@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import type { Candle, History, InstrumentProfile } from '@/lib/types'
 import { useQuotes } from '@/hooks/useQuotes'
-import PriceChart, { type ChartType } from '@/components/chart/PriceChart'
+import PriceChart, { MA_COLORS, MA_FALLBACK_COLOR, type ChartType } from '@/components/chart/PriceChart'
 import TechnicalPanel from '@/components/chart/TechnicalPanel'
 
 const RANGES = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'] as const
@@ -37,7 +37,8 @@ const CHART_TYPES: { value: ChartType; label: string; icon: typeof CandlestickCh
   { value: 'area', label: 'Area', icon: AreaChart },
 ]
 
-const MA_OPTIONS = [20, 50, 200]
+// Matches the moving averages the technical panel reports below the chart.
+const MA_OPTIONS = [5, 20, 50, 200]
 
 const DEFAULT_SYMBOL = 'AAPL'
 
@@ -223,20 +224,33 @@ export default function ChartingPage() {
           {/* Moving averages */}
           <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
             <BarChart3 size={13} className="ml-1 text-muted-foreground" />
-            {MA_OPTIONS.map(p => (
-              <button
-                key={p}
-                onClick={() => toggleMa(p)}
-                className={cn(
-                  'px-2 h-7 rounded text-xs font-medium tabular-nums transition-colors',
-                  maPeriods.includes(p)
-                    ? 'bg-primary/20 text-primary'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                )}
-              >
-                MA{p}
-              </button>
-            ))}
+            {MA_OPTIONS.map(p => {
+              const active = maPeriods.includes(p)
+              return (
+                <button
+                  key={p}
+                  onClick={() => toggleMa(p)}
+                  title={`${active ? 'Hide' : 'Show'} the ${p}-period moving average`}
+                  className={cn(
+                    'flex items-center gap-1.5 px-2 h-7 rounded text-xs font-medium tabular-nums transition-colors',
+                    active
+                      ? 'bg-primary/20 text-primary'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                  )}
+                >
+                  {/* Swatch in the series colour — the lines carry no legend of
+                      their own, so this is the only way to tell them apart. */}
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full transition-opacity',
+                      active ? 'opacity-100' : 'opacity-40'
+                    )}
+                    style={{ backgroundColor: MA_COLORS[p] ?? MA_FALLBACK_COLOR }}
+                  />
+                  MA{p}
+                </button>
+              )
+            })}
           </div>
 
           {/* Chart type */}
