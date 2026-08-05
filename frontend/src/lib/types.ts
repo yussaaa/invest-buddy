@@ -109,6 +109,181 @@ export interface Quote {
   error?: string
 }
 
+export interface Candle {
+  time: string | number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+export interface History {
+  symbol: string
+  range: string
+  interval: string
+  intraday: boolean
+  candles: Candle[]
+  period_change?: number
+  period_change_percent?: number
+  error?: string
+}
+
+export interface InstrumentProfile {
+  symbol: string
+  name: string
+  exchange?: string
+  currency?: string
+  sector?: string
+  industry?: string
+  market_cap?: number
+  pe_ratio?: number
+  forward_pe?: number
+  dividend_yield?: number
+  beta?: number
+  day_low?: number
+  day_high?: number
+  week52_low?: number
+  week52_high?: number
+  avg_volume?: number
+  error?: string
+}
+
+export interface RsiReading {
+  current_rsi?: number
+  period?: number
+  zone?: 'overbought' | 'oversold' | 'neutral'
+  interpretation?: string
+  historical?: number[]
+  error?: string
+}
+
+export interface MacdReading {
+  macd?: number
+  signal?: number
+  histogram?: number
+  bullish_crossover?: boolean
+  bearish_crossover?: boolean
+  trend?: 'bullish' | 'bearish'
+  interpretation?: string
+  error?: string
+}
+
+export interface MaLevel {
+  window: number
+  sma?: number
+  available: boolean
+  above?: boolean
+  distance_percent?: number
+  slope_percent_5d?: number
+  direction?: 'rising' | 'falling'
+}
+
+export interface MaLadder {
+  current_price?: number
+  levels: MaLevel[]
+  crosses: { fast: number; slow: number; type: 'bullish' | 'bearish' }[]
+  alignment?: 'bullish' | 'bearish' | 'mixed'
+  above_count?: number
+  total_count?: number
+  interpretation?: string
+  error?: string
+}
+
+export interface Technicals {
+  symbol: string
+  rsi: RsiReading
+  macd: MacdReading
+  moving_averages: MaLadder
+  as_of?: string
+}
+
+export interface TechnicalsExplanation {
+  symbol: string
+  available: boolean
+  explanation?: string
+  model?: string
+  disclaimer?: string
+  reason?: string
+  as_of?: string
+}
+
+export interface MarketRow {
+  symbol: string
+  label: string
+  note?: string
+  unit?: string
+  last?: number
+  prev_close?: number
+  change?: number
+  change_percent?: number
+  period_change_percent?: number
+  sparkline?: number[]
+  error?: string
+}
+
+export interface MarketOverview {
+  indices: MarketRow[]
+  sectors: MarketRow[]
+  macro: MarketRow[]
+  breadth?: {
+    sectors_advancing: number
+    sectors_total: number
+    best?: MarketRow
+    worst?: MarketRow
+  }
+  as_of?: string
+  error?: string
+}
+
+export interface IndexBreadth {
+  index: string
+  label: string
+  advancing?: number
+  declining?: number
+  unchanged?: number
+  counted?: number
+  constituents?: number
+  advancing_percent?: number
+  declining_percent?: number
+  unchanged_percent?: number
+  avg_change_percent?: number
+  median_change_percent?: number
+  error?: string
+}
+
+export interface MarketBreadth {
+  indices: IndexBreadth[]
+  as_of?: string
+  error?: string
+}
+
+export interface EarningsEvent {
+  symbol: string
+  date: string
+  eps_estimate?: number
+  revenue_estimate?: number
+}
+
+export interface EconomicEvent {
+  name: string
+  date: string
+  importance: 'high' | 'medium'
+  source: string
+}
+
+export interface MarketEvents {
+  week_start: string
+  week_end: string
+  earnings: EarningsEvent[]
+  economic: {
+    events: EconomicEvent[]
+    available: boolean
+    error?: string
+  }
+  error?: string
+}
+
 export interface Watchlist {
   id: string
   user_id: string

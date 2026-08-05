@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     newsapi_key: str = ""
     tavily_api_key: str = ""
     alpha_vantage_key: str = ""
+    fred_api_key: str = ""    # optional — powers the economic release calendar
 
     # ── Monitoring ──────────────────────────────────────────────────────────
     monitoring_backend: Literal["mlflow", "wandb", "none"] = "mlflow"

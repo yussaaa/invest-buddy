@@ -18,11 +18,36 @@ import yfinance as yf
 
 
 def _get_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
-    """Fetch OHLCV as a DataFrame (sync helper)."""
+    """Fetch OHLCV as a DataFrame (sync helper).
+
+    Note the adjusted default: yfinance's `auto_adjust` is True here, so these
+    are split- and dividend-adjusted closes. Indicators want that — a raw
+    series would show a phantom gap on every split.
+    """
     hist = yf.Ticker(ticker).history(period=period)
     if hist.empty:
         raise ValueError(f"No price data found for {ticker}")
+
+    # The provider sometimes emits a trailing row with no close — an empty stub
+    # for a session that has not printed yet. Every indicator here reads
+    # .iloc[-1], so one such row makes all of them return null. Drop them.
+    hist = hist[hist["Close"].notna()]
+    if hist.empty:
+        raise ValueError(f"No usable closes for {ticker}")
     return hist
+
+
+def _closes_for(ticker: str, period: str, closes: Optional[pd.Series]) -> pd.Series:
+    """Use a caller-supplied close series, or fetch one.
+
+    Callers that already hold the history — the charting service reads it once
+    from the local store — pass it in so three indicators don't trigger three
+    downloads of the same prices. Agent tools call with just a ticker and get
+    the fetching behaviour they have always had.
+    """
+    if closes is not None and not closes.empty:
+        return closes.dropna()
+    return _get_ohlcv(ticker, period)["Close"]
 
 
 def _safe(val) -> Optional[float]:
@@ -35,12 +60,13 @@ def _safe(val) -> Optional[float]:
         return None
 
 
-async def compute_rsi(ticker: str, period: int = 14) -> dict:
+async def compute_rsi(
+    ticker: str, period: int = 14, closes: Optional[pd.Series] = None
+) -> dict:
     """Compute RSI and interpret the current value."""
     def _calc():
         import ta
-        hist = _get_ohlcv(ticker)
-        close = hist["Close"]
+        close = _closes_for(ticker, "1y", closes)
 
         rsi_series = ta.momentum.RSIIndicator(close=close, window=period).rsi()
         if rsi_series is None or rsi_series.empty:
@@ -66,12 +92,11 @@ async def compute_rsi(ticker: str, period: int = 14) -> dict:
     return await asyncio.to_thread(_calc)
 
 
-async def compute_macd(ticker: str) -> dict:
+async def compute_macd(ticker: str, closes: Optional[pd.Series] = None) -> dict:
     """Compute MACD, signal line, and histogram."""
     def _calc():
         import ta
-        hist = _get_ohlcv(ticker)
-        close = hist["Close"]
+        close = _closes_for(ticker, "1y", closes)
 
         macd_ind = ta.trend.MACD(close=close)
         macd_val = _safe(macd_ind.macd().iloc[-1])
@@ -187,6 +212,94 @@ async def compute_moving_averages(ticker: str) -> dict:
                 result["signals"].append("Death cross: 50d SMA crossed below 200d SMA — strong bearish signal")
 
         return result
+
+    return await asyncio.to_thread(_calc)
+
+
+async def compute_ma_ladder(
+    ticker: str,
+    windows: tuple[int, ...] = (5, 20, 50, 250),
+    closes: Optional[pd.Series] = None,
+) -> dict:
+    """Compare several SMAs at once: distance from price, slope, stacking order.
+
+    compute_moving_averages covers the classic 20/50/200 trio; this one takes
+    arbitrary windows so a UI can show a short-to-long ladder and say whether
+    the averages are stacked bullishly (each faster MA above the slower one).
+    """
+    def _calc():
+        close = _closes_for(ticker, "5y", closes)
+        current = _safe(close.iloc[-1])
+
+        levels = []
+        for w in windows:
+            if len(close) < w:
+                levels.append({"window": w, "sma": None, "available": False})
+                continue
+
+            series = close.rolling(w).mean()
+            sma = _safe(series.iloc[-1])
+            # Slope over the last week of trading, as a percent of the level.
+            prior = _safe(series.iloc[-6]) if len(series) > 6 else None
+            slope = (
+                round((sma - prior) / prior * 100, 3)
+                if sma is not None and prior not in (None, 0)
+                else None
+            )
+
+            levels.append({
+                "window": w,
+                "sma": sma,
+                "available": sma is not None,
+                "above": bool(current and sma and current > sma),
+                "distance_percent": (
+                    round((current - sma) / sma * 100, 2)
+                    if current and sma else None
+                ),
+                "slope_percent_5d": slope,
+                "direction": (
+                    None if slope is None else "rising" if slope > 0 else "falling"
+                ),
+            })
+
+        # Stacked order — 5 > 20 > 50 > 250 is the textbook uptrend arrangement.
+        values = [lvl["sma"] for lvl in levels if lvl["sma"] is not None]
+        complete = len(values) == len(windows)
+        bullish_stack = complete and all(values[i] > values[i + 1] for i in range(len(values) - 1))
+        bearish_stack = complete and all(values[i] < values[i + 1] for i in range(len(values) - 1))
+
+        # Crossovers between neighbouring windows, on the most recent bar.
+        crosses = []
+        for fast, slow in zip(windows, windows[1:]):
+            if len(close) < slow + 2:
+                continue
+            f = close.rolling(fast).mean()
+            s = close.rolling(slow).mean()
+            if pd.isna(f.iloc[-2]) or pd.isna(s.iloc[-2]):
+                continue
+            if f.iloc[-2] <= s.iloc[-2] and f.iloc[-1] > s.iloc[-1]:
+                crosses.append({"fast": fast, "slow": slow, "type": "bullish"})
+            elif f.iloc[-2] >= s.iloc[-2] and f.iloc[-1] < s.iloc[-1]:
+                crosses.append({"fast": fast, "slow": slow, "type": "bearish"})
+
+        above_count = sum(1 for lvl in levels if lvl.get("above"))
+        return {
+            "ticker": ticker.upper(),
+            "current_price": current,
+            "levels": levels,
+            "crosses": crosses,
+            "alignment": (
+                "bullish" if bullish_stack else "bearish" if bearish_stack else "mixed"
+            ),
+            "above_count": above_count,
+            "total_count": len([lvl for lvl in levels if lvl["available"]]),
+            "interpretation": (
+                f"Price is above {above_count} of "
+                f"{len([lvl for lvl in levels if lvl['available']])} moving averages; "
+                f"the ladder is stacked "
+                f"{'bullishly' if bullish_stack else 'bearishly' if bearish_stack else 'inconsistently'}."
+            ),
+        }
 
     return await asyncio.to_thread(_calc)
 

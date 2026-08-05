@@ -3,7 +3,19 @@
  * Uses native fetch; no external HTTP library needed.
  */
 
-import type { AnalysisResult, Quote, UserPreferences, Watchlist } from './types'
+import type {
+  AnalysisResult,
+  History,
+  MarketBreadth,
+  InstrumentProfile,
+  MarketEvents,
+  MarketOverview,
+  Quote,
+  Technicals,
+  TechnicalsExplanation,
+  UserPreferences,
+  Watchlist,
+} from './types'
 
 const BASE_URL = '/api/v1'
 
@@ -109,6 +121,33 @@ export const api = {
         `/market/quotes?symbols=${encodeURIComponent(symbols.join(','))}`,
         { signal }
       ),
+
+    history: (symbol: string, range: string, signal?: AbortSignal) =>
+      request<History>(
+        `/market/history?symbol=${encodeURIComponent(symbol)}&range=${range}`,
+        { signal }
+      ),
+
+    profile: (symbol: string, signal?: AbortSignal) =>
+      request<InstrumentProfile>(`/market/profile?symbol=${encodeURIComponent(symbol)}`, { signal }),
+
+    overview: (signal?: AbortSignal) =>
+      request<MarketOverview>('/market/overview', { signal }),
+
+    breadth: (signal?: AbortSignal) =>
+      request<MarketBreadth>('/market/breadth', { signal }),
+
+    technicals: (symbol: string, signal?: AbortSignal) =>
+      request<Technicals>(`/market/technicals?symbol=${encodeURIComponent(symbol)}`, { signal }),
+
+    explainTechnicals: (symbol: string, signal?: AbortSignal) =>
+      request<TechnicalsExplanation>(
+        `/market/technicals/explain?symbol=${encodeURIComponent(symbol)}`,
+        { signal }
+      ),
+
+    events: (days = 7, signal?: AbortSignal) =>
+      request<MarketEvents>(`/market/events?days=${days}`, { signal }),
   },
 
   health: {

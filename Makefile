@@ -44,6 +44,9 @@ test-all:  ## Run all tests
 eval:  ## Run offline RAGAS evaluation against golden dataset
 	cd backend && source .venv/bin/activate && python ../scripts/run_evals.py
 
+migrate:  ## Apply database migrations (safe on a create_all-built schema)
+	cd backend && source .venv/bin/activate && python -m app.db.migrate
+
 lint:  ## Run ruff linter on backend
 	cd backend && source .venv/bin/activate && ruff check app tests
 

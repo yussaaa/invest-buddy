@@ -143,6 +143,43 @@ make eval       # RAGAS evaluation against golden dataset
 - Demo video showing streaming multi-agent analysis
 - README with screenshots
 
+### Phase 8 — Market Data + Pricing Dashboard ✅ COMPLETE
+- Charting tab: TradingView Lightweight Charts v5 — candles/line/area, volume pane,
+  MA20/50/200 overlays, crosshair OHLC legend, 9 timeframes (1D intraday → MAX)
+- Market tab: index cards with sparklines, TradingView live heatmap embed
+  (index + performance-window pickers), sector performance, rates/commodities/crypto
+- Advance/decline breadth per index, computed over real constituent lists
+- Week-ahead panel: earnings as a trading-day calendar, economic releases (optional FRED_API_KEY)
+- Technical analysis section: RSI, MACD, 5/20/50/250 MA ladder + on-demand LLM explanation
+- TradingView-style right-hand watchlist rail: collapsible sections, drag-to-resize,
+  per-page collapse memory
+- `GET /api/v1/market/*` — quotes, history, profile, overview, breadth, events, technicals
+
+**Deviations from the original plan, and why:**
+- **No WebSocket feed.** yfinance has no streaming API and gives delayed data. The UI
+  polls (quotes 15s) instead. A real-time feed needs a paid provider (Polygon/Alpaca/
+  Finnhub) — that is the natural upgrade, and `useQuotes` is the single place to change.
+- **Heatmap is TradingView's embed**, not our own treemap. Their widget is genuinely
+  real-time; ours was delayed. Trade-off: tiles link out to TradingView rather than our
+  Charting page.
+- **No bid/ask** — not available from the data source.
+
+### Phase 9 — Market Data Caching + Local Price Store ✅ COMPLETE
+- Redis as a shared L2 behind the in-process cache (`app/services/cache.py`), with
+  single-flight, stale-fallback, and a circuit breaker so Redis being down degrades
+  to L1 rather than failing
+- `daily_bars` + `bar_coverage` tables — a store, not a cache: settled EOD bars never
+  expire, so a 5-year indicator window is one query. Stores raw *and* adjusted closes
+  because charts want raw and indicators want adjusted
+- `bar_store` serves from Postgres, falls back to the provider, and never serves
+  today's in-progress session
+- Technicals cut over: three downloads per page load → one ~10ms query
+- Full stack containerized; migrations run as an explicit step via `python -m app.db.migrate`,
+  which is safe on a schema previously built by dev `create_all`
+
+**Still open:** `get_history`/`get_overview`/`get_breadth` still fetch live; no backfill
+job yet (the store warms lazily); `tests/unit/test_tools.py` still makes live network calls.
+
 ## Common Issues
 
 - **API key not loading**: `.env` must be at project root, not `backend/.env`
