@@ -79,31 +79,52 @@ function Sidebar({ collapsed, width, onToggle, onResize }: SidebarProps) {
     }
   }, [onResize])
 
+  const toggle = (
+    <button
+      onClick={onToggle}
+      title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      className="grid shrink-0 place-items-center h-7 w-7 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+    >
+      {collapsed ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}
+    </button>
+  )
+
   return (
+    // Pinned to the viewport like the watchlist rail. Without this the panel
+    // stretches to the full page height on a long page, pushing anything below
+    // the nav — the collapse control included — hundreds of pixels off-screen.
     <aside
-      className="relative flex flex-col shrink-0 min-h-screen bg-card border-r border-border"
+      className="relative flex flex-col shrink-0 h-screen sticky top-0 bg-card border-r border-border"
       style={{ width: collapsed ? SIDEBAR_RAIL_WIDTH : width }}
     >
-      {/* Logo — the wordmark is the first thing to go when space is tight */}
+      {/* Header: brand plus the collapse control, kept at the top where it is
+          immediately visible rather than at the far end of the panel. */}
       <div
         className={cn(
           'flex items-center py-5',
-          collapsed ? 'justify-center px-0' : 'gap-2 px-5'
+          collapsed ? 'flex-col gap-3 px-0' : 'gap-2 px-4'
         )}
       >
         <BarChart2 className="shrink-0 text-primary" size={22} />
         {!collapsed && (
-          <span className="truncate text-foreground font-semibold text-lg tracking-tight">
+          <span className="min-w-0 flex-1 truncate text-foreground font-semibold text-lg tracking-tight">
             AgentInvest
           </span>
         )}
+        {toggle}
       </div>
 
       <Separator />
 
       {/* Nav links — icons stay clickable when collapsed, so navigation never
           costs more than one click regardless of the panel's state. */}
-      <nav className={cn('flex flex-col gap-1 flex-1 py-4', collapsed ? 'px-2' : 'px-3')}>
+      <nav
+        className={cn(
+          'flex flex-col gap-1 flex-1 overflow-y-auto py-4',
+          collapsed ? 'px-2' : 'px-3'
+        )}
+      >
         {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
@@ -127,27 +148,14 @@ function Sidebar({ collapsed, width, onToggle, onResize }: SidebarProps) {
 
       <Separator />
 
-      {/* Footer: collapse toggle, plus the disclaimer when there is room */}
-      <div
-        className={cn(
-          'flex items-center gap-2 py-4',
-          collapsed ? 'justify-center px-0' : 'px-5'
-        )}
-      >
-        <button
-          onClick={onToggle}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="grid shrink-0 place-items-center h-7 w-7 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
-        >
-          {collapsed ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}
-        </button>
-        {!collapsed && (
+      {/* Footer — hidden when collapsed, where there is no room for prose */}
+      {!collapsed && (
+        <div className="px-5 py-4">
           <p className="truncate text-xs text-muted-foreground/50">
             v0.1.0 · Not financial advice
           </p>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Drag handle — hidden while collapsed, where the width is fixed */}
       {!collapsed && (
