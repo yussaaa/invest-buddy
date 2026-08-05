@@ -2,18 +2,26 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "backend",
-      "runtimeExecutable": "backend/.venv/bin/uvicorn",
-      "runtimeArgs": ["app.main:app", "--port", "8000"],
-      "cwd": "backend",
-      "port": 8000
+      "//": "Default: attach to the containerized frontend from `docker compose up`. No command, so nothing is spawned — it just opens the running stack.",
+      "name": "app",
+      "url": "http://localhost:5173",
+      "port": 5173
     },
     {
+      "//": "Native dev, for when the stack is not in Docker. Conflicts with the frontend container on 5173, so stop that first.",
       "name": "frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "cwd": "frontend",
       "port": 5173
+    },
+    {
+      "//": "Native dev backend. Path is relative to cwd, hence no leading backend/ — needs Postgres and Redis reachable on localhost.",
+      "name": "backend",
+      "runtimeExecutable": ".venv/bin/uvicorn",
+      "runtimeArgs": ["app.main:app", "--port", "8000"],
+      "cwd": "backend",
+      "port": 8000
     }
   ]
 }
