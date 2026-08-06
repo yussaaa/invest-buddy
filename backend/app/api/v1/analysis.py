@@ -106,6 +106,7 @@ async def trigger_analysis(
                         "fundamental_result",
                         "technical_result",
                         "risk_result",
+                        "options_result",
                     ]
                 },
                 "guardrail_flags": [

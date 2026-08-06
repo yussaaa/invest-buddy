@@ -42,6 +42,7 @@ from app.agents.orchestrator.router import classify_query
 from app.agents.orchestrator.synthesizer import synthesise_results
 from app.agents.risk.agent import RiskAssessmentAgent
 from app.agents.sentiment.agent import SentimentAnalysisAgent
+from app.agents.options.agent import OptionsStrategyAgent
 from app.agents.technical.agent import TechnicalAnalysisAgent
 from app.models.factory import get_provider
 
@@ -53,6 +54,7 @@ _sentiment_agent = SentimentAnalysisAgent()
 _technical_agent = TechnicalAnalysisAgent()
 _risk_agent = RiskAssessmentAgent()
 _market_research_agent = MarketResearchAgent()
+_options_agent = OptionsStrategyAgent()
 
 
 # ── Node functions ────────────────────────────────────────────────────────────
@@ -209,6 +211,19 @@ async def risk_node(state: AgentState) -> dict:
     }
 
 
+async def options_node(state: AgentState) -> dict:
+    """Options Strategy specialist agent node."""
+    if "options" not in state.get("required_agents", []):
+        return {}
+    t0 = time.monotonic()
+    result = await _options_agent.run(state)
+    return {
+        "options_result": result,
+        "latency_breakdown": {"options": round(time.monotonic() - t0, 3)},
+        "tool_calls_made": [tc.model_dump() for tc in result.tool_calls],
+    }
+
+
 async def guardrails_node(state: AgentState) -> dict:
     """Check all agent results for hallucinations, advice, missing citations."""
     t0 = time.monotonic()
@@ -228,7 +243,7 @@ async def synthesiser_node(state: AgentState) -> dict:
     # Collect all available agent results
     results: list[AgentResult] = []
     for key in ["market_research_result", "sentiment_result", "fundamental_result",
-                "technical_result", "risk_result"]:
+                "technical_result", "risk_result", "options_result"]:
         r = state.get(key)
         if r is not None:
             results.append(r)
@@ -285,6 +300,7 @@ async def persistence_node(state: AgentState) -> dict:
         from app.agents.technical.prompts import PROMPT_VERSION as tech_v
         from app.agents.risk.prompts import PROMPT_VERSION as risk_v
         from app.agents.market_research.prompts import PROMPT_VERSION as mkt_v
+        from app.agents.options.prompts import PROMPT_VERSION as opt_v
 
         params = {
             "ticker": ticker,
@@ -299,6 +315,7 @@ async def persistence_node(state: AgentState) -> dict:
             "prompt_technical": tech_v,
             "prompt_risk": risk_v,
             "prompt_market_research": mkt_v,
+            "prompt_options": opt_v,
         }
         metrics = {
             "overall_confidence": report.overall_confidence if report else 0,
@@ -342,6 +359,7 @@ def route_to_agents(state: AgentState) -> list[Send]:
         "fundamental": "fundamental_node",
         "technical": "technical_node",
         "risk": "risk_node",
+        "options": "options_node",
     }
     required = state.get("required_agents", list(agent_nodes.keys()))
     return [
@@ -366,6 +384,7 @@ def build_graph() -> Any:
     builder.add_node("fundamental_node", fundamental_node)
     builder.add_node("technical_node", technical_node)
     builder.add_node("risk_node", risk_node)
+    builder.add_node("options_node", options_node)
     builder.add_node("guardrails_node", guardrails_node)
     builder.add_node("synthesiser_node", synthesiser_node)
     builder.add_node("persistence_node", persistence_node)
@@ -385,12 +404,13 @@ def build_graph() -> Any:
             "fundamental_node",
             "technical_node",
             "risk_node",
+            "options_node",
         ],
     )
 
     # All agent nodes converge on guardrails
     for node in ["market_research_node", "sentiment_node", "fundamental_node",
-                 "technical_node", "risk_node"]:
+                 "technical_node", "risk_node", "options_node"]:
         builder.add_edge(node, "guardrails_node")
 
     # Sequential from guardrails onward
@@ -455,6 +475,7 @@ async def run_analysis(
         "fundamental_result": None,
         "technical_result": None,
         "risk_result": None,
+        "options_result": None,
         "guardrail_flags": [],
         "hallucination_score": 0.0,
         "all_citations": [],

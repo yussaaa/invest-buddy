@@ -157,6 +157,10 @@ class ToolRegistry:
             get_analyst_ratings,
             get_options_chain,
         )
+        from app.tools.market_data.options_tool import (
+            get_options_snapshot,
+            screen_option_strategies,
+        )
         from app.tools.calculation.technical_indicators import (
             compute_rsi,
             compute_macd,
@@ -252,6 +256,55 @@ class ToolRegistry:
             fn=get_options_chain,
             category="sentiment",
             cache_ttl_seconds=900,
+        ))
+        # Left alone deliberately: the tool above answers a *sentiment* question
+        # (put/call ratio, IV skew) for the sentiment agent and has no test
+        # coverage, so re-pointing it at the new service would change that
+        # agent's behaviour with nothing to catch it. The two below answer a
+        # different question and are additive.
+        self.register(ToolDefinition(
+            name="get_options_snapshot",
+            description=(
+                "Volatility context for a ticker's option chain: 30-day at-the-money "
+                "implied volatility, realized volatility over 20/252 sessions, how the "
+                "two compare, and a per-expiry summary. Use to judge whether options "
+                "are expensive before looking at individual contracts."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"ticker": {"type": "string"}},
+                "required": ["ticker"],
+            },
+            fn=get_options_snapshot,
+            category="options",
+            cache_ttl_seconds=300,
+        ))
+        self.register(ToolDefinition(
+            name="screen_option_strategies",
+            description=(
+                "Contracts that pass a liquidity, moneyness and probability filter, "
+                "ranked, for cash-secured puts, covered calls, long-dated (LEAPS) calls "
+                "and put credit spreads. Returns computed greeks, model-implied "
+                "probability of profit, annualised yield and breakeven per contract."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "strategy": {
+                        "type": "string",
+                        "enum": [
+                            "csp", "covered_call", "leaps_call", "put_credit_spread", "all",
+                        ],
+                        "default": "all",
+                    },
+                    "limit": {"type": "integer", "default": 3},
+                },
+                "required": ["ticker"],
+            },
+            fn=screen_option_strategies,
+            category="options",
+            cache_ttl_seconds=300,
         ))
         self.register(ToolDefinition(
             name="compute_rsi",

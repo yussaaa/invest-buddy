@@ -235,6 +235,7 @@ async def run_guardrails(
         ("fundamental", state.get("fundamental_result")),
         ("technical", state.get("technical_result")),
         ("risk", state.get("risk_result")),
+        ("options", state.get("options_result")),
     ]
 
     new_flags: list[GuardrailFlag] = []

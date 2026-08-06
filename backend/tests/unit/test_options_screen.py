@@ -13,7 +13,6 @@ from datetime import date, timedelta
 import pytest
 
 from app.services.options_math import bs_price
-
 from app.services.options_screen import (
     MAX_SPREAD_PCT,
     MIN_OPEN_INTEREST,

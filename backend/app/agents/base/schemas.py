@@ -113,7 +113,9 @@ class QueryClassification(BaseModel):
     tickers: list[str] = Field(description="Stock tickers mentioned or implied in the query.")
     primary_ticker: str = Field(description="The main ticker to analyse.")
     required_agents: list[
-        Literal["market_research", "sentiment", "fundamental", "technical", "risk"]
+        Literal[
+            "market_research", "sentiment", "fundamental", "technical", "risk", "options",
+        ]
     ] = Field(description="Which specialist agents are needed for this query.")
     analysis_depth: Literal["quick", "standard", "deep"] = "standard"
     user_intent: str = Field(description="One-sentence summary of what the user wants to know.")

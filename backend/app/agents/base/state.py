@@ -63,6 +63,7 @@ class AgentState(TypedDict):
     fundamental_result: Optional[AgentResult]
     technical_result: Optional[AgentResult]
     risk_result: Optional[AgentResult]
+    options_result: Optional[AgentResult]
 
     # ── Guardrails (set by guardrails node) ──────────────────────────────
     guardrail_flags: Annotated[list[GuardrailFlag], _append_list]

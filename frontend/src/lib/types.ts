@@ -73,7 +73,13 @@ export interface AnalysisResult {
   error?: string
 }
 
-export type AgentName = 'market_research' | 'sentiment' | 'fundamental' | 'technical' | 'risk'
+export type AgentName =
+  | 'market_research'
+  | 'sentiment'
+  | 'fundamental'
+  | 'technical'
+  | 'risk'
+  | 'options'
 export type AgentStatus = 'pending' | 'running' | 'completed' | 'skipped'
 
 export interface AgentProgress {

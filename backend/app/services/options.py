@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import structlog
 import yfinance as yf
@@ -225,7 +225,7 @@ async def explain_options(symbol: str, strategy: str = "all") -> dict:
             "explanation": response.content.strip(),
             "model": response.model,
             "disclaimer": DISCLAIMER,
-            "as_of": datetime.now(timezone.utc).isoformat(),
+            "as_of": datetime.now(UTC).isoformat(),
         }
 
     try:
@@ -315,7 +315,7 @@ async def _build_chain(symbol: str, horizon: str) -> dict:
         "truncated": len(contracts) >= options_screen.MAX_CONTRACTS,
         "partial_expiries": partial,
         "warnings": warnings,
-        "as_of": datetime.now(timezone.utc).isoformat(),
+        "as_of": datetime.now(UTC).isoformat(),
     }
 
 

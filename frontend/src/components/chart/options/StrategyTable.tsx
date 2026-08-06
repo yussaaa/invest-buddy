@@ -248,11 +248,16 @@ const COLUMNS: Record<OptionStrategyKey, Column[]> = {
       render: c => `${fmt(c.effective_leverage)}×`,
     },
     {
-      key: 'bemove',
-      label: 'BE move',
-      hint: 'How far the stock must rise to break even at expiry',
-      sort: c => c.breakeven_move_pct ?? 0,
-      render: c => <span className="text-muted-foreground">{pct(c.breakeven_move_pct, 1)}</span>,
+      // The breakeven *level*, not the move to it. Every row this screen
+      // returns is in the money, and for an in-the-money call the move to
+      // breakeven equals the time value exactly — (strike + debit) − spot is
+      // just debit − intrinsic — so a "BE move %" column next to "Time value"
+      // would repeat the same number under a second name.
+      key: 'breakeven',
+      label: 'Breakeven',
+      hint: 'The price the stock must reach by expiry: strike plus the debit paid',
+      sort: c => c.breakeven ?? 0,
+      render: c => fmt(c.breakeven),
     },
     LIQUIDITY,
     FLAGS,

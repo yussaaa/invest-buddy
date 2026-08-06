@@ -20,7 +20,6 @@ from app.services.options import (
 )
 from app.services.options_screen import Contract
 
-
 # ── Dividend yield ──────────────────────────────────────────────────────────
 
 
