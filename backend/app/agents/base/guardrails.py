@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Optional
+from typing import Any, Literal, Optional
 
 import structlog
 
@@ -59,9 +59,61 @@ _INVESTMENT_ADVICE_PATTERNS: list[str] = [
     r"\bwill (rise|fall|drop|surge|collapse|skyrocket) to \$[\d,]+",
 ]
 
+# Additionally blocked when the text is a chat reply.
+#
+# A written report is composed once; a conversation gets argued with. "Fine,
+# but if you had to pick — buy or sell?" is the single most common follow-up
+# the chat agent will see, and a model that has held the line for three turns
+# will often capitulate on the fourth in wording the list above does not cover:
+# first-person intent ("I'd be buying here"), trader idiom ("load up", "go
+# long"), or simple assent ("yes, buy"). None of those belong in an analyst
+# report either, but only the chat agent is ever pushed into them.
+#
+# What deliberately stays clean in both modes is the vocabulary this feature is
+# built on — describing a condition in the third person. "RSI is oversold,
+# which sometimes precedes a bounce", "a bullish setup", "buyers stepped in
+# near 180" all pass, and tests/unit/test_chat_guardrails.py pins that so a
+# future pattern here cannot quietly ban the language the agent needs.
+_CHAT_CAPITULATION_PATTERNS: list[str] = [
+    r"\bI(?:'d| would| will|'ll| am| ?am)? ?(?:be )?(?:buy|sell|short)(?:ing)?\b",
+    r"\b(?:go|going|gone) long\b",
+    r"\bload(?:ing)? up\b",
+    r"\bget (?:in|out) (?:now|here|today|while)\b",
+    r"\b(?:take|bank|lock in) (?:your |the )?(?:profits?|gains?)\b",
+    r"\bcut (?:your |the )?losses\b",
+    r"\b(?:yes|no|honestly|personally)[,:]? +(?:buy|sell|short)\b",
+    r"\bmy (?:recommendation|advice|call|take|verdict) (?:is|would be)\b",
+    r"\b(?:worth|safe|smart) (?:buying|selling|a buy|a sell)\b",
+    r"\bshould (?:you|i|we) (?:buy|sell|short)\b",
+    r"\bwould (?:buy|sell|avoid|dump) (?:it|this|them|now)\b",
+    r"\bif I were you\b",
+    r"\bin your (?:shoes|position)\b",
+]
+
 _COMPILED_ADVICE_PATTERNS = [
     re.compile(p, re.IGNORECASE) for p in _INVESTMENT_ADVICE_PATTERNS
 ]
+
+_COMPILED_CHAT_PATTERNS = _COMPILED_ADVICE_PATTERNS + [
+    re.compile(p, re.IGNORECASE) for p in _CHAT_CAPITULATION_PATTERNS
+]
+
+# ── Numeric grounding ──────────────────────────────────────────────────────
+
+# Any run of digits with optional decimals, sign and thousands separators.
+_NUMBER_RE = re.compile(r"[-+]?\$?\d[\d,]*(?:\.\d+)?%?")
+
+# Counts, list positions and paragraph numbers are not claims about a stock.
+# Ordinary prose is full of them and none carry information worth checking.
+_SMALL_NUMBER_CEILING = 12
+
+# Four-digit integers in this band read as years, not readings.
+_YEAR_RANGE = (1900, 2100)
+
+# A model that rounds 28.44 to 28.4, or to 28, is describing the same reading.
+# Anything looser starts accepting genuinely different numbers.
+_GROUNDING_RELATIVE_TOLERANCE = 0.02
+_GROUNDING_ABSOLUTE_TOLERANCE = 0.05
 
 # Hallucination-check system prompt
 _HALLUCINATION_SYSTEM_PROMPT = (
@@ -159,18 +211,23 @@ async def check_hallucination(
         return 0.3, [f"Hallucination check failed: {exc}"]
 
 
-def check_investment_advice(text: str) -> list[str]:
+def check_investment_advice(text: str, mode: Literal["strict", "chat"] = "strict") -> list[str]:
     """Regex-based scan for phrases that constitute direct investment advice.
 
     Args:
         text: Any free-form text to scan (findings, summaries, reports).
+        mode: "strict" is the analyst-report policy and the default, so every
+            existing caller is unaffected. "chat" adds the capitulation
+            patterns — it is a superset, never a relaxation.
 
     Returns:
         List of matched phrases that violate the no-direct-advice policy.
         Empty list means the text is clean.
     """
+    patterns = _COMPILED_CHAT_PATTERNS if mode == "chat" else _COMPILED_ADVICE_PATTERNS
+
     flagged: list[str] = []
-    for pattern in _COMPILED_ADVICE_PATTERNS:
+    for pattern in patterns:
         matches = pattern.findall(text)
         if matches:
             # Include the full matched context (up to 120 chars) for auditability
@@ -180,6 +237,90 @@ def check_investment_advice(text: str) -> list[str]:
                 context = text[start:end].strip()
                 flagged.append(f'"{context}"')
     return flagged
+
+
+def _collect_numbers(value: Any, into: set[float]) -> None:
+    """Walk a nested structure and gather every number in it."""
+    if isinstance(value, bool):
+        return
+    if isinstance(value, (int, float)):
+        into.add(float(value))
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_numbers(item, into)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _collect_numbers(item, into)
+
+
+def _parse_number(token: str) -> Optional[float]:
+    cleaned = token.replace("$", "").replace(",", "").replace("%", "")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _is_grounded(candidate: float, evidence: set[float]) -> bool:
+    for known in evidence:
+        tolerance = max(
+            _GROUNDING_ABSOLUTE_TOLERANCE, abs(known) * _GROUNDING_RELATIVE_TOLERANCE
+        )
+        # Magnitude only. Prose carries the sign as a word — a reading stored as
+        # -4.18 is quoted as "4.18% below", and treating that as a different
+        # number would flag correct sentences as invented.
+        for value, reading in ((candidate, known), (abs(candidate), abs(known))):
+            if abs(value - reading) <= tolerance:
+                return True
+            # A reading quoted to fewer decimals than it was computed to.
+            if round(value, 1) == round(reading, 1) or round(value) == round(reading):
+                return True
+    return False
+
+
+def check_numeric_grounding(text: str, evidence: Any) -> list[str]:
+    """Find figures in `text` that do not appear in `evidence`.
+
+    The cheap, reliable half of hallucination detection for this app. Where
+    `check_hallucination` asks a model whether prose is supported — slow, and
+    itself fallible — this asks whether "RSI is at 41" is consistent with a
+    reading that actually says 28.4. It is arithmetic, so it does not have an
+    opinion and cannot be talked out of one.
+
+    Deliberately ignored, because prose is full of them and none are claims
+    about a stock: integers at or below 12 (counts, list positions, "3 of 5
+    averages") and four-digit years.
+
+    Args:
+        text: The candidate reply.
+        evidence: Any structure holding the numbers the text is allowed to
+            quote — signal evidence, indicator readings, the quote. Passed
+            generously: a figure the model legitimately saw but that is absent
+            here reads as a hallucination.
+
+    Returns:
+        The ungrounded figures, as they appeared. Empty means every number in
+        the text traces back to a reading.
+    """
+    known: set[float] = set()
+    _collect_numbers(evidence, known)
+
+    ungrounded: list[str] = []
+    for token in _NUMBER_RE.findall(text):
+        candidate = _parse_number(token)
+        if candidate is None:
+            continue
+        if abs(candidate) <= _SMALL_NUMBER_CEILING and float(candidate).is_integer():
+            continue
+        if (
+            float(candidate).is_integer()
+            and _YEAR_RANGE[0] <= candidate <= _YEAR_RANGE[1]
+        ):
+            continue
+        if not _is_grounded(candidate, known):
+            ungrounded.append(token)
+
+    return ungrounded
 
 
 def inject_disclaimer(report_text: str) -> str:
