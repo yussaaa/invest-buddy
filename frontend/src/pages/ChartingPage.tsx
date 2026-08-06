@@ -22,7 +22,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { cn } from '@/lib/utils'
+import { cn, readJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
 import type { Candle, History, InstrumentProfile } from '@/lib/types'
 import { useQuotes } from '@/hooks/useQuotes'
@@ -39,6 +39,29 @@ const CHART_TYPES: { value: ChartType; label: string; icon: typeof CandlestickCh
 
 // Matches the moving averages the technical panel reports below the chart.
 const MA_OPTIONS = [5, 20, 50, 200]
+
+// Toolbar choices are preferences, not navigation — losing them on every reload
+// means re-picking the same overlays each visit.
+const CHART_PREFS_KEY = 'agent-invest-chart'
+
+interface ChartPrefs {
+  maPeriods: number[]
+  chartType: ChartType
+}
+
+const DEFAULT_PREFS: ChartPrefs = { maPeriods: [50], chartType: 'candles' }
+
+function readChartPrefs(): ChartPrefs {
+  const stored = readJSON<Partial<ChartPrefs>>(CHART_PREFS_KEY, {})
+  return {
+    // Drop anything no longer offered, so a stored period we've since removed
+    // can't leave an untoggleable line on the chart.
+    maPeriods: (stored.maPeriods ?? DEFAULT_PREFS.maPeriods).filter(p =>
+      MA_OPTIONS.includes(p)
+    ),
+    chartType: stored.chartType ?? DEFAULT_PREFS.chartType,
+  }
+}
 
 const DEFAULT_SYMBOL = 'AAPL'
 
@@ -82,8 +105,12 @@ export default function ChartingPage() {
 
   const [draft, setDraft] = useState(symbol)
   const [range, setRange] = useState<string>('1Y')
-  const [chartType, setChartType] = useState<ChartType>('candles')
-  const [maPeriods, setMaPeriods] = useState<number[]>([50])
+  const [chartType, setChartType] = useState<ChartType>(() => readChartPrefs().chartType)
+  const [maPeriods, setMaPeriods] = useState<number[]>(() => readChartPrefs().maPeriods)
+
+  useEffect(() => {
+    localStorage.setItem(CHART_PREFS_KEY, JSON.stringify({ maPeriods, chartType }))
+  }, [maPeriods, chartType])
 
   const [history, setHistory] = useState<History | null>(null)
   const [profile, setProfile] = useState<InstrumentProfile | null>(null)
