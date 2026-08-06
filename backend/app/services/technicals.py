@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.models.factory import get_provider
 from app.services import bar_store, market_data
 from app.services.cache import cached_async
+from app.services.llm_guard import has_llm_credentials, missing_credentials_reason
 from app.tools.calculation.technical_indicators import (
     compute_ma_ladder,
     compute_macd,
@@ -151,33 +152,16 @@ async def get_technicals(symbol: str) -> dict:
     )
 
 
-def _has_llm_credentials(settings) -> bool:
-    """Local providers need no key; hosted ones do."""
-    provider = settings.model_provider
-    if provider in ("ollama", "vllm"):
-        return True
-    return bool(
-        {
-            "openai": settings.openai_api_key,
-            "anthropic": settings.anthropic_api_key,
-            "qwen": settings.dashscope_api_key,
-        }.get(provider)
-    )
-
-
 async def explain_technicals(symbol: str) -> dict:
     """Ask the fast model to describe what the indicators are showing."""
     symbol = symbol.upper()
     settings = get_settings()
 
-    if not _has_llm_credentials(settings):
+    if not has_llm_credentials(settings):
         return {
             "symbol": symbol,
             "available": False,
-            "reason": (
-                f"No credentials configured for MODEL_PROVIDER={settings.model_provider}. "
-                "Set the provider's API key in .env, or use MODEL_PROVIDER=ollama to run locally."
-            ),
+            "reason": missing_credentials_reason(settings),
         }
 
     technicals = await get_technicals(symbol)

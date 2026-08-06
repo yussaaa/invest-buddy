@@ -208,6 +208,177 @@ export interface TechnicalsExplanation {
   as_of?: string
 }
 
+// ── Options ─────────────────────────────────────────────────────────────────
+
+export type OptionStrategyKey =
+  | 'csp'
+  | 'covered_call'
+  | 'leaps_call'
+  | 'put_credit_spread'
+
+/** Per-row caveats. Rendered as badges; rose for the ones that change the trade. */
+export type OptionQuality =
+  | 'sweet_spot'
+  | 'low_oi'
+  | 'wide_spread'
+  | 'last_price_only'
+  | 'iv_unreliable'
+  | 'earnings_before_expiry'
+  | 'short_dte_extrapolation'
+
+/**
+ * `iv_rank_available` decides which measure the panel shows. Under the free
+ * provider there is no implied-vol history to rank against, so `iv_rank` is
+ * null and `iv_percentile_vs_realized` carries the reading instead. Both
+ * providers return every key, so neither branch reads undefined.
+ */
+export interface VolatilityContext {
+  atm_iv_30d?: number | null
+  hv_20?: number | null
+  hv_60?: number | null
+  hv_252?: number | null
+  iv_hv_ratio?: number | null
+  iv_hv_spread?: number | null
+  hv_percentile_252?: number | null
+  iv_percentile_vs_realized?: number | null
+  iv_rank?: number | null
+  iv_percentile_252?: number | null
+  iv_rank_available: boolean
+  method: string
+  note: string
+}
+
+export interface OptionExpirySummary {
+  expiry: string
+  dte: number
+  call_count?: number
+  put_count?: number
+  atm_iv_call?: number | null
+  atm_iv_put?: number | null
+  atm_iv?: number | null
+  total_call_oi?: number
+  total_put_oi?: number
+  put_call_oi_ratio?: number | null
+}
+
+export interface OptionCandidate {
+  strategy: OptionStrategyKey
+  contract_symbol?: string
+  expiry: string
+  dte: number
+  strike: number
+  kind: 'call' | 'put'
+  bid?: number | null
+  ask?: number | null
+  mid: number
+  iv?: number | null
+  delta: number
+  gamma?: number
+  theta_per_day?: number
+  vega?: number
+  moneyness_pct?: number | null
+  open_interest?: number
+  volume?: number
+  spread_pct?: number | null
+  quality: OptionQuality[]
+  earnings_before_expiry?: boolean
+  pop: number
+  /** Comparable within a strategy only — a spread posts the width, not the strike. */
+  score: number
+  score_basis: 'ann_yield_x_pop' | 'pop_per_extrinsic'
+
+  // Cash-secured put / credit spread
+  credit?: number
+  collateral?: number
+  return_on_capital?: number | null
+  annualized_yield?: number | null
+  credit_per_day?: number | null
+  breakeven?: number
+  discount_to_spot?: number | null
+  prob_itm?: number
+
+  // Covered call
+  static_return?: number
+  static_return_annualized?: number | null
+  if_called_return?: number
+  if_called_return_annualized?: number | null
+  upside_cap_pct?: number | null
+  downside_breakeven?: number
+  prob_called?: number
+  prob_keep_shares?: number
+
+  // LEAPS call
+  debit?: number
+  intrinsic?: number
+  extrinsic?: number
+  extrinsic_pct_of_spot?: number | null
+  effective_leverage?: number | null
+  breakeven_move_pct?: number | null
+  theta_drag_per_day_pct?: number | null
+  long_dated?: boolean
+
+  // Put credit spread
+  long_strike?: number
+  long_mid?: number
+  width?: number
+  max_loss?: number
+  max_profit?: number
+  risk_reward?: number | null
+}
+
+export interface OptionUniverseCounts {
+  scanned: number
+  passed_liquidity: number
+  passed_moneyness: number
+  ranked: number
+}
+
+export interface OptionsChain {
+  symbol: string
+  spot?: number
+  risk_free_rate?: number
+  dividend_yield?: number
+  expiries: OptionExpirySummary[]
+  contracts: unknown[]
+  volatility?: VolatilityContext
+  next_earnings?: string | null
+  truncated?: boolean
+  partial_expiries?: { expiry: string; reason: string }[]
+  warnings?: string[]
+  as_of?: string
+  error?: string
+}
+
+export interface OptionsStrategies {
+  symbol: string
+  spot?: number
+  strategy: string
+  as_of?: string
+  volatility?: VolatilityContext
+  expiries?: OptionExpirySummary[]
+  next_earnings?: string | null
+  candidates: OptionCandidate[]
+  universe_counts?: OptionUniverseCounts
+  counts_by_strategy?: Partial<Record<OptionStrategyKey, number>>
+  filters_applied?: Record<string, unknown>
+  probability_model?: string
+  caveats?: string[]
+  disclaimer?: string
+  warnings?: string[]
+  error?: string
+}
+
+export interface OptionsExplanation {
+  symbol: string
+  strategy?: string
+  available: boolean
+  explanation?: string
+  model?: string
+  disclaimer?: string
+  reason?: string
+  as_of?: string
+}
+
 export interface MarketRow {
   symbol: string
   label: string

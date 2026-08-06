@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.services import market_data, technicals
+from app.services import market_data, options, technicals
 
 router = APIRouter()
 
@@ -55,6 +55,34 @@ async def get_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL
 async def explain_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL")) -> dict:
     """Plain-English read of the indicators above, written by the fast model."""
     return await technicals.explain_technicals(symbol)
+
+
+@router.get("/options/chain")
+async def get_options_chain(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    horizon: str = Query("both", description="short (7-45 DTE), leaps (300+ DTE) or both"),
+) -> dict:
+    """Normalised option contracts with computed greeks, plus volatility context."""
+    return await options.get_options_chain(symbol, horizon)
+
+
+@router.get("/options/strategies")
+async def get_option_strategies(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    strategy: str = Query("all", description="csp, covered_call, leaps_call, put_credit_spread, all"),
+    limit: int = Query(15, ge=1, le=50),
+) -> dict:
+    """Contracts that pass the liquidity, moneyness and probability filters."""
+    return await options.get_option_strategies(symbol, strategy, limit)
+
+
+@router.get("/options/explain")
+async def explain_options(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    strategy: str = Query("all", description="Which screen to describe"),
+) -> dict:
+    """Plain-English read of what the screen surfaced, written by the fast model."""
+    return await options.explain_options(symbol, strategy)
 
 
 @router.get("/breadth")
