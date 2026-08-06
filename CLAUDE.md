@@ -78,7 +78,47 @@ three of them editing `services/technicals.py` simultaneously with nothing
 committed. Worktrees give each branch its own directory:
 
 ```bash
-git worktree add ../agent_invest-<name> <branch>
+git worktree add ../agent_invest-<name> -b <branch> dev
+```
+
+**Branch each feature off `dev`, not off the previous feature.** This is the
+part that is easy to get wrong, because the mistake is invisible until it bites.
+Phases 10 through 13 were each cut from the tip of the one before, which made
+them a stack rather than four parallel tracks:
+
+```
+dev ── phase-10 ── phase-11 ── phase-12 ── phase-13     # what happened
+                                                        # (each contains all the earlier ones)
+
+dev ─┬─ phase-10                                        # what was wanted
+     ├─ phase-11
+     ├─ phase-12
+     └─ phase-13
+```
+
+Four symptoms of a stack, all of which showed up:
+
+- The Docker stack bind-mounts the *main* worktree, so whichever branch is
+  checked out there serves every feature below it too. "Why can I see the
+  options panel and the drawdown panel and the sidebar work?" — because the tip
+  contains all three, not because worktrees leak.
+- A fix on an upstream branch does not reach the branches cut from it. It has to
+  be rebased forward, one branch at a time, in order.
+- Every branch inherits the others' bugs, so a bisect points at the wrong
+  feature.
+- Nothing can merge to `dev` independently. Merging phase-12 drags phases 10
+  and 11 in with it, whether or not they are ready.
+
+If a feature genuinely needs another one's code, cut it from that branch on
+purpose and write down why. Inheriting by accident is the thing to avoid.
+
+To straighten a stack out afterwards — safe while the branches are local, and
+worth checking with `git branch -r` first, since rewriting a pushed branch needs
+a force-push:
+
+```bash
+git update-ref refs/backup/<name> <branch>          # reflog is not forever
+git rebase --onto dev <old-base> <branch>
 ```
 
 Each worktree needs the gitignored pieces bridged. Symlink rather than copy —
