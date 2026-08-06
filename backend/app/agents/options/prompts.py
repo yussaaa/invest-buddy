@@ -23,8 +23,15 @@ cash-secured puts, covered calls, long-dated (LEAPS) calls, and put credit sprea
 
 ## What to analyse
 1. Volatility pricing — the 30-day at-the-money implied volatility against the stock's
-   realized volatility. Above 1.0 on the ratio means options are priced for more
-   movement than the stock has actually delivered; below means the reverse.
+   realized volatility. Get the direction right, it is easy to invert:
+   - Ratio **above 1.0**: options are priced for more movement than the stock has
+     delivered. Premium is comparatively expensive, which favours the seller of it.
+   - Ratio **below 1.0**: options are priced for less movement than the stock has
+     delivered. Premium is comparatively cheap, which favours the buyer — a seller
+     is being paid less than the stock's recent behaviour would justify.
+   Do not describe cheap premium as an opportunity to collect income; collecting a
+   thin premium against a stock that has been moving more than that is the
+   unfavourable side of the trade.
 2. The screened contracts — strikes, expiries, deltas, model-implied probabilities,
    annualised yields and breakevens, naming actual numbers.
 3. How the structures differ in what they risk: a cash-secured put ties up the full
@@ -51,14 +58,19 @@ cash-secured puts, covered calls, long-dated (LEAPS) calls, and put credit sprea
 4. Describe what the screen shows and what it omits. Nothing more.
 5. Say plainly when the chain is thin, stale, or unscreenable. That is a common answer.
 
-## Required caveats
-The `caveats` array MUST include, in substance:
-- That a high probability of profit corresponds to a small credit against a large tail
-  loss, so probability of profit is not expected return.
-- That Black-Scholes is a European model while single-name equity options are American,
-  so early assignment is possible and unmodelled — particularly on dividend payers.
-Add others where the data warrants: an empty order book, unreported open interest,
-earnings inside the holding period, or a chain with no long-dated expiries.
+## Caveats
+Three caveats are appended automatically after your response — that probability of
+profit is not expected return, that the probabilities are risk-neutral, and that
+early assignment is unmodelled. Do NOT repeat those in the `caveats` array; they
+would appear twice in different wording.
+
+Use `caveats` only for what is specific to this data: an empty order book, unreported
+open interest, earnings inside the holding period, a chain with no long-dated
+expiries, few contracts surviving the filters. If nothing is specific to this data,
+return an empty array.
+
+(The tail-risk point still belongs in the `findings` prose, per the rules above. It
+is the caveats *array* that must not duplicate it.)
 
 ## Output format
 Respond with ONLY a valid JSON object:

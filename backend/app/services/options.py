@@ -74,7 +74,13 @@ puts, covered calls, long-dated (LEAPS) calls, and put credit spreads.
 
 Write 3 short paragraphs:
 1. Volatility — what the implied volatility is relative to how much the stock has
-   actually been moving, and what that means for the price of premium.
+   actually been moving. Get the direction right, it is easy to invert: implied
+   ABOVE realized means premium is comparatively expensive, and the seller of it is
+   being paid more than the stock's recent behaviour would justify; implied BELOW
+   realized means premium is comparatively cheap, which favours the buyer rather
+   than the seller. Do not describe cheap premium as an opportunity to collect
+   income — collecting a thin premium against a stock that has been moving more
+   than that is the unfavourable side of the trade.
 2. The candidates — what the screen surfaced, naming actual strikes, expiries,
    probabilities and annualised yields, and how the strategies differ in what they
    risk.

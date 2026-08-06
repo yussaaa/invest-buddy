@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.base.guardrails import check_investment_advice
+from app.agents.options.agent import _STRUCTURAL_CAVEATS
 from app.agents.options.prompts import PROMPT_VERSION, SYSTEM_PROMPT, TOOL_LIST
 
 
@@ -68,11 +69,39 @@ def test_prompt_forbids_the_second_person():
     assert 'Never use the word "you"' in SYSTEM_PROMPT
 
 
-def test_prompt_requires_the_structural_caveats():
+def test_the_structural_caveats_are_guaranteed_by_code_not_the_prompt():
+    """They are appended after the model runs, so they cannot go missing.
+
+    They used to be required in the prompt as well, which meant a reader saw
+    each point twice in slightly different wording. The guarantee lives in one
+    place now; this asserts it is the reliable one.
+    """
+    joined = " ".join(_STRUCTURAL_CAVEATS).lower()
+
+    assert "probability of profit is not a high expected return" in joined
+    assert "risk-neutral" in joined
+    assert "early assignment" in joined
+
+
+def test_prompt_does_not_ask_the_model_to_repeat_them():
     lowered = SYSTEM_PROMPT.lower()
 
-    assert "probability of profit is not expected return" in lowered
-    assert "early assignment" in lowered
+    assert "do not repeat those" in lowered
+    assert "appended automatically" in lowered
+
+
+def test_prompt_pins_the_volatility_direction():
+    """Left to infer it, the model got this backwards on live data.
+
+    Implied below realized means the seller is underpaid, which favours the
+    buyer. The explainer described it as leading to higher returns for sellers
+    — the single most damaging sentence a premium-selling screen could produce.
+    """
+    lowered = SYSTEM_PROMPT.lower()
+
+    assert "easy to invert" in lowered
+    assert "favours the buyer" in lowered
+    assert "do not describe cheap premium as an opportunity" in lowered
 
 
 def test_prompt_metadata_matches_the_agent():
