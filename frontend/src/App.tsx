@@ -22,7 +22,9 @@ import {
 } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
+import { ScreenContextProvider } from '@/context/ScreenContext'
 import { cn, readJSON } from '@/lib/utils'
+import ChatLauncher from './components/chat/ChatLauncher'
 import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
 import ChartingPage from './pages/ChartingPage'
@@ -230,6 +232,9 @@ function AppShell() {
         scope={isMarketPage ? 'market' : 'default'}
         defaultCollapsed={isMarketPage}
       />
+      {/* Global, so the agent follows the user across pages. Fixed-position,
+          so it floats over the watchlist rail rather than shifting the layout. */}
+      <ChatLauncher />
     </div>
   )
 }
@@ -238,7 +243,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <TooltipProvider>
-        <AppShell />
+        <ScreenContextProvider>
+          <AppShell />
+        </ScreenContextProvider>
       </TooltipProvider>
     </BrowserRouter>
   )

@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useScreenContext } from '@/context/ScreenContext'
 import { cn, readJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
 import type { Candle, History, InstrumentProfile } from '@/lib/types'
@@ -124,6 +125,20 @@ export default function ChartingPage() {
   const quote = quotes[symbol]
 
   useEffect(() => setDraft(symbol), [symbol])
+
+  // Tell the chat agent what is on screen. `publish` writes to a ref and never
+  // re-renders, which is what makes it safe to call from the crosshair handler
+  // below — that fires on every mouse move.
+  const { publish } = useScreenContext()
+  useEffect(() => {
+    publish({
+      route: '/charting',
+      ticker: symbol,
+      range,
+      chart_type: chartType,
+      ma_periods: maPeriods,
+    })
+  }, [publish, symbol, range, chartType, maPeriods])
 
   // Candles + profile for the selected symbol/range
   const abortRef = useRef<AbortController | null>(null)
@@ -342,7 +357,13 @@ export default function ChartingPage() {
               chartType={chartType}
               maPeriods={maPeriods}
               height={520}
-              onHover={setHovered}
+              onHover={candle => {
+                setHovered(candle)
+                // The candle under the crosshair is the one piece of screen
+                // state the backend cannot reconstruct from the ticker, and it
+                // is what makes "what happened on this bar?" answerable.
+                publish({ hovered_bar: candle })
+              }}
             />
           )}
         </CardContent>

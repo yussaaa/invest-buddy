@@ -4,6 +4,7 @@ import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import type { FinalReport } from '../../lib/types'
+import Markdown from '@/components/ui/Markdown'
 
 // -- Confidence meter ---------------------------------------------------------
 
@@ -21,45 +22,6 @@ function ConfidenceMeter({ value }: { value: number }) {
         <span className={cn('text-sm font-bold', labelColor)}>{pct}%</span>
       </div>
       <Progress value={pct} indicatorClassName={indicatorColor} />
-    </div>
-  )
-}
-
-// -- Markdown-like renderer ---------------------------------------------------
-
-function RenderMarkdown({ text }: { text: string }) {
-  const lines = text.split('\n')
-
-  return (
-    <div className="space-y-2 text-sm text-foreground/80 leading-relaxed">
-      {lines.map((line, i) => {
-        if (line.startsWith('## ')) {
-          return (
-            <h3 key={i} className="text-base font-semibold text-foreground mt-4 mb-1 border-b border-border pb-1">
-              {line.slice(3)}
-            </h3>
-          )
-        }
-        if (line.startsWith('# ')) {
-          return (
-            <h2 key={i} className="text-lg font-bold text-foreground mt-5 mb-1">
-              {line.slice(2)}
-            </h2>
-          )
-        }
-        if (line.startsWith('- ') || line.startsWith('* ')) {
-          return (
-            <div key={i} className="flex gap-2">
-              <span className="text-muted-foreground mt-1">&#8226;</span>
-              <span>{line.slice(2)}</span>
-            </div>
-          )
-        }
-        if (line.trim() === '') {
-          return <div key={i} className="h-1" />
-        }
-        return <p key={i}>{line}</p>
-      })}
     </div>
   )
 }
@@ -156,7 +118,7 @@ export default function FinalReportView({ report }: FinalReportViewProps) {
           </CardHeader>
           <Separator />
           <CardContent className="pt-4">
-            <RenderMarkdown text={report.detailed_analysis} />
+            <Markdown text={report.detailed_analysis} />
           </CardContent>
         </Card>
       )}
