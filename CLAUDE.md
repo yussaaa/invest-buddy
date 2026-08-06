@@ -45,16 +45,70 @@ infra/
 
 ## How to Run
 
-```bash
-# Backend
-cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+The whole stack runs in containers — this is the intended path, and the only one
+that gives you pgvector without installing it locally:
 
-# Frontend
+```bash
+cd infra && docker compose up -d     # API, frontend, Postgres, Redis
+```
+
+Migrations run as their own service before the API starts. Host ports are
+overridable — `BACKEND_PORT`, `FRONTEND_PORT`, `POSTGRES_PORT`, `REDIS_PORT` —
+so a local Postgres or Redis on the default port doesn't block the stack.
+
+Running natively instead needs Postgres with the `vector` extension available;
+plain `postgresql@15` from Homebrew does not have it, and the app will fail at
+startup with `extension "vector" is not available`.
+
+```bash
+# Native, if you have pgvector locally
+cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
 cd frontend && npm run dev
 
 # Tests
-make test          # 18 unit tests (schemas + tools)
+make test          # unit tests only — no DB, no network
+make test-all      # adds integration tests, needs a real PostgreSQL
+make migrate       # safe on a schema previously built by dev create_all
 ```
+
+## Parallel work with git worktrees
+
+Several features have been in flight at once, and sharing one working tree meant
+three of them editing `services/technicals.py` simultaneously with nothing
+committed. Worktrees give each branch its own directory:
+
+```bash
+git worktree add ../agent_invest-<name> <branch>
+```
+
+Each worktree needs the gitignored pieces bridged. Symlink rather than copy —
+`.venv` is 1.3 GB and `node_modules` 159 MB, so copying costs gigabytes while a
+symlinked worktree costs about 1.4 MB:
+
+```bash
+MAIN=/Users/yusali/dev/agent_invest
+ln -sfn "$MAIN/backend/.venv"         <worktree>/backend/.venv
+ln -sfn "$MAIN/frontend/node_modules" <worktree>/frontend/node_modules
+ln -sf  "$MAIN/.env"                  <worktree>/.env
+```
+
+Three things to know:
+
+- **The backend is installed editable**, so a worktree could in principle import
+  `app` from the main tree and silently test the wrong code. It doesn't — CWD
+  wins — but it is worth re-checking if imports ever behave strangely:
+  `python -c "import app.services.market_data as m; print(m.__file__)"` should
+  print the worktree's own path.
+- **Only one worktree can drive the Docker stack on the default ports**, because
+  `infra/docker-compose.yml` bind-mounts `../backend/app` and `../frontend`
+  relative to itself. Verify UI work in whichever tree the stack is up from, or
+  start a second one with the port overrides above.
+- **The symlinked `.venv` and `node_modules` are shared**, so a branch that adds
+  a dependency changes them for every worktree. If two branches need different
+  versions, give that worktree a real directory instead of the symlink.
+
+Remove with `git worktree remove <path>` — deleting the directory by hand leaves
+a stale registration that needs `git worktree prune`.
 
 ## Environment Variables
 
@@ -185,4 +239,10 @@ job yet (the store warms lazily); `tests/unit/test_tools.py` still makes live ne
 - **API key not loading**: `.env` must be at project root, not `backend/.env`
 - **pandas-ta not available**: We use `ta` library instead (Python 3.11 compatible)
 - **Makefile errors**: Recipes must use hard tabs, not spaces
-- **Docker not running**: Use `make dev-backend` + `make dev-frontend` for local dev without Docker
+- **Docker not running**: `make dev-backend` + `make dev-frontend` run natively, but the
+  backend still needs Postgres with pgvector — see How to Run
+- **`extension "vector" is not available`**: the database has no pgvector. Use the
+  containerized stack, or `brew install pgvector` for a native one
+- **`alembic upgrade head` says "relation users already exists"**: the schema was built by
+  dev `create_all`, which records no revision. Use `make migrate` (`python -m app.db.migrate`),
+  which stamps an unstamped schema to the right revision before upgrading
