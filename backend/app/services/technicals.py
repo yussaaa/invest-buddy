@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.models.factory import get_provider
 from app.services import bar_store, market_data
 from app.services.cache import cached_async
+from app.services.drawdown import drawdown_profile
 from app.services.llm_guard import has_llm_credentials, missing_credentials_reason
 from app.tools.calculation.technical_indicators import (
     compute_ma_ladder,
@@ -66,11 +67,15 @@ DISCLAIMER = (
 INDICATOR_LOOKBACK_DAYS = 365 * 5
 
 
-async def _adjusted_closes(symbol: str) -> pd.Series | None:
-    """Split/dividend-adjusted closes from the local store.
+async def _adjusted_series(symbol: str) -> tuple[pd.Series | None, list, float | None]:
+    """One store read, shared by every calculation on this page.
 
-    Indicators must run on the adjusted series — a raw one shows a phantom gap
-    at every split. Returns None if the store can't answer, in which case the
+    Returns `(closes, rows, todays_price)`. The indicators want a close series;
+    the drawdown panel additionally needs the bars, because a 52-week high means
+    the intraday extreme rather than the highest close.
+
+    Adjusted on purpose — a raw series shows a phantom gap at every split.
+    Returns `(None, [], ...)` if the store can't answer, in which case the
     indicators fall back to fetching for themselves.
     """
     try:
@@ -82,10 +87,11 @@ async def _adjusted_closes(symbol: str) -> pd.Series | None:
         )
     except Exception as e:
         log.warning("technicals_store_unavailable", symbol=symbol, error=str(e))
-        return None
+        return None, [], await _todays_close(symbol)
 
+    today = await _todays_close(symbol)
     if not rows:
-        return None
+        return None, [], today
 
     dates = [r.bar_date for r in rows]
     closes = [r.close for r in rows]
@@ -94,12 +100,11 @@ async def _adjusted_closes(symbol: str) -> pd.Series | None:
     # ignores today is answering a different question than the one on screen —
     # on a day when a stock moves 15%, RSI computed to yesterday's close is off
     # by twenty points. Append the live price so the readings match the chart.
-    today = await _todays_close(symbol)
     if today is not None:
         dates.append(date.today())
         closes.append(today)
 
-    return pd.Series(closes, index=pd.to_datetime(dates))
+    return pd.Series(closes, index=pd.to_datetime(dates)), rows, today
 
 
 async def _todays_close(symbol: str) -> float | None:
@@ -119,9 +124,9 @@ async def get_technicals(symbol: str) -> dict:
     symbol = symbol.upper()
 
     async def fetch() -> dict:
-        # One read of the adjusted series feeds all three indicators. Without
-        # this each one downloads its own copy of the same prices.
-        closes = await _adjusted_closes(symbol)
+        # One read of the adjusted series feeds every calculation below.
+        # Without it each would download its own copy of the same prices.
+        closes, rows, today = await _adjusted_series(symbol)
 
         rsi, macd, ladder = await asyncio.gather(
             compute_rsi(symbol, closes=closes),
@@ -136,16 +141,27 @@ async def get_technicals(symbol: str) -> dict:
                 return {"error": str(result)}
             return result
 
+        # Pure and fast enough to run inline; no reason to hand it a thread.
+        try:
+            drawdown = drawdown_profile(rows, current=today)
+        except Exception as e:
+            log.error("technicals_failed", symbol=symbol, indicator="drawdown", error=str(e))
+            drawdown = {"error": str(e)}
+
         return {
             "symbol": symbol,
             "rsi": unwrap(rsi, "rsi"),
             "macd": unwrap(macd, "macd"),
             "moving_averages": unwrap(ladder, "ma_ladder"),
+            "drawdown": drawdown,
             "as_of": datetime.now(timezone.utc).isoformat(),
         }
 
     def usable(result: dict) -> bool:
-        return any("error" not in result[k] for k in ("rsi", "macd", "moving_averages"))
+        return any(
+            "error" not in result[k]
+            for k in ("rsi", "macd", "moving_averages", "drawdown")
+        )
 
     return await cached_async(
         f"technicals:{symbol}", TECHNICALS_TTL, fetch, should_cache=usable

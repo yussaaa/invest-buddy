@@ -14,7 +14,13 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
-import type { MaLevel, Technicals, TechnicalsExplanation } from '@/lib/types'
+import type {
+  DrawdownProfile,
+  DrawdownStatus,
+  MaLevel,
+  Technicals,
+  TechnicalsExplanation,
+} from '@/lib/types'
 
 function fmt(v?: number | null, digits = 2): string {
   if (v == null) return '—'
@@ -41,6 +47,86 @@ function RsiGauge({ value }: { value: number }) {
         className="absolute top-1/2 h-3 w-[3px] -translate-y-1/2 rounded-full bg-foreground"
         style={{ left: `calc(${Math.max(0, Math.min(100, value))}% - 1.5px)` }}
       />
+    </div>
+  )
+}
+
+const DRAWDOWN_LABELS: Record<DrawdownStatus, string> = {
+  at_high: 'At high',
+  pullback: 'Pullback',
+  correction: 'Correction',
+  bear_market: 'Bear market',
+}
+
+/** Emerald near the high through to rose in a bear market. */
+const DRAWDOWN_TONE: Record<DrawdownStatus, { text: string; fill: string }> = {
+  at_high: { text: 'text-emerald-400', fill: 'bg-emerald-500' },
+  pullback: { text: 'text-foreground', fill: 'bg-sky-500' },
+  correction: { text: 'text-amber-400', fill: 'bg-amber-500' },
+  bear_market: { text: 'text-rose-400', fill: 'bg-rose-500' },
+}
+
+/**
+ * Where price sits between its 52-week low and high, with the correction and
+ * bear-market levels drawn on the same scale so the thresholds are visible
+ * rather than left as arithmetic for the reader.
+ */
+function RangeBar({ profile }: { profile: DrawdownProfile }) {
+  const { low_52w: low, high_52w: high, range_position: position } = profile
+  if (low == null || high == null || position == null) return null
+
+  const span = high - low
+  // A halted or single-bar symbol has no range to place anything within.
+  if (span <= 0) {
+    return <p className="py-1 text-xs text-muted-foreground/60">No range to show</p>
+  }
+
+  // The thresholds are levels measured down from the high; convert each to its
+  // position on the low→high track. They fall off the left end when the range
+  // is narrower than the threshold, in which case there is nothing to draw.
+  const tickAt = (fraction: number) => ((high * fraction - low) / span) * 100
+  const ticks = [
+    { label: '−20%', pct: tickAt(0.8) },
+    { label: '−10%', pct: tickAt(0.9) },
+  ].filter(t => t.pct > 2 && t.pct < 98)
+
+  const fill = DRAWDOWN_TONE[profile.status ?? 'pullback'].fill
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="relative h-2 w-full rounded-full bg-muted">
+        <div
+          className={cn('absolute left-0 top-0 h-full rounded-l-full opacity-40', fill)}
+          style={{ width: `${position}%` }}
+        />
+        {ticks.map(t => (
+          <div
+            key={t.label}
+            title={`${t.label} from the 52-week high`}
+            className="absolute top-1/2 h-3 w-px -translate-y-1/2 bg-muted-foreground/50"
+            style={{ left: `${t.pct}%` }}
+          />
+        ))}
+        <div
+          data-testid="range-marker"
+          className="absolute top-1/2 h-3.5 w-[3px] -translate-y-1/2 rounded-full bg-foreground"
+          style={{ left: `calc(${position}% - 1.5px)` }}
+        />
+      </div>
+
+      <div className="relative h-3 text-[9px] text-muted-foreground/50">
+        <span className="absolute left-0">{fmt(low)}</span>
+        {ticks.map(t => (
+          <span
+            key={t.label}
+            className="absolute -translate-x-1/2 tabular-nums"
+            style={{ left: `${t.pct}%` }}
+          >
+            {t.label}
+          </span>
+        ))}
+        <span className="absolute right-0">{fmt(high)}</span>
+      </div>
     </div>
   )
 }
@@ -151,6 +237,7 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
   const rsi = data?.rsi
   const macd = data?.macd
   const ladder = data?.moving_averages
+  const drawdown = data?.drawdown
 
   const rsiValue = rsi?.current_rsi
   const zoneColor =
@@ -167,7 +254,7 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
           Technical analysis
         </h2>
         <span className="text-[11px] text-muted-foreground/60">
-          RSI(14) · MACD(12,26,9) · SMA 5/20/50/200/250 — computed from daily closes
+          RSI(14) · MACD(12,26,9) · SMA 5/20/50/200/250 · 52w range — from adjusted daily bars
         </span>
       </div>
 
@@ -328,6 +415,78 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                         {c.fast}/{c.slow} {c.type} cross
                       </Badge>
                     ))}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Drawdown — where price stands against its own 52-week range */}
+          <Card>
+            <CardContent className="flex flex-col gap-2.5 py-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] font-semibold text-foreground">Off the high</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  52 weeks
+                </span>
+              </div>
+
+              {drawdown?.error || drawdown?.from_high_percent == null ? (
+                <p className="py-3 text-xs text-muted-foreground/60">
+                  {drawdown?.error ?? 'No data'}
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      className={cn(
+                        'text-2xl font-bold tabular-nums',
+                        DRAWDOWN_TONE[drawdown.status ?? 'pullback'].text
+                      )}
+                    >
+                      {signed(drawdown.from_high_percent, 1)}%
+                    </span>
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        'text-[10px]',
+                        DRAWDOWN_TONE[drawdown.status ?? 'pullback'].text
+                      )}
+                    >
+                      {DRAWDOWN_LABELS[drawdown.status ?? 'pullback']}
+                    </Badge>
+                  </div>
+
+                  <RangeBar profile={drawdown} />
+
+                  <div className="flex flex-col gap-1 pt-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">
+                        52w high{drawdown.high_52w_date ? ` · ${drawdown.high_52w_date}` : ''}
+                      </span>
+                      <span className="tabular-nums text-foreground">{fmt(drawdown.high_52w)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">
+                        Above the low
+                      </span>
+                      <span className="tabular-nums text-emerald-400">
+                        {signed(drawdown.from_low_percent, 1)}%
+                      </span>
+                    </div>
+                    {drawdown.worst && (
+                      <div
+                        className="flex justify-between"
+                        title={`Peak ${drawdown.worst.peak_date} → trough ${drawdown.worst.trough_date}`}
+                      >
+                        <span className="text-muted-foreground">
+                          Worst fall (5y){drawdown.worst.recovered ? '' : ' · not recovered'}
+                        </span>
+                        <span className="tabular-nums text-rose-400">
+                          {signed(drawdown.worst.depth_percent, 1)}%
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </>
               )}

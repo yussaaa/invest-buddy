@@ -196,11 +196,38 @@ export interface MaLadder {
   error?: string
 }
 
+export type DrawdownStatus = 'at_high' | 'pullback' | 'correction' | 'bear_market'
+
+export interface DrawdownProfile {
+  current?: number
+  high_52w?: number
+  /** "today" when the live price has just set a new high above the stored bars. */
+  high_52w_date?: string
+  low_52w?: number
+  low_52w_date?: string
+  /** Negative or zero — price cannot be above its own high. */
+  from_high_percent?: number
+  from_low_percent?: number
+  /** 0-100, where price sits between the 52-week low and high. */
+  range_position?: number
+  status?: DrawdownStatus
+  sessions?: number
+  worst?: {
+    depth_percent: number
+    peak_date: string
+    trough_date: string
+    recovered: boolean
+    recovered_date?: string | null
+  } | null
+  error?: string
+}
+
 export interface Technicals {
   symbol: string
   rsi: RsiReading
   macd: MacdReading
   moving_averages: MaLadder
+  drawdown: DrawdownProfile
   as_of?: string
 }
 
