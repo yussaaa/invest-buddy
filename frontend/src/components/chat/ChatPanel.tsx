@@ -71,7 +71,10 @@ export default function ChatPanel({ open, onClose, ticker }: ChatPanelProps) {
       aria-label="Ask about this ticker"
       className={cn(
         'fixed bottom-24 right-6 z-40 flex w-[min(26rem,calc(100vw-3rem))]',
-        'max-h-[min(38rem,calc(100vh-9rem))] flex-col overflow-hidden',
+        // Stops short of the page header: the symbol search and live price sit
+        // up there, and covering them on the very page the chat is about is a
+        // poor trade for a few more lines of transcript.
+        'max-h-[min(36rem,calc(100vh-15rem))] flex-col overflow-hidden',
         'rounded-2xl border border-border bg-card shadow-2xl',
       )}
     >

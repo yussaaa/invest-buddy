@@ -224,14 +224,26 @@ async def gather_node(state: ChatState) -> dict:
         log.warning("chat_gather_failed", error=str(exc))
         return {"messages": [], "latency_breakdown": {"gather": 0.0}}
 
-    if not response.tool_calls:
+    # Drop anything already fetched this turn. A model that reads an empty news
+    # result often asks for it again verbatim, which otherwise burns every
+    # iteration and grows the prompt each time without adding a fact. When
+    # nothing new is left to ask for, the loop has converged.
+    already = {_signature(r["name"], r.get("arguments") or {})
+               for r in state.get("tool_records", [])}
+    fresh = [c for c in response.tool_calls
+             if _signature(c.name, c.arguments) not in already]
+
+    if not fresh:
+        if response.tool_calls:
+            log.debug("chat_gather_repeated_calls",
+                      tools=[c.name for c in response.tool_calls])
         return {
             "messages": [],
             "usage": _usage(state, response),
             "latency_breakdown": {"gather": round(time.monotonic() - t0, 3)},
         }
 
-    calls = response.tool_calls[: settings.chat_max_tool_calls]
+    calls = fresh[: settings.chat_max_tool_calls]
     return {
         "messages": [{
             "role": "assistant",
@@ -246,6 +258,11 @@ async def gather_node(state: ChatState) -> dict:
         "usage": _usage(state, response),
         "latency_breakdown": {"gather": round(time.monotonic() - t0, 3)},
     }
+
+
+def _signature(name: str, arguments: dict) -> str:
+    """Identity of a tool call, stable across argument ordering."""
+    return f"{name}:{json.dumps(arguments, sort_keys=True, default=str)}"
 
 
 def _pending_calls(state: ChatState) -> list[ToolCall]:
@@ -640,9 +657,13 @@ async def stream_chat_turn(
             model=_model_name(settings),
             temperature=0.3,
             max_tokens=ANSWER_MAX_TOKENS,
-            on_usage=lambda p, c: state.update(
-                usage={"prompt_tokens": p, "completion_tokens": c}
-            ),
+            # Accumulate: the gather call already contributed, and replacing
+            # here would report a turn as cheaper than it was.
+            on_usage=lambda p, c: state.update(usage={
+                "prompt_tokens": (state.get("usage") or {}).get("prompt_tokens", 0) + p,
+                "completion_tokens":
+                    (state.get("usage") or {}).get("completion_tokens", 0) + c,
+            }),
         ):
             chunks.append(chunk)
             yield "token", {"text": chunk}

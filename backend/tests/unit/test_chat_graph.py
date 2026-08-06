@@ -227,9 +227,14 @@ async def test_parallel_tool_calls_all_run(patched, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_model_that_asks_for_tools_forever_is_capped(patched, monkeypatch):
-    """Without the cap this is an unbounded spend, not just a slow reply."""
+    """Without the cap this is an unbounded spend, not just a slow reply.
+
+    Arguments differ each round so the duplicate check cannot end the loop —
+    the iteration cap is what has to.
+    """
     always = [
-        reply(tool_calls=[ToolCall(id=f"c{i}", name="compute_rsi", arguments={})])
+        reply(tool_calls=[ToolCall(id=f"c{i}", name="compute_rsi",
+                                   arguments={"period": i})])
         for i in range(20)
     ]
     use_provider(monkeypatch, FakeProvider(always + [reply("Forced answer.")]))
@@ -254,6 +259,60 @@ async def test_too_many_calls_in_one_iteration_are_trimmed(patched, monkeypatch)
     state = await run()
 
     assert len(state["tool_records"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_re_requesting_the_same_call_ends_the_loop(patched, monkeypatch):
+    """A model that reads an empty result often asks for it again, verbatim.
+
+    Left alone that burns every iteration and grows the prompt each time
+    without adding a fact.
+    """
+    same = ToolCall(id="c1", name="get_recent_news", arguments={"ticker": "AAPL"})
+    use_provider(monkeypatch, FakeProvider([
+        reply(tool_calls=[same]),
+        reply(tool_calls=[ToolCall(id="c2", name="get_recent_news",
+                                   arguments={"ticker": "AAPL"})]),
+        reply("Answered."),
+    ]))
+
+    state = await run()
+
+    assert len(patched.executed) == 1
+    assert state["tool_iterations"] == 1
+
+
+@pytest.mark.asyncio
+async def test_argument_order_does_not_defeat_the_duplicate_check(patched, monkeypatch):
+    use_provider(monkeypatch, FakeProvider([
+        reply(tool_calls=[ToolCall(id="c1", name="compute_rsi",
+                                   arguments={"ticker": "AAPL", "period": 14})]),
+        reply(tool_calls=[ToolCall(id="c2", name="compute_rsi",
+                                   arguments={"period": 14, "ticker": "AAPL"})]),
+        reply("Answered."),
+    ]))
+
+    await run()
+
+    assert len(patched.executed) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_new_call_still_runs(patched, monkeypatch):
+    use_provider(monkeypatch, FakeProvider([
+        reply(tool_calls=[ToolCall(id="c1", name="get_recent_news",
+                                   arguments={"ticker": "AAPL"})]),
+        reply(tool_calls=[ToolCall(id="c2", name="get_earnings_calendar",
+                                   arguments={"ticker": "AAPL"})]),
+        reply("ENOUGH"),
+        reply("Answered."),
+    ]))
+
+    await run()
+
+    assert [name for name, _ in patched.executed] == [
+        "get_recent_news", "get_earnings_calendar",
+    ]
 
 
 @pytest.mark.asyncio
