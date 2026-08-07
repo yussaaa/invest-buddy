@@ -1,6 +1,14 @@
-"""Unit tests for tool implementations — uses real yfinance data (no mocks)."""
+"""Unit tests for tool implementations — uses real yfinance data (no mocks).
+
+Marked `network` because every test here calls Yahoo for real. That makes them
+worth keeping — they catch provider shape changes nothing else would — and
+unsuitable as a merge gate, where a rate limit or a changed endpoint would fail
+a pull request that touched none of this. CI runs `-m "not network"`.
+"""
 
 import pytest
+
+pytestmark = pytest.mark.network
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,76 @@
+name: CI
+
+# Runs on every pull request regardless of base branch, so a stacked PR that
+# targets another feature branch is checked too, not only the one aimed at dev.
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+# A new push supersedes the run in flight for the same ref. Without this a
+# rebase-heavy stack queues several runs of the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend · unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        # The dependency tree is heavy — sentence-transformers alone pulls
+        # torch — so the first run on a cold cache is slow. Splitting a `test`
+        # extra in pyproject would trim it, but that changes how the app is
+        # installed everywhere else, so it is left for a deliberate change.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Unit tests
+        # `not network` excludes tests/unit/test_tools.py, which calls Yahoo for
+        # real. Those are worth keeping locally and wrong as a merge gate: a
+        # rate limit would fail a pull request that touched none of it.
+        run: pytest tests/unit -m "not network" -q
+
+  frontend:
+    name: frontend · typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        # The backend returns untyped dicts, so lib/types.ts is the only thing
+        # holding the API contract. A typecheck is what catches a payload that
+        # drifted from the interface describing it.
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
