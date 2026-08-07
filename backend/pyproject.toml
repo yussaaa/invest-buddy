@@ -99,6 +99,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "integration: marks tests as integration tests (require running PostgreSQL)",
+    "network: marks tests that make live calls to a third-party API",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
 
