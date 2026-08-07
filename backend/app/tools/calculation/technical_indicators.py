@@ -216,6 +216,24 @@ async def compute_moving_averages(ticker: str) -> dict:
     return await asyncio.to_thread(_calc)
 
 
+# A crossover only carries information when the two averages respond on
+# genuinely different timescales. Below this ratio they move together.
+MIN_CROSS_RATIO = 2.0
+
+
+def _cross_pairs(windows: tuple[int, ...]) -> list[tuple[int, int]]:
+    """Neighbouring window pairs that are far enough apart to be meaningful.
+
+    (5, 20) and (50, 200) qualify; (200, 250) does not — those two averages are
+    close enough that they cross on noise.
+    """
+    return [
+        (fast, slow)
+        for fast, slow in zip(windows, windows[1:])
+        if fast and slow / fast >= MIN_CROSS_RATIO
+    ]
+
+
 async def compute_ma_ladder(
     ticker: str,
     windows: tuple[int, ...] = (5, 20, 50, 250),
@@ -262,15 +280,18 @@ async def compute_ma_ladder(
                 ),
             })
 
-        # Stacked order — 5 > 20 > 50 > 250 is the textbook uptrend arrangement.
+        # Stacked order — fastest above slowest is the textbook uptrend.
         values = [lvl["sma"] for lvl in levels if lvl["sma"] is not None]
         complete = len(values) == len(windows)
         bullish_stack = complete and all(values[i] > values[i + 1] for i in range(len(values) - 1))
         bearish_stack = complete and all(values[i] < values[i + 1] for i in range(len(values) - 1))
 
-        # Crossovers between neighbouring windows, on the most recent bar.
+        # Crossovers, on the most recent bar. Only between pairs far enough
+        # apart to mean something: neighbouring windows like 200 and 250 track
+        # each other so closely that a "cross" is noise, and reporting it would
+        # invite a reader to act on nothing.
         crosses = []
-        for fast, slow in zip(windows, windows[1:]):
+        for fast, slow in _cross_pairs(windows):
             if len(close) < slow + 2:
                 continue
             f = close.rolling(fast).mean()

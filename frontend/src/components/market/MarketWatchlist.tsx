@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { cn, readJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
 import type { Quote, Watchlist } from '@/lib/types'
 import { useQuotes } from '@/hooks/useQuotes'
@@ -99,15 +99,6 @@ function badgeColor(symbol: string): string {
 }
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
-
-function readJSON<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : fallback
-  } catch {
-    return fallback
-  }
-}
 
 // ── rows ──────────────────────────────────────────────────────────────────────
 

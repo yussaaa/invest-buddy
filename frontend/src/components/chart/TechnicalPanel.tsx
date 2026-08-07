@@ -1,5 +1,5 @@
 /**
- * TechnicalPanel — RSI, MACD and the 5/20/50/250 moving-average ladder for the
+ * TechnicalPanel — RSI, MACD and the 5/20/50/200/250 moving-average ladder for the
  * charted symbol, with an on-demand plain-English read from the fast model.
  *
  * The explanation is behind a button rather than automatic: it costs a model
@@ -167,7 +167,7 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
           Technical analysis
         </h2>
         <span className="text-[11px] text-muted-foreground/60">
-          RSI(14) · MACD(12,26,9) · SMA 5/20/50/250 — computed from daily closes
+          RSI(14) · MACD(12,26,9) · SMA 5/20/50/200/250 — computed from daily closes
         </span>
       </div>
 

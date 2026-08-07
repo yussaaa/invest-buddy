@@ -30,7 +30,9 @@ log = structlog.get_logger(__name__)
 TECHNICALS_TTL = 120.0
 EXPLANATION_TTL = 900.0
 
-MA_WINDOWS = (5, 20, 50, 250)
+# 200 and 250 both sit here deliberately: 200 is the convention most chartists
+# read (and what the chart plots), 250 is roughly one trading year.
+MA_WINDOWS = (5, 20, 50, 200, 250)
 
 EXPLAIN_SYSTEM_PROMPT = """You explain technical indicators to someone reading a stock chart.
 
