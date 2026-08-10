@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     alpha_vantage_key: str = ""
     fred_api_key: str = ""    # optional — powers the economic release calendar
 
+    # ── Volatility history ──────────────────────────────────────────────────
+    # Yahoo publishes no implied-volatility history, so the default provider
+    # can only compare today's IV against realized vol. A vendor with dated
+    # historical chains gives a real 52-week IV rank; see services/vol_provider.
+    vol_data_provider: Literal["realized_proxy", "marketdata"] = "realized_proxy"
+    marketdata_api_key: str = ""
+
     # ── Monitoring ──────────────────────────────────────────────────────────
     monitoring_backend: Literal["mlflow", "wandb", "none"] = "mlflow"
     mlflow_tracking_uri: str = "http://localhost:5050"

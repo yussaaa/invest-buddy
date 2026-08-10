@@ -10,6 +10,9 @@ import type {
   InstrumentProfile,
   MarketEvents,
   MarketOverview,
+  OptionsChain,
+  OptionsExplanation,
+  OptionsStrategies,
   Quote,
   Technicals,
   TechnicalsExplanation,
@@ -148,6 +151,30 @@ export const api = {
 
     events: (days = 7, signal?: AbortSignal) =>
       request<MarketEvents>(`/market/events?days=${days}`, { signal }),
+
+    optionsChain: (symbol: string, horizon = 'both', signal?: AbortSignal) =>
+      request<OptionsChain>(
+        `/market/options/chain?symbol=${encodeURIComponent(symbol)}&horizon=${horizon}`,
+        { signal }
+      ),
+
+    optionStrategies: (
+      symbol: string,
+      strategy = 'all',
+      limit = 15,
+      signal?: AbortSignal
+    ) =>
+      request<OptionsStrategies>(
+        `/market/options/strategies?symbol=${encodeURIComponent(symbol)}` +
+          `&strategy=${strategy}&limit=${limit}`,
+        { signal }
+      ),
+
+    explainOptions: (symbol: string, strategy = 'all', signal?: AbortSignal) =>
+      request<OptionsExplanation>(
+        `/market/options/explain?symbol=${encodeURIComponent(symbol)}&strategy=${strategy}`,
+        { signal }
+      ),
   },
 
   health: {

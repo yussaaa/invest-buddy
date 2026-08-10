@@ -1,4 +1,4 @@
-import { Activity, BarChart2, MessageSquare, Shield, TrendingUp } from 'lucide-react'
+import { Activity, BarChart2, MessageSquare, Shield, Sigma, TrendingUp } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -12,6 +12,7 @@ const AGENT_CONFIG: Record<AgentName, { label: string; icon: React.ReactNode }> 
   fundamental: { label: 'Fundamental', icon: <BarChart2 size={18} /> },
   technical: { label: 'Technical', icon: <Activity size={18} /> },
   risk: { label: 'Risk', icon: <Shield size={18} /> },
+  options: { label: 'Options', icon: <Sigma size={18} /> },
 }
 
 const STATUS_STYLES: Record<AgentStatus, { badge: string; ring: string; dot: string }> = {

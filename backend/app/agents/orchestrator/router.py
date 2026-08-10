@@ -32,11 +32,20 @@ Available analysis modules:
 - fundamental: Financial statements, valuation ratios, DCF, earnings
 - technical: Price charts, RSI, MACD, Bollinger Bands, moving averages
 - risk: Volatility, VaR, beta, Sharpe ratio, drawdown analysis
+- options: Option chain pricing — implied vs realized volatility, and contracts that
+  pass a liquidity and probability screen for cash-secured puts, covered calls,
+  LEAPS calls and credit spreads
+
+Include `options` ONLY when the query actually concerns options: when it mentions
+options, premium, puts, calls, strikes, expiries, implied volatility, covered calls,
+the wheel, LEAPS, assignment, or asks about option strategies. Most equity queries
+get nothing from it, and it is the slowest module — leave it out by default, even
+for "full analysis" requests that say nothing about options.
 
 Depth levels:
 - quick: Only 1-2 agents, surface-level analysis (for simple factual queries)
 - standard: 3-4 agents, comprehensive analysis (for "should I invest" type queries)
-- deep: All 5 agents, exhaustive analysis (for "full analysis" requests)
+- deep: All equity agents, exhaustive analysis (for "full analysis" requests)
 
 You MUST respond with valid JSON matching this schema:
 {
@@ -100,7 +109,13 @@ async def classify_query(
 
     except Exception as e:
         log.error("classification_error", error=str(e))
-        # Fallback: run all agents at standard depth
+        # Fallback: run the equity agents at standard depth.
+        #
+        # `options` is deliberately absent. This path is already a degraded one
+        # — the classifier failed, so we have no idea what was asked — and the
+        # options agent is the slowest module against the most rate-limited
+        # data source. Adding it here would tax every classifier failure with an
+        # option-chain fetch for a query that likely never mentioned options.
         return QueryClassification(
             tickers=[ticker_hint] if ticker_hint else [],
             primary_ticker=ticker_hint or "",

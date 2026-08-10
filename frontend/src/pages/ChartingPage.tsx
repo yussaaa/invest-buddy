@@ -28,6 +28,7 @@ import type { Candle, History, InstrumentProfile } from '@/lib/types'
 import { useQuotes } from '@/hooks/useQuotes'
 import PriceChart, { MA_COLORS, MA_FALLBACK_COLOR, type ChartType } from '@/components/chart/PriceChart'
 import TechnicalPanel from '@/components/chart/TechnicalPanel'
+import OptionsPanel from '@/components/chart/options/OptionsPanel'
 
 const RANGES = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'] as const
 
@@ -389,8 +390,13 @@ export default function ChartingPage() {
       {/* Technical analysis */}
       <TechnicalPanel symbol={symbol} />
 
+      {/* Options screener */}
+      <OptionsPanel symbol={symbol} />
+
       <p className="text-[11px] text-muted-foreground/50">
-        Prices via yfinance — delayed, not a live exchange feed. Not investment advice.
+        Prices and option chains via yfinance — delayed, not a live exchange feed. Greeks and
+        probabilities are model estimates, and screening output is a deterministic filter over
+        public data, not a recommendation to trade. Not investment advice.
       </p>
     </div>
   )
