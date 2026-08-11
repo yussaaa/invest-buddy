@@ -102,6 +102,28 @@ MARKET_FETCH_SECONDS = Histogram(
     buckets=[0.25, 0.5, 1, 2, 5, 10, 20, 40],
 )
 
+# ── Chat Agent Metrics ────────────────────────────────────────────────────────
+
+CHAT_TURNS_TOTAL = Counter(
+    "chat_turns_total",
+    "Chat turns completed",
+    ["blocked"],  # "true" when the drafted reply was replaced
+)
+
+# Sustained above roughly 2% of turns means the system prompt is losing, not
+# that the guardrail is working — the prompt is what should keep replies clean.
+CHAT_GUARDRAIL_BLOCKS_TOTAL = Counter(
+    "chat_guardrail_blocks_total",
+    "Chat replies replaced by the guardrail",
+    ["reason"],  # investment_advice | ungrounded_figure
+)
+
+CHAT_SIGNALS_EMITTED = Histogram(
+    "chat_signals_emitted",
+    "Signals in the set a chat turn was grounded in",
+    buckets=[0, 1, 2, 3, 5, 8, 13],
+)
+
 # ── Token / Cost Metrics ──────────────────────────────────────────────────────
 
 TOKEN_USAGE_TOTAL = Counter(

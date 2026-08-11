@@ -274,6 +274,49 @@ make eval       # RAGAS evaluation against golden dataset
 **Still open:** `get_history`/`get_overview`/`get_breadth` still fetch live; no backfill
 job yet (the store warms lazily); `tests/unit/test_tools.py` still makes live network calls.
 
+### Phase 13 — Conversational Agent ✅ COMPLETE
+A floating launcher (bottom-right, every page) opens an agent that explains what the
+indicators on the current ticker are showing and answers "is this a good time to buy?".
+
+- **`app/services/signals.py`** — the buy/sell reasoning, in Python rather than a prompt.
+  `derive_signals()` is pure over a `get_technicals()` payload and names every condition
+  that holds: RSI extremes, MACD crossovers, the MA ladder, 50/200 crosses, extension
+  from the 50-day, position in the 52-week range, upcoming earnings. Each carries
+  evidence, the horizon it speaks to, a reliability grade, and its invalidation
+  condition. `direction` is bullish/bearish/neutral — **there is no action verb anywhere
+  in the module, by construction.**
+- **`app/agents/chat/graph.py`** — `prepare_context → gather ⇄ tools → answer → verify`.
+  A bounded cycle (cap 3) closed by a deterministic node, as opposed to the analysis
+  graph's one-shot parallel fan-out. Context is fetched *before* the first model call,
+  so a zero-tool turn is still fully grounded.
+- **Tool calling, finally wired.** `ModelProvider.complete()` gained `tools`/`tool_choice`;
+  `registry.get_schema_for_llm()` had been emitting OpenAI schemas with no caller since
+  it was written. Anthropic translates through pure functions in `provider.py`.
+- **Guardrails.** `check_investment_advice(text, mode)` — `"chat"` is a strict superset
+  adding capitulation patterns, because a conversation gets argued with in ways a report
+  never is. `check_numeric_grounding()` checks every figure against the readings shown to
+  the model. Both replace the reply, rebuilt from the signal set rather than refusing.
+- **`POST /api/v1/chat`** and **`/chat/stream`** (SSE on a POST). History in Redis via the
+  `memory/session.py` helpers that had been unused since Phase 2.
+
+**Deviations from the plan, and why:**
+- **No verdict badge.** "Should I buy?" is answered as a conditional setup — what holds,
+  what would confirm it, what would invalidate it, what we cannot know about the user.
+  More defensible than a BUY/SELL chip and it makes the guardrail coherent instead of
+  something to work around.
+- **No LangGraph checkpointer.** Only `InMemorySaver` ships with the installed langgraph;
+  it survives neither a restart nor a second uvicorn worker. Redis instead.
+- **Streaming walks the node functions rather than `ainvoke`.** Token streaming has to
+  reach inside the answer step and a compiled graph does not expose that.
+- **Gather is a separate model call from answer.** Costs one cheap call; buys a streaming
+  path where no tool request can arrive mid-sentence.
+
+**Still open:** the model sometimes writes signal ids inline as well as in the trailing
+citation line (cosmetic); a turn is ~8-9s cold, most of it the two model calls; the
+`net_bias` chip can read "Leaning bullish" while the prose says "mixed" when a weak
+short-term signal opposes a strong long-term one — both are correct, but the wording
+could agree.
+
 ## Common Issues
 
 - **API key not loading**: `.env` must be at project root, not `backend/.env`

@@ -97,6 +97,20 @@ class Settings(BaseSettings):
     vol_data_provider: Literal["realized_proxy", "marketdata"] = "realized_proxy"
     marketdata_api_key: str = ""
 
+    # ── Chat agent ──────────────────────────────────────────────────────────
+    chat_enabled: bool = True
+    # The reasoning is deterministic (services/signals.py), so the model only
+    # narrates and picks tools — work the fast model handles at a fraction of
+    # the cost and latency. Set to "smart" if tool selection proves unreliable.
+    chat_model: Literal["fast", "smart"] = "fast"
+    chat_max_tool_iterations: int = 3
+    chat_max_tool_calls: int = 4
+    chat_history_turns: int = 12
+    # Ollama and vLLM expose tool-calling only for some models, and the small
+    # local Qwens are unreliable at it. Off means the agent answers from the
+    # pre-fetched signals in one pass rather than failing.
+    chat_tools_enabled: bool = True
+
     # ── Monitoring ──────────────────────────────────────────────────────────
     monitoring_backend: Literal["mlflow", "wandb", "none"] = "mlflow"
     mlflow_tracking_uri: str = "http://localhost:5050"

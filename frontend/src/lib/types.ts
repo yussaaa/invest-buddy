@@ -496,3 +496,103 @@ export interface Watchlist {
   notes: Record<string, string>
   created_at: string
 }
+
+// ── Chat agent ────────────────────────────────────────────────────────────────
+
+/** Which way a condition leans. Never an instruction — see services/signals.py. */
+export type SignalDirection = 'bullish' | 'bearish' | 'neutral'
+export type SignalTimeframe = 'intraday' | 'short' | 'medium' | 'long'
+export type SignalReliability = 'low' | 'medium' | 'high'
+export type SignalCategory = 'momentum' | 'trend' | 'volatility' | 'level' | 'event'
+export type NetBias = 'bullish' | 'bearish' | 'mixed' | 'inconclusive'
+
+export interface Signal {
+  id: string
+  label: string
+  category: SignalCategory
+  direction: SignalDirection
+  timeframe: SignalTimeframe
+  strength: number
+  reliability: SignalReliability
+  evidence: Record<string, unknown>
+  rationale: string
+  invalidation: string | null
+}
+
+export interface SignalSet {
+  ticker: string
+  as_of: string
+  signals: Signal[]
+  net_bias: NetBias
+  bias_score: number
+  conflicts: string[]
+  coverage: Record<string, boolean>
+  disclaimer: string
+}
+
+/** The candle under the crosshair — the one thing the backend cannot re-derive. */
+export interface HoveredBar {
+  time?: string | number
+  open?: number
+  high?: number
+  low?: number
+  close?: number
+  volume?: number
+}
+
+export interface ScreenContextValue {
+  route?: string
+  ticker?: string
+  range?: string
+  chart_type?: string
+  ma_periods?: number[]
+  hovered_bar?: HoveredBar | null
+}
+
+export interface ChatToolActivity {
+  name: string
+  arguments?: Record<string, unknown>
+  success: boolean
+  error?: string | null
+  latency_ms: number
+  cache_hit: boolean
+}
+
+export interface ChatFlag {
+  flag_type: string
+  agent: string
+  detail: string
+  severity: 'warning' | 'error'
+}
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  /** True while tokens are still arriving. */
+  streaming?: boolean
+  /** The draft was rejected by the guardrail and this is the substitute. */
+  replaced?: boolean
+  signalsCited?: string[]
+  tools?: ChatToolActivity[]
+  flags?: ChatFlag[]
+  error?: boolean
+}
+
+export interface ChatResponse {
+  conversation_id: string
+  message: {
+    message_id: string
+    role: 'assistant'
+    content: string
+    signals_cited: string[]
+    flags: ChatFlag[]
+    blocked: boolean
+    disclaimer: string
+  }
+  signal_set: SignalSet | null
+  tool_calls: ChatToolActivity[]
+  model: string
+  usage: Record<string, number>
+  latency_ms: number
+}

@@ -5,6 +5,7 @@
 
 import type {
   AnalysisResult,
+  ChatResponse,
   History,
   MarketBreadth,
   InstrumentProfile,
@@ -14,6 +15,7 @@ import type {
   OptionsExplanation,
   OptionsStrategies,
   Quote,
+  ScreenContextValue,
   Technicals,
   TechnicalsExplanation,
   UserPreferences,
@@ -177,7 +179,40 @@ export const api = {
       ),
   },
 
+  chat: {
+    /**
+     * Open a streaming turn. Returns the raw Response so the caller can read
+     * the body with parseSSEStream — `request` is no use here, it parses the
+     * whole body as JSON.
+     */
+    stream: (body: ChatRequestBody, signal?: AbortSignal) =>
+      fetch(`${BASE_URL}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      }),
+
+    /** The same turn without streaming — the fallback when the stream fails. */
+    send: (body: ChatRequestBody, signal?: AbortSignal) =>
+      request<ChatResponse>('/chat', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        signal,
+      }),
+
+    clear: (conversationId: string) =>
+      fetch(`${BASE_URL}/chat/${conversationId}`, { method: 'DELETE' }),
+  },
+
   health: {
     check: () => request<{ status: string; checks?: Record<string, string> }>('/ready'),
   },
+}
+
+export interface ChatRequestBody {
+  message: string
+  conversation_id?: string | null
+  user_id?: string
+  screen_context?: ScreenContextValue
 }

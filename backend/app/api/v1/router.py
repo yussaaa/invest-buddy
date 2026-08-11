@@ -2,7 +2,16 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import analysis, health, market, preferences, watchlist, feedback, upload
+from app.api.v1 import (
+    analysis,
+    chat,
+    health,
+    market,
+    preferences,
+    watchlist,
+    feedback,
+    upload,
+)
 
 api_router = APIRouter()
 
@@ -13,3 +22,4 @@ api_router.include_router(preferences.router, prefix="/preferences", tags=["pref
 api_router.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
 api_router.include_router(upload.router, prefix="/upload", tags=["upload"])
 api_router.include_router(market.router, prefix="/market", tags=["market"])
+api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
