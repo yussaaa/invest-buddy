@@ -10,6 +10,7 @@ import type {
   MarketBreadth,
   InstrumentProfile,
   MarketEvents,
+  MarketMovers,
   MarketOverview,
   OptionsChain,
   OptionsExplanation,
@@ -151,8 +152,15 @@ export const api = {
         { signal }
       ),
 
+    movers: (cap = 'all', limit = 10, signal?: AbortSignal) =>
+      request<MarketMovers>(`/market/movers?cap=${cap}&limit=${limit}`, { signal }),
+
     events: (days = 7, signal?: AbortSignal) =>
       request<MarketEvents>(`/market/events?days=${days}`, { signal }),
+
+    /** One calendar week — offset 0 is this week, -1 last week, +1 next. */
+    weekEvents: (offset = 0, signal?: AbortSignal) =>
+      request<MarketEvents>(`/market/events/week?offset=${offset}`, { signal }),
 
     optionsChain: (symbol: string, horizon = 'both', signal?: AbortSignal) =>
       request<OptionsChain>(

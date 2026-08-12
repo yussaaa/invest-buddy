@@ -462,11 +462,40 @@ export interface MarketBreadth {
   error?: string
 }
 
+export interface Mover {
+  symbol: string
+  name: string
+  sector?: string | null
+  last?: number
+  change?: number
+  change_percent?: number
+  volume?: number
+  market_cap?: number
+  exchange?: string
+}
+
+/** Cap tiers the movers screen accepts — see CAP_TIERS in market_data.py. */
+export type CapTier = 'all' | 'large' | 'mid' | 'small'
+
+export interface MarketMovers {
+  cap: CapTier
+  cap_label?: string
+  gainers: Mover[]
+  losers: Mover[]
+  as_of?: string
+  error?: string
+}
+
 export interface EarningsEvent {
   symbol: string
   date: string
+  /** Whether the call lands before the open or after the close. */
+  session?: 'before_open' | 'after_close'
   eps_estimate?: number
   revenue_estimate?: number
+  /** Past weeks only — what was actually reported, and by how much it beat. */
+  reported_eps?: number
+  surprise_percent?: number
 }
 
 export interface EconomicEvent {
@@ -479,6 +508,11 @@ export interface EconomicEvent {
 export interface MarketEvents {
   week_start: string
   week_end: string
+  /** Week view only: 0 is the current week, -1 last week, +1 next. */
+  week_offset?: number
+  /** Today in US market time — the browser clock can be a day off. */
+  today?: string
+  is_current_week?: boolean
   earnings: EarningsEvent[]
   economic: {
     events: EconomicEvent[]
