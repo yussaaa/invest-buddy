@@ -36,8 +36,10 @@ describe('readSectionPrefs', () => {
   })
 
   it('applies a stored value over the default', () => {
-    const prefs = readSectionPrefs(memoryStore(JSON.stringify({ valuation: true })))
-    expect(prefs.valuation).toBe(true)
+    // Deliberately a value that differs from the default, or this asserts nothing.
+    const prefs = readSectionPrefs(memoryStore(JSON.stringify({ valuation: false })))
+    expect(prefs.valuation).toBe(false)
+    expect(DEFAULT_SECTIONS.valuation).toBe(true)
     expect(prefs.technicals).toBe(DEFAULT_SECTIONS.technicals)
   })
 
@@ -48,9 +50,9 @@ describe('readSectionPrefs', () => {
   })
 
   it('ignores a value that is not a boolean', () => {
-    // "false" is a truthy string; trusting the parse would open the panel.
-    const prefs = readSectionPrefs(memoryStore(JSON.stringify({ valuation: 'false' })))
-    expect(prefs.valuation).toBe(DEFAULT_SECTIONS.valuation)
+    // "false" is a truthy string; trusting the parse would flip the panel.
+    const prefs = readSectionPrefs(memoryStore(JSON.stringify({ options: 'false' })))
+    expect(prefs.options).toBe(DEFAULT_SECTIONS.options)
   })
 
   it('ignores a stored value that is not an object at all', () => {

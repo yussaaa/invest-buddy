@@ -16,15 +16,21 @@ export type SectionId = 'technicals' | 'trend' | 'valuation' | 'options'
 export type SectionPrefs = Record<SectionId, boolean>
 
 /**
- * Technicals and options stay open because that is how the page behaved before
- * sections existed, and a layout change should not quietly hide what people
- * were already reading. Valuation opens closed: it is the slowest panel and the
- * most opinionated, so it should be asked for.
+ * Everything opens.
+ *
+ * Valuation was closed by default at first, on the reasoning that it is the
+ * slowest panel and the most opinionated. That was wrong in practice: collapsed,
+ * it renders as a 143px header strip between the trend charts and the options
+ * table, which reads as absent rather than as available. A panel nobody can find
+ * is not a cautious default, it is a missing feature.
+ *
+ * The page is long as a result, which is what the collapse control is for — the
+ * choice belongs to the reader, and it persists once made.
  */
 export const DEFAULT_SECTIONS: SectionPrefs = {
   technicals: true,
   trend: true,
-  valuation: false,
+  valuation: true,
   options: true,
 }
 
