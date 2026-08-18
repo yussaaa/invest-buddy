@@ -34,6 +34,9 @@ import Section from '@/components/chart/Section'
 // Lazy so recharts lands in its own chunk — a reader who leaves the trend
 // section closed never downloads it.
 const TrendPanel = lazy(() => import('@/components/chart/trend/TrendPanel'))
+const ValuationPanel = lazy(() => import('@/components/chart/valuation/ValuationPanel'))
+const VALUATION_SUBLABEL =
+  'Levered FCF at the cost of equity · 10-year linear growth fade · Gordon terminal value'
 const TREND_SUBLABEL =
   'SMA 20/50/200 · 21-session geometric slope, annualised · z-score and ±1.5σ vs the 200 DMA'
 import {
@@ -457,6 +460,26 @@ export default function ChartingPage() {
           }
         >
           <TrendPanel symbol={symbol} />
+        </Suspense>
+      </Section>
+
+      <Section
+        id="valuation"
+        title="Valuation"
+        sublabel={VALUATION_SUBLABEL}
+        summary="Implied growth · DCF scenario band · sensitivity"
+        open={sections.valuation}
+        onOpenChange={open => toggleSection('valuation', open)}
+      >
+        <Suspense
+          fallback={
+            <div className="flex h-[200px] items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 size={16} className="animate-spin" />
+              Loading valuation…
+            </div>
+          }
+        >
+          <ValuationPanel symbol={symbol} />
         </Suspense>
       </Section>
 

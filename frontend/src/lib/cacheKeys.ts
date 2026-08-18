@@ -15,6 +15,9 @@ export const K = {
   profile: (symbol: string) => `profile:${symbol}`,
   technicals: (symbol: string) => `technicals:${symbol}`,
   trend: (symbol: string, range: string) => `trend:${symbol}:${range}`,
+  /** Assumption overrides are part of the key — they change the answer. */
+  valuation: (symbol: string, params: Record<string, number | string> = {}) =>
+    `valuation:${symbol}:${JSON.stringify(params)}`,
   technicalsExplain: (symbol: string) => `technicals:explain:${symbol}`,
   optionStrategies: (symbol: string) => `options:strategies:${symbol}`,
   optionsExplain: (symbol: string, strategy: string) => `options:explain:${symbol}:${strategy}`,
@@ -33,6 +36,7 @@ export const TTL = {
   profile: 600_000,           // market_data.PROFILE_TTL
   technicals: 120_000,        // technicals.TECHNICALS_TTL
   trend: 300_000,             // technicals.TREND_TTL
+  valuation: 900_000,         // valuation.VALUATION_TTL
   explanation: 900_000,       // technicals/options EXPLANATION_TTL
   optionStrategies: 300_000,  // options.OPTIONS_CHAIN_TTL
   weekEvents: 1_800_000,      // market_data.EVENTS_TTL

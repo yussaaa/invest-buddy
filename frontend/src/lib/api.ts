@@ -13,6 +13,7 @@ import type {
   MarketMovers,
   MarketOverview,
   TrendPayload,
+  Valuation,
   OptionsChain,
   OptionsExplanation,
   OptionsStrategies,
@@ -149,6 +150,13 @@ export const api = {
         `/market/trend?symbol=${encodeURIComponent(symbol)}&range=${range}`,
         { signal }
       ),
+
+    valuation: (symbol: string, params: Record<string, number | string> = {}, signal?: AbortSignal) => {
+      const query = new URLSearchParams({ symbol, ...Object.fromEntries(
+        Object.entries(params).map(([k, v]) => [k, String(v)])
+      ) })
+      return request<Valuation>(`/market/valuation?${query}`, { signal })
+    },
 
     technicals: (symbol: string, signal?: AbortSignal) =>
       request<Technicals>(`/market/technicals?symbol=${encodeURIComponent(symbol)}`, { signal }),

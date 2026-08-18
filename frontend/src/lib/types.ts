@@ -515,6 +515,103 @@ export interface TrendPayload {
   error?: string
 }
 
+// ── Valuation ───────────────────────────────────────────────────────────────
+
+export type ScenarioCase = 'bear' | 'base' | 'bull'
+export type AssumptionSource = 'derived' | 'user' | 'default'
+
+export interface CostOfEquity {
+  rate: number
+  raw_rate: number
+  beta: number
+  raw_beta: number
+  /** Reported, never applied silently — an extreme beta is an input problem. */
+  beta_clamped: boolean
+  rate_clamped: boolean
+  risk_free: number
+  equity_risk_premium: number
+}
+
+export interface DcfAssumptions {
+  initial_growth: number
+  initial_growth_source: AssumptionSource
+  terminal_growth: number
+  terminal_growth_source: AssumptionSource
+  discount_rate: number
+  discount_rate_source: AssumptionSource
+  years: number
+  cost_of_equity: CostOfEquity
+}
+
+export interface DcfResult {
+  value_per_share?: number
+  equity_value?: number
+  pv_explicit?: number
+  pv_terminal?: number
+  /** How much of the answer is the terminal assumption. Usually most of it. */
+  terminal_value_share?: number
+  implied_exit_fcf_multiple?: number
+  projected_fcf?: number[]
+  method?: string
+  error?: string
+}
+
+export interface DcfScenario extends DcfResult {
+  case: ScenarioCase
+  assumptions: {
+    initial_growth: number
+    terminal_growth: number
+    discount_rate: number
+    years: number
+  }
+}
+
+export interface ValuationInputs {
+  price?: number
+  shares_outstanding?: number
+  fcf_ttm?: number
+  fcf_median?: number
+  fcf_base_used?: number
+  fcf_base?: string
+  fcf_history?: number[]
+  /** Spread over the median — how much the base year is a choice. */
+  fcf_dispersion?: number
+  fcf_source?: 'statement' | 'info'
+  net_debt?: number
+  market_cap?: number
+  revenue_growth?: number
+  earnings_growth?: number
+}
+
+export interface AnalystTargets {
+  target_mean?: number
+  target_high?: number
+  target_low?: number
+  count?: number
+}
+
+export interface SensitivityGrid {
+  discount_rates: number[]
+  terminal_growths: number[]
+  /** values[discountIndex][growthIndex]; null where the spread guard tripped. */
+  values: (number | null)[][]
+}
+
+export interface Valuation {
+  symbol: string
+  method?: string
+  assumptions?: DcfAssumptions
+  inputs?: ValuationInputs
+  /** The headline: the FCF growth today's price already assumes. */
+  implied_growth?: number | null
+  base_case?: DcfResult
+  scenarios?: DcfScenario[]
+  sensitivity?: SensitivityGrid
+  analysts?: AnalystTargets
+  as_of?: string
+  error?: string
+}
+
 export interface Mover {
   symbol: string
   name: string
