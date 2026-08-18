@@ -12,6 +12,7 @@ import type {
   MarketEvents,
   MarketMovers,
   MarketOverview,
+  TrendPayload,
   OptionsChain,
   OptionsExplanation,
   OptionsStrategies,
@@ -142,6 +143,12 @@ export const api = {
 
     breadth: (signal?: AbortSignal) =>
       request<MarketBreadth>('/market/breadth', { signal }),
+
+    trend: (symbol: string, range = '2y', signal?: AbortSignal) =>
+      request<TrendPayload>(
+        `/market/trend?symbol=${encodeURIComponent(symbol)}&range=${range}`,
+        { signal }
+      ),
 
     technicals: (symbol: string, signal?: AbortSignal) =>
       request<Technicals>(`/market/technicals?symbol=${encodeURIComponent(symbol)}`, { signal }),

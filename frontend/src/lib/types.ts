@@ -229,6 +229,7 @@ export interface Technicals {
   moving_averages: MaLadder
   drawdown: DrawdownProfile
   as_of?: string
+  trend?: TrendSummary
 }
 
 export interface TechnicalsExplanation {
@@ -458,6 +459,58 @@ export interface IndexBreadth {
 
 export interface MarketBreadth {
   indices: IndexBreadth[]
+  as_of?: string
+  error?: string
+}
+
+export type SlopeLabel =
+  | 'strong_uptrend' | 'uptrend' | 'weak_uptrend' | 'flat'
+  | 'weak_downtrend' | 'downtrend' | 'strong_downtrend'
+
+export type ZLabel = 'extended_high' | 'elevated' | 'neutral' | 'depressed' | 'extended_low'
+
+export interface SlopeReading {
+  per_day_percent?: number
+  annualised_percent?: number
+  label?: SlopeLabel
+}
+
+/** The scalars — safe to carry in the technicals payload. See services/trend.py. */
+export interface TrendSummary {
+  price?: number
+  reference_window?: number
+  sma?: number
+  distance_percent?: number
+  sigma?: number
+  z_score?: number
+  z_label?: ZLabel
+  z_band?: string
+  band_sigma?: number
+  band_upper?: number
+  band_lower?: number
+  /** Keyed by SMA window — JSON object keys are strings. */
+  slopes?: Record<string, SlopeReading>
+  sessions?: number
+  error?: string
+}
+
+/** Column-oriented: a row per session would repeat every key name 500 times. */
+export interface TrendSeries {
+  dates: string[]
+  price: (number | null)[]
+  sma: Record<string, (number | null)[]>
+  band_upper: (number | null)[]
+  band_lower: (number | null)[]
+  slope_per_day: Record<string, (number | null)[]>
+  z_score: (number | null)[]
+}
+
+export interface TrendPayload {
+  symbol: string
+  range: string
+  summary?: TrendSummary
+  series?: TrendSeries
+  distribution?: { bucket: number; count: number }[]
   as_of?: string
   error?: string
 }

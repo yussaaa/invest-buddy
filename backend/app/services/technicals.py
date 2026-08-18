@@ -20,6 +20,7 @@ from app.models.factory import get_provider
 from app.services import bar_store, market_data
 from app.services.cache import cached_async
 from app.services.drawdown import drawdown_profile
+from app.services.trend import trend_profile
 from app.services.llm_guard import has_llm_credentials, missing_credentials_reason
 from app.tools.calculation.technical_indicators import (
     compute_ma_ladder,
@@ -30,6 +31,8 @@ from app.tools.calculation.technical_indicators import (
 log = structlog.get_logger(__name__)
 
 TECHNICALS_TTL = 120.0
+# The trend charts are two years wide; the last bar moves, the shape does not.
+TREND_TTL = 300.0
 EXPLANATION_TTL = 900.0
 
 # 200 and 250 both sit here deliberately: 200 is the convention most chartists
@@ -148,12 +151,28 @@ async def get_technicals(symbol: str) -> dict:
             log.error("technicals_failed", symbol=symbol, indicator="drawdown", error=str(e))
             drawdown = {"error": str(e)}
 
+        # Summary only — never the series. Every number in this dict widens the
+        # evidence set the chat agent's figures are checked against, and two
+        # years of daily prices would widen it enough to stop the check meaning
+        # anything. See the module docstring in services/trend.py.
+        try:
+            if closes is None:
+                trend = {"error": "no price history"}
+            else:
+                trend = trend_profile(
+                    [d.date() for d in closes.index], closes.tolist()
+                ).get("summary", {"error": "trend unavailable"})
+        except Exception as e:
+            log.error("technicals_failed", symbol=symbol, indicator="trend", error=str(e))
+            trend = {"error": str(e)}
+
         return {
             "symbol": symbol,
             "rsi": unwrap(rsi, "rsi"),
             "macd": unwrap(macd, "macd"),
             "moving_averages": unwrap(ladder, "ma_ladder"),
             "drawdown": drawdown,
+            "trend": trend,
             "as_of": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -166,6 +185,49 @@ async def get_technicals(symbol: str) -> dict:
     return await cached_async(
         f"technicals:{symbol}", TECHNICALS_TTL, fetch, should_cache=usable
     )
+
+
+# range -> how many sessions of series to return. None means everything held.
+TREND_RANGES: dict[str, int | None] = {"1y": 252, "2y": 504, "5y": None}
+
+
+async def get_trend(symbol: str, range_key: str = "2y") -> dict:
+    """Price against its 200-day average, with the series behind the charts.
+
+    Separate from `get_technicals` on purpose. The summary belongs in the
+    technicals payload, where the chat agent can quote it; the series does not,
+    because everything in that payload widens the evidence set the agent's
+    figures are checked against. See services/trend.py.
+    """
+    symbol = symbol.upper()
+    range_key = range_key.lower()
+    points = TREND_RANGES.get(range_key, TREND_RANGES["2y"])
+
+    async def fetch() -> dict:
+        closes, _rows, _today = await _adjusted_series(symbol)
+        if closes is None:
+            return {"symbol": symbol, "range": range_key, "error": "no price history"}
+
+        payload = trend_profile(
+            [d.date() for d in closes.index], closes.tolist(), points=points
+        )
+        return {
+            "symbol": symbol,
+            "range": range_key,
+            **payload,
+            "as_of": datetime.now(timezone.utc).isoformat(),
+        }
+
+    try:
+        return await cached_async(
+            f"trend:{symbol}:{range_key}",
+            TREND_TTL,
+            fetch,
+            should_cache=lambda r: "error" not in r,
+        )
+    except Exception as e:
+        log.error("trend_fetch_failed", symbol=symbol, range=range_key, error=str(e))
+        return {"symbol": symbol, "range": range_key, "error": str(e)}
 
 
 async def explain_technicals(symbol: str) -> dict:

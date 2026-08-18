@@ -51,6 +51,15 @@ async def get_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL
     return await technicals.get_technicals(symbol)
 
 
+@router.get("/trend")
+async def get_trend(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    range: str = Query("2y", description="1y, 2y or 5y of series"),
+) -> dict:
+    """Price vs its 200-day average: SMA slopes, the ±1.5σ band and the z-score."""
+    return await technicals.get_trend(symbol, range)
+
+
 @router.get("/technicals/explain")
 async def explain_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL")) -> dict:
     """Plain-English read of the indicators above, written by the fast model."""
