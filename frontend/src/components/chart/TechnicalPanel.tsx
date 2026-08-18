@@ -180,6 +180,10 @@ function MaRow({ level, price }: { level: MaLevel; price?: number }) {
   )
 }
 
+/** The header moved up into <Section>; these are what it renders. */
+export const TECHNICALS_SUBLABEL =
+  'RSI(14) · MACD(12,26,9) · SMA 5/20/50/200/250 · 52w range — from adjusted daily bars'
+
 interface TechnicalPanelProps {
   symbol: string
 }
@@ -234,15 +238,6 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Technical analysis
-        </h2>
-        <span className="text-[11px] text-muted-foreground/60">
-          RSI(14) · MACD(12,26,9) · SMA 5/20/50/200/250 · 52w range — from adjusted daily bars
-        </span>
-      </div>
-
       {loading && !data ? (
         <Card>
           <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">

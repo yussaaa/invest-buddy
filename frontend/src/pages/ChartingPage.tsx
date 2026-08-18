@@ -30,8 +30,15 @@ import { useQuotes } from '@/hooks/useQuotes'
 import { useCachedResource } from '@/hooks/useCachedResource'
 import { K, TTL } from '@/lib/cacheKeys'
 import PriceChart, { MA_COLORS, MA_FALLBACK_COLOR, type ChartType } from '@/components/chart/PriceChart'
-import TechnicalPanel from '@/components/chart/TechnicalPanel'
-import OptionsPanel from '@/components/chart/options/OptionsPanel'
+import Section from '@/components/chart/Section'
+import {
+  readSectionPrefs,
+  writeSectionPrefs,
+  type SectionId,
+  type SectionPrefs,
+} from '@/components/chart/sectionPrefs'
+import TechnicalPanel, { TECHNICALS_SUBLABEL } from '@/components/chart/TechnicalPanel'
+import OptionsPanel, { OPTIONS_SUBLABEL } from '@/components/chart/options/OptionsPanel'
 
 const RANGES = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'] as const
 
@@ -127,6 +134,15 @@ export default function ChartingPage() {
   }, [maPeriods, chartType, range])
 
   const [hovered, setHovered] = useState<Candle | null>(null)
+
+  const [sections, setSections] = useState<SectionPrefs>(readSectionPrefs)
+  function toggleSection(id: SectionId, open: boolean) {
+    setSections(prev => {
+      const next = { ...prev, [id]: open }
+      writeSectionPrefs(next)
+      return next
+    })
+  }
 
   // Candles and profile are two resources rather than one Promise.all: the
   // profile has a ten-minute TTL and does not depend on the range, so pairing
@@ -405,11 +421,30 @@ export default function ChartingPage() {
         </CardContent>
       </Card>
 
-      {/* Technical analysis */}
-      <TechnicalPanel symbol={symbol} />
+      {/* Analysis panels. Collapsible because the page had grown past five
+          screens; a closed one never mounts, so it costs nothing until asked
+          for. State persists — see sectionPrefs. */}
+      <Section
+        id="technicals"
+        title="Technical analysis"
+        sublabel={TECHNICALS_SUBLABEL}
+        summary="RSI · MACD · moving averages · 52-week range"
+        open={sections.technicals}
+        onOpenChange={open => toggleSection('technicals', open)}
+      >
+        <TechnicalPanel symbol={symbol} />
+      </Section>
 
-      {/* Options screener */}
-      <OptionsPanel symbol={symbol} />
+      <Section
+        id="options"
+        title="Options screener"
+        sublabel={OPTIONS_SUBLABEL}
+        summary="Cash-secured puts · covered calls · LEAPS · put credit spreads"
+        open={sections.options}
+        onOpenChange={open => toggleSection('options', open)}
+      >
+        <OptionsPanel symbol={symbol} />
+      </Section>
 
       <p className="text-[11px] text-muted-foreground/50">
         Prices and option chains via yfinance — delayed, not a live exchange feed. Greeks and
