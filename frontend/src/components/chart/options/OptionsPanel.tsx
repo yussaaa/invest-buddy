@@ -12,16 +12,18 @@
  * the user's holdings, and does not mark anything as a pick.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, AlertTriangle, Loader2, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { cn, readJSON } from '@/lib/utils'
+import { cn, readJSON, writeJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { cached, put } from '@/lib/clientCache'
+import { K, TTL } from '@/lib/cacheKeys'
+import { useCachedResource, useCachedValue } from '@/hooks/useCachedResource'
 import type {
   OptionsExplanation,
-  OptionsStrategies,
   OptionStrategyKey,
 } from '@/lib/types'
 import StrategyTable from './StrategyTable'
@@ -65,63 +67,40 @@ interface OptionsPanelProps {
 }
 
 export default function OptionsPanel({ symbol }: OptionsPanelProps) {
-  const [data, setData] = useState<OptionsStrategies | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // One request for every strategy, filtered client-side by the pills. Switching
+  // strategy is then instant and costs neither a request nor a cache key.
+  const res = useCachedResource(
+    K.optionStrategies(symbol),
+    () => api.market.optionStrategies(symbol, 'all', 15),
+    { ttl: TTL.optionStrategies },
+  )
+  const data = res.data ?? null
+  const loading = res.isLoading
+  const error = res.error?.message ?? null
 
   const [strategy, setStrategy] = useState<OptionStrategyKey>(() => {
     const saved = readJSON<unknown>(STRATEGY_STORAGE_KEY, 'csp')
     return isStrategy(saved) ? saved : 'csp'
   })
 
-  const [explanation, setExplanation] = useState<OptionsExplanation | null>(null)
-  const [explaining, setExplaining] = useState(false)
-
-  const abortRef = useRef<AbortController | null>(null)
-
-  // One request for every strategy, filtered client-side by the pills. Switching
-  // strategy is then instant and costs neither a request nor a cache key.
   useEffect(() => {
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
-
-    setLoading(true)
-    setError(null)
-    setExplanation(null) // a new symbol invalidates the previous read
-
-    api.market
-      .optionStrategies(symbol, 'all', 15, controller.signal)
-      .then(result => {
-        if (controller.signal.aborted) return
-        setData(result)
-      })
-      .catch(e => {
-        if (!controller.signal.aborted) {
-          setError(e instanceof Error ? e.message : 'Failed to load option chain')
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-
-    return () => controller.abort()
-  }, [symbol])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STRATEGY_STORAGE_KEY, JSON.stringify(strategy))
-    } catch {
-      // A private-mode browser refusing storage shouldn't break the panel.
-    }
+    writeJSON(STRATEGY_STORAGE_KEY, strategy)
   }, [strategy])
+
+  // Keyed by symbol *and* strategy, so reading one screen's explanation does
+  // not clobber another's — and so both survive leaving the page.
+  const explainKey = K.optionsExplain(symbol, strategy)
+  const explanation = useCachedValue<OptionsExplanation>(explainKey).value ?? null
+  const [explaining, setExplaining] = useState(false)
 
   async function requestExplanation() {
     setExplaining(true)
     try {
-      setExplanation(await api.market.explainOptions(symbol, strategy))
+      await cached(explainKey, () => api.market.explainOptions(symbol, strategy), {
+        ttl: TTL.explanation,
+      })
     } catch (e) {
-      setExplanation({
+      put<OptionsExplanation>(explainKey, {
         symbol,
         available: false,
         reason: e instanceof Error ? e.message : 'Request failed',

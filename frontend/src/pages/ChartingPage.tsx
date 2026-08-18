@@ -5,7 +5,7 @@
  * in sync with whatever is on screen.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
@@ -23,10 +23,12 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useScreenContext } from '@/context/ScreenContext'
-import { cn, readJSON } from '@/lib/utils'
+import { cn, readJSON, writeJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
-import type { Candle, History, InstrumentProfile } from '@/lib/types'
+import type { Candle } from '@/lib/types'
 import { useQuotes } from '@/hooks/useQuotes'
+import { useCachedResource } from '@/hooks/useCachedResource'
+import { K, TTL } from '@/lib/cacheKeys'
 import PriceChart, { MA_COLORS, MA_FALLBACK_COLOR, type ChartType } from '@/components/chart/PriceChart'
 import TechnicalPanel from '@/components/chart/TechnicalPanel'
 import OptionsPanel from '@/components/chart/options/OptionsPanel'
@@ -49,19 +51,27 @@ const CHART_PREFS_KEY = 'agent-invest-chart'
 interface ChartPrefs {
   maPeriods: number[]
   chartType: ChartType
+  range: string
 }
 
-const DEFAULT_PREFS: ChartPrefs = { maPeriods: [50], chartType: 'candles' }
+const DEFAULT_PREFS: ChartPrefs = { maPeriods: [50], chartType: 'candles', range: '1Y' }
 
 function readChartPrefs(): ChartPrefs {
   const stored = readJSON<Partial<ChartPrefs>>(CHART_PREFS_KEY, {})
   return {
     // Drop anything no longer offered, so a stored period we've since removed
-    // can't leave an untoggleable line on the chart.
+    // can't leave an untoggleable line on the chart. Every restored value gets
+    // the same treatment — storage is user-editable, and a value outside the
+    // toolbar's own options would render a selection nothing can clear.
     maPeriods: (stored.maPeriods ?? DEFAULT_PREFS.maPeriods).filter(p =>
       MA_OPTIONS.includes(p)
     ),
-    chartType: stored.chartType ?? DEFAULT_PREFS.chartType,
+    chartType: CHART_TYPES.some(t => t.value === stored.chartType)
+      ? (stored.chartType as ChartType)
+      : DEFAULT_PREFS.chartType,
+    range: RANGES.includes(stored.range as (typeof RANGES)[number])
+      ? (stored.range as string)
+      : DEFAULT_PREFS.range,
   }
 }
 
@@ -106,19 +116,39 @@ export default function ChartingPage() {
   const symbol = (searchParams.get('ticker') || DEFAULT_SYMBOL).toUpperCase()
 
   const [draft, setDraft] = useState(symbol)
-  const [range, setRange] = useState<string>('1Y')
-  const [chartType, setChartType] = useState<ChartType>(() => readChartPrefs().chartType)
-  const [maPeriods, setMaPeriods] = useState<number[]>(() => readChartPrefs().maPeriods)
+  // One read of storage, not one per field.
+  const [prefs] = useState(readChartPrefs)
+  const [range, setRange] = useState<string>(prefs.range)
+  const [chartType, setChartType] = useState<ChartType>(prefs.chartType)
+  const [maPeriods, setMaPeriods] = useState<number[]>(prefs.maPeriods)
 
   useEffect(() => {
-    localStorage.setItem(CHART_PREFS_KEY, JSON.stringify({ maPeriods, chartType }))
-  }, [maPeriods, chartType])
+    writeJSON(CHART_PREFS_KEY, { maPeriods, chartType, range })
+  }, [maPeriods, chartType, range])
 
-  const [history, setHistory] = useState<History | null>(null)
-  const [profile, setProfile] = useState<InstrumentProfile | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [hovered, setHovered] = useState<Candle | null>(null)
+
+  // Candles and profile are two resources rather than one Promise.all: the
+  // profile has a ten-minute TTL and does not depend on the range, so pairing
+  // them meant every range click refetched company metadata that had not moved.
+  const historyRes = useCachedResource(
+    K.history(symbol, range),
+    () => api.market.history(symbol, range),
+    { ttl: TTL.history, shouldCache: h => !h.error && h.candles.length > 0 },
+  )
+  const profileRes = useCachedResource(
+    K.profile(symbol),
+    () => api.market.profile(symbol),
+    { ttl: TTL.profile },
+  )
+
+  const history = historyRes.data ?? null
+  const profile = profileRes.data ?? null
+  const error =
+    historyRes.error?.message ??
+    (history && (history.error || history.candles.length === 0)
+      ? `No price data for ${symbol}`
+      : null)
 
   const symbols = useMemo(() => [symbol], [symbol])
   const { quotes } = useQuotes(symbols, 15000)
@@ -139,39 +169,6 @@ export default function ChartingPage() {
       ma_periods: maPeriods,
     })
   }, [publish, symbol, range, chartType, maPeriods])
-
-  // Candles + profile for the selected symbol/range
-  const abortRef = useRef<AbortController | null>(null)
-  useEffect(() => {
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
-
-    setLoading(true)
-    setError(null)
-
-    Promise.all([
-      api.market.history(symbol, range, controller.signal),
-      api.market.profile(symbol, controller.signal),
-    ])
-      .then(([hist, prof]) => {
-        if (controller.signal.aborted) return
-        setHistory(hist)
-        setProfile(prof)
-        if (hist.error || hist.candles.length === 0) {
-          setError(`No price data for ${symbol}`)
-        }
-      })
-      .catch(e => {
-        if (controller.signal.aborted) return
-        setError(e instanceof Error ? e.message : 'Failed to load chart')
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-
-    return () => controller.abort()
-  }, [symbol, range])
 
   function submitSymbol(e: React.FormEvent) {
     e.preventDefault()
@@ -346,7 +343,7 @@ export default function ChartingPage() {
             </span>
           </div>
 
-          {loading && candles.length === 0 ? (
+          {historyRes.isLoading ? (
             <div className="flex h-[520px] items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 size={16} className="animate-spin" />
               Loading {symbol}…

@@ -27,6 +27,7 @@ had drifted badly enough to be actively misleading (it described Phase 3 as
 | **12** Drawdown | Distance below the 52-week high | `services/drawdown.py` |
 | **13** Chat agent | Bounded ReAct cycle, deterministic signals, chat guardrails | `agents/chat/` |
 | **14** Movers + week nav | Cap-tier movers with sectors, navigable events week | `services/market_data.py` |
+| **15** Client cache | TTL cache above the router; instant tab switches, persisted toolbars | `frontend/src/lib/clientCache.ts` |
 
 Phases 10–12 and 14 were never written into the phase list. They are recorded
 here and summarised in `CLAUDE.md`.
@@ -67,6 +68,11 @@ The three written documents exist. Not done:
 - [ ] **`get_options_chain` is registered under category `sentiment`** in
       `tools/registry.py`, not `options`. Harmless — nothing dispatches on
       category — but it misleads anyone reading the registry.
+- [ ] **Frontend test coverage is one file.** `clientCache.test.ts` (18 tests,
+      vitest) covers the cache; the hook and the pages are unverified except by
+      `tsc` and the manual checklist. Testing them needs jsdom +
+      testing-library + msw, which is a real dependency jump — deliberate for
+      now, revisit if the pages start regressing.
 - [ ] **`tests/unit/test_tools.py` makes live network calls.** It is in the
       unit suite and is why CI needs `-m "not network"`. Should be mocked or
       moved to integration.
@@ -87,6 +93,30 @@ The three written documents exist. Not done:
       (Redis L2 + single-flight). Week navigation is free after that, but the
       first visitor after expiry waits. A warm-up job would remove it; there is
       no scheduler in the stack yet.
+- [x] ~~`/market/breadth` never served warm~~ — fixed 2026-08-18. `cached`
+      stamps a value with the time its fetch *started*, so `BREADTH_TTL = 60`
+      against a 120 s+ scan produced values that were **born expired** and could
+      never satisfy a lookup. Every request paid for a full cold scan, and a
+      60 s client poll left two or three permanently in flight, eating the
+      browser's per-origin connection budget. TTL raised to 900 s, client poll
+      to 600 s. `cache.py` now logs `cache_ttl_shorter_than_fetch` so the next
+      instance of this is loud rather than invisible.
+- [ ] **`overview` hits the same trap under load** — that new warning has
+      already caught it once at `seconds=46.7 ttl=30.0`, when yfinance was rate
+      limiting. Unlike breadth it is normally far inside its TTL, so this is
+      load-dependent rather than permanent. Either raise the TTL or stamp slow
+      producers at completion.
+- [ ] **The TradingView heatmap rebuilds on every mount** — a re-injected
+      `<script>`, ~0.5–2 s of blank rectangle. It cannot be mutated in place, so
+      only keep-alive fixes it. Now the *only* remaining loading artefact on
+      `/market`, so it reads more prominently than it used to.
+- [ ] **Chart zoom and pan are lost on navigation** even though the data is
+      instant — a new canvas per mount. Cheap fix: stash
+      `timeScale().getVisibleLogicalRange()` in the client cache on unmount.
+- [ ] **Quote polling is not shared between overlapping symbol sets.**
+      `useQuotes(['AAPL'])` and the watchlist rail are different cache keys, so
+      they poll separately for the same symbol. Mirroring the backend's
+      `get_fresh_many`/`put_many` per-symbol keying would unify them.
 - [ ] A chat turn is ~8–9s cold, most of it the two model calls.
 
 ### Cosmetic
