@@ -3,10 +3,11 @@
 Graph structure:
   classifier_node
        ↓
-  rag_prefetch_node  (stub for Phase 1 — full RAG in Phase 3)
-       ↓
-  [parallel fan-out via Send]
-  market_research_node | sentiment_node | fundamental_node | technical_node | risk_node
+  rag_prefetch_node  (ingest-if-needed, then 3-stage retrieval; skipped
+       ↓              entirely when state["use_rag"] is False)
+  [parallel fan-out via Send — the router picks which specialists a query needs]
+  market_research_node | sentiment_node | fundamental_node | technical_node
+                       | risk_node | options_node
        ↓
   guardrails_node
        ↓
@@ -14,8 +15,8 @@ Graph structure:
        ↓
   persistence_node
 
-The parallel fan-out is the key performance feature: all 5 agents run
-concurrently. Total latency ≈ slowest single agent, not sum of all.
+The parallel fan-out is the key performance feature: the selected specialists
+run concurrently. Total latency ≈ slowest single agent, not sum of all.
 
 LangGraph's Send primitive dispatches each agent as an independent node
 invocation, all sharing the same AgentState (with reducer annotations for
