@@ -164,7 +164,9 @@ def rolling_std(values: Sequence[float], window: int) -> list[float | None]:
     return out
 
 
-def slope_per_day(averages: Sequence[float | None], lookback: int = SLOPE_LOOKBACK) -> list[float | None]:
+def slope_per_day(
+    averages: Sequence[float | None], lookback: int = SLOPE_LOOKBACK
+) -> list[float | None]:
     """Geometric daily growth of an average, in percent per day.
 
     Geometric rather than a straight difference over the period, because the
