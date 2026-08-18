@@ -2,9 +2,23 @@
 
 ## What is this project?
 
-Agent Invest is a multi-agent stock investment analysis platform. It uses LangGraph to orchestrate 5 specialist AI agents (Fundamental, Sentiment, Technical, Risk, Market Research) that run in parallel, each calling domain-specific tools, producing structured outputs that are checked by guardrails and synthesized into a final report.
+Agent Invest is a multi-agent stock investment analysis platform. It uses LangGraph to orchestrate 6 specialist AI agents (Fundamental, Sentiment, Technical, Risk, Market Research, Options) that fan out in parallel, each calling domain-specific tools, producing structured outputs that are checked by guardrails and synthesized into a final report.
 
 This is a **portfolio project** for Senior AI Engineer roles — designed to demonstrate production-grade agent orchestration, RAG, evaluation, and deployment skills.
+
+## Where the documentation is
+
+This file is the orientation: enough to start work without reading everything.
+The detail lives elsewhere.
+
+| Read | For |
+|---|---|
+| **[docs/architecture.md](docs/architecture.md)** | The full reference — every subsystem, the three request flows, why the awkward bits are that way. **Start here when picking this up cold.** |
+| **[docs/roadmap.md](docs/roadmap.md)** | What is built and what is not, verified against code. Authoritative over any phase list. |
+| [docs/business_logic.md](docs/business_logic.md) | Data sources and domain rules |
+| [docs/model_selection.md](docs/model_selection.md) | The model tradeoff write-up |
+| [docs/evaluation_framework.md](docs/evaluation_framework.md) | Evaluation methodology |
+| [README.md](README.md) | Public-facing overview and quick start |
 
 ## Tech Stack
 
@@ -12,36 +26,56 @@ This is a **portfolio project** for Senior AI Engineer roles — designed to dem
 - **Frontend**: React 18, Vite, TypeScript, Tailwind CSS
 - **LLM Providers**: OpenAI (default), Anthropic, Qwen, Ollama, vLLM — swappable via `MODEL_PROVIDER` env var
 - **Data**: yfinance (market data), ta (technical indicators), NewsAPI, SEC EDGAR, Tavily (web search)
-- **Infrastructure**: Docker Compose, Kubernetes, PostgreSQL, Redis, Qdrant
+- **Infrastructure**: Docker Compose, Kubernetes, PostgreSQL (+pgvector), Redis
 - **Monitoring**: Prometheus, Grafana, MLflow, W&B, RAGAS
 
 ## Project Structure
 
 ```
 backend/app/
-  agents/           # 5 specialist agents + orchestrator + guardrails
-  tools/            # 22 tools (yfinance, ta, risk, news, web) + MCP server + registry
-  models/           # ModelProvider abstraction (OpenAI, Anthropic, Qwen, Ollama, vLLM)
-  api/v1/           # FastAPI routes (analysis, watchlist, preferences, feedback, health)
-  rag/              # RAG pipeline (Phase 3 — currently stubbed)
-  observability/    # MonitoringClient (MLflow/W&B), RAGAS evaluator
-  evaluation/       # Golden dataset + offline eval framework
+  agents/           # 6 specialists + orchestrator + chat agent + guardrails
+    orchestrator/   #   graph.py (the centrepiece), router.py, synthesiser.py
+    chat/           #   bounded ReAct cycle behind the floating agent
+    base/           #   AgentState, AgentResult schemas, guardrails
+  services/         # the non-LLM half: market data, options, technicals,
+                    # signals, cache, bar store, drawdown, volatility
+  tools/            # 24 tools + MCP server + registry
+  models/           # ModelProvider abstraction (5 providers, fast/smart tiers)
+  rag/              # ingestion + 3-stage retrieval over pgvector (built)
+  api/v1/           # 8 routers: analysis chat market watchlist
+                    # preferences feedback upload health
+  db/               # SQLAlchemy models, Alembic, repositories (9 tables)
+  memory/           # Redis-backed session + chat history
+  cache/            # Redis client
+  observability/    # MLflow/W&B client, RAGAS evaluator, Prometheus metrics
+  evaluation/       # Golden dataset + offline eval
 frontend/src/
-  pages/            # AnalyzePage, WatchlistPage, HistoryPage, SettingsPage
-  components/       # AgentStatusTracker, FinalReportView, SourceCitations
-  hooks/            # useSSE, useAnalysis
+  pages/            # Charting, Market, Analyze, Watchlist, History, Settings
+  components/       # analysis/ chart/ chat/ market/ ui/
+  hooks/            # useSSE, useAnalysis, useChatStream, useQuotes
+  context/          # ScreenContext — tells the chat agent what is on screen
+  lib/              # api.ts (all URLs), types.ts, sse.ts
 infra/
   docker-compose.yml
-  k8s/              # Kubernetes manifests
+  k8s/              # 14 Kubernetes manifests
+docs/
+  architecture.md   # the detailed reference — start here
+  roadmap.md        # authoritative status and open work
+  business_logic.md evaluation_framework.md model_selection.md
 ```
 
 ## Key Architecture Decisions
 
-1. **LangGraph StateGraph** with parallel fan-out via `Send` — all 5 agents run concurrently, not sequentially
-2. **Structured outputs everywhere** — every agent returns a validated Pydantic `AgentResult`, not free-form text
+1. **LangGraph StateGraph** with parallel fan-out via `Send` — the specialists run
+   concurrently, so total latency is the slowest agent rather than the sum. The
+   fan-out is conditional: `orchestrator/router.py` picks which specialists a
+   query actually needs
+2. **Structured outputs everywhere** — every agent returns a validated Pydantic `AgentResult`, not free-form text. This is what makes a guardrails node possible: it checks fields, not prose
 3. **MCP-style tool registry** — tools are declarative and centrally registered; adding a new data source is one file + one registry call
-4. **ModelProvider abstraction** — swap from OpenAI to Ollama (free local) with one env var change
-5. **Guardrails as a graph node** — hallucination detection (LLM-as-judge), investment advice detection (regex), citation checks run between agents and synthesis
+4. **ModelProvider abstraction** — swap from OpenAI to Ollama (free local) with one env var change. Every provider exposes a fast and a smart tier, so cheap and expensive calls are a config choice
+5. **Guardrails as a graph node** — hallucination detection (LLM-as-judge), investment advice detection (regex), numeric grounding (arithmetic, not judgement), citation checks
+6. **The reasoning that must not hallucinate is Python, not a prompt** — `services/signals.py` derives every technical condition deterministically, and contains no action verb by construction. The guardrail can then be honest instead of something to work around
+7. **Two-tier cache in front of a real bar store** — settled EOD bars never expire, so indicator windows are one query rather than a download; L1+L2 with single-flight and stale-fallback covers everything live
 
 ## How to Run
 
@@ -162,9 +196,18 @@ The `.env` file must be at the **project root** (not inside `backend/`). `config
 - `backend/app/agents/orchestrator/graph.py` — LangGraph StateGraph (the architectural centerpiece)
 - `backend/app/agents/base/state.py` — AgentState TypedDict shared across all nodes
 - `backend/app/agents/base/schemas.py` — AgentResult, FinalReport, QueryClassification
-- `backend/app/tools/registry.py` — Central tool registry (22 tools)
+- `backend/app/tools/registry.py` — Central tool registry (24 tools)
 - `backend/app/models/provider.py` — ModelProvider abstraction
 - `backend/app/config.py` — Settings with auto-discovery of .env file
+- `backend/app/agents/chat/graph.py` — the chat agent's bounded ReAct cycle
+- `backend/app/services/signals.py` — deterministic buy/sell reasoning in Python,
+  with no action verb anywhere in the module by construction
+- `backend/app/services/cache.py` — L1+L2 with single-flight and stale-fallback;
+  every market read goes through it
+- `backend/app/services/market_data.py` — quotes, overview, breadth, movers, events
+- `backend/app/rag/retrieval/pipeline.py` — 3-stage retrieval (decompose,
+  dense+BM25+RRF, cross-encoder rerank)
+- `frontend/src/lib/api.ts` — the only place that knows backend URLs
 
 ## Testing
 
@@ -176,146 +219,36 @@ make eval       # RAGAS evaluation against golden dataset
 
 ## Implementation Phases
 
-### Phase 1 — Core Engine + Single-agent Loop ✅ COMPLETE
-- Project scaffold, config, ModelProvider abstraction (5 providers)
-- All 22 tools (yfinance, ta, risk metrics, SEC EDGAR, NewsAPI, Tavily)
-- All 5 specialist agents with prompts and structured outputs
-- LangGraph orchestrator with parallel fan-out via Send
-- Guardrails node (hallucination detection, investment advice check)
-- Synthesizer node (chain-of-thought merge)
-- FastAPI routes with SSE streaming
-- React + Vite frontend with live agent tracker
-- In-memory storage (watchlists, preferences, history)
-- Docker Compose + K8s manifests
-- 18 unit tests passing, frontend builds clean
+Fourteen phases are shipped. **[docs/roadmap.md](docs/roadmap.md) is the
+authoritative status** — every line there was checked against the code rather
+than carried forward from the previous plan. This table is the summary.
 
-### Phase 2 — Persistence + Production Polish (next)
-- PostgreSQL persistence for analysis_history, user_preferences, watchlists
-- Alembic migrations
-- Redis-backed session memory (conversation history, recent tickers)
-- Replace in-memory stores with DB queries
-- Proper error handling and retry logic on API routes
-- Integration tests against real analysis runs
+| # | Phase | Status |
+|---|---|---|
+| 1 | Core engine — 6 agents, LangGraph fan-out, guardrails, synthesiser | ✅ |
+| 2 | Persistence — Postgres, Alembic, Redis session memory | ✅ |
+| 3 | RAG — ingestion, dense + BM25 + RRF, cross-encoder rerank | ✅ |
+| 4 | Memory + guardrails v2 | ❌ not started |
+| 5 | RAGAS evaluation + MLflow / Prometheus / Grafana | ✅ |
+| 6 | Kubernetes + monitoring | ✅ |
+| 7 | Documentation + demo | ◐ docs written, demo video and screenshots outstanding |
+| 8 | Market data + pricing dashboard | ✅ |
+| 9 | Market data caching + local bar store | ✅ |
+| 10 | UI polish — collapsible sidebar, persisted chart toolbar | ✅ |
+| 11 | Options — math, screener, vol provider, specialist agent | ✅ |
+| 12 | Drawdown panel — distance below the 52-week high | ✅ |
+| 13 | Conversational agent — bounded ReAct over deterministic signals | ✅ |
+| 14 | Top movers by cap tier + navigable events week | ✅ |
 
-### Phase 3 — RAG Pipeline
-- Qdrant setup with financial_documents collection
-- Document ingestion: SEC filings + news → chunked → embedded → upserted
-- Query decomposition (Haiku breaks query into sub-queries)
-- Multi-vector retrieval: dense (Qdrant) + sparse (BM25) + entity graph
-- Cross-encoder reranking (bge-reranker-base)
-- Context assembly with freshness weighting
-- Wire RAG prefetch node in the LangGraph (currently stubbed)
+Phase 4 is the only wholly unstarted one. The open items inside shipped
+phases — a lazily-warmed bar store, live network calls in the unit suite, a
+36s cold earnings-calendar fetch — are all listed in the roadmap.
 
-### Phase 4 — Memory + Guardrails Enhancement
-- Long-term user profile learning (preferred sectors, risk drift)
-- Conversation memory across sessions
-- Guardrails v2: citation completeness enforcement, confidence recalibration
-- Investment advice rewriting (not just detection — auto-hedge language)
+> **A warning about this list.** It previously described Phase 3 as "currently
+> stubbed" while 1,063 lines of working RAG sat in `app/rag/`, and omitted
+> phases 10–12 entirely. If a status here disagrees with the code, trust the
+> code and fix this table.
 
-### Phase 5 — RAGAS Evaluation + MLflow/W&B ✅ COMPLETE
-- Online RAGAS scoring in persistence_node (faithfulness, relevancy, precision)
-- MLflow v3.x experiment tracking: every run logged with params, metrics, prompt versions
-- 14 Prometheus custom metrics (RAGAS, latency, tools, guardrails, tokens, cost)
-- Grafana dashboard: 5 rows, 14 panels, auto-provisioned
-- Token usage + cost estimation per LLM call (~$0.011/run with gpt-4o)
-- Prompt versioning (PROMPT_VERSION=v1 in all 5 agents)
-
-### Phase 6 — Kubernetes + Monitoring ✅ COMPLETE
-- 14 K8s manifests: namespace, backend, frontend, postgres, redis, ingress, monitoring
-- Deployed to minikube: 9/9 pods running (backend×2, frontend×2, postgres, redis, prometheus, grafana, mlflow)
-- HPA: 2-5 backend replicas, CPU target 70%
-- Frontend: multi-stage Dockerfile (Node build → nginx serve) + nginx proxy for /api + SSE
-- Monitoring: Prometheus scraping backend, Grafana with provisioned dashboard, MLflow v3.1.0
-- Removed Qdrant (replaced by pgvector inside Postgres)
-- Fixed: Postgres image → pgvector/pgvector:pg16, MLflow port → 5050, readiness probe cleaned
-- Load testing with locust
-
-### Phase 7 — Documentation + Demo
-- Architecture diagrams (Mermaid or draw.io)
-- docs/model_selection.md — formal write-up of model tradeoff POV
-- docs/evaluation_framework.md — methodology document
-- Demo video showing streaming multi-agent analysis
-- README with screenshots
-
-### Phase 8 — Market Data + Pricing Dashboard ✅ COMPLETE
-- Charting tab: TradingView Lightweight Charts v5 — candles/line/area, volume pane,
-  MA20/50/200 overlays, crosshair OHLC legend, 9 timeframes (1D intraday → MAX)
-- Market tab: index cards with sparklines, TradingView live heatmap embed
-  (index + performance-window pickers), sector performance, rates/commodities/crypto
-- Advance/decline breadth per index, computed over real constituent lists
-- Week-ahead panel: earnings as a trading-day calendar, economic releases (optional FRED_API_KEY)
-- Technical analysis section: RSI, MACD, 5/20/50/250 MA ladder + on-demand LLM explanation
-- TradingView-style right-hand watchlist rail: collapsible sections, drag-to-resize,
-  per-page collapse memory
-- `GET /api/v1/market/*` — quotes, history, profile, overview, breadth, events, technicals
-
-**Deviations from the original plan, and why:**
-- **No WebSocket feed.** yfinance has no streaming API and gives delayed data. The UI
-  polls (quotes 15s) instead. A real-time feed needs a paid provider (Polygon/Alpaca/
-  Finnhub) — that is the natural upgrade, and `useQuotes` is the single place to change.
-- **Heatmap is TradingView's embed**, not our own treemap. Their widget is genuinely
-  real-time; ours was delayed. Trade-off: tiles link out to TradingView rather than our
-  Charting page.
-- **No bid/ask** — not available from the data source.
-
-### Phase 9 — Market Data Caching + Local Price Store ✅ COMPLETE
-- Redis as a shared L2 behind the in-process cache (`app/services/cache.py`), with
-  single-flight, stale-fallback, and a circuit breaker so Redis being down degrades
-  to L1 rather than failing
-- `daily_bars` + `bar_coverage` tables — a store, not a cache: settled EOD bars never
-  expire, so a 5-year indicator window is one query. Stores raw *and* adjusted closes
-  because charts want raw and indicators want adjusted
-- `bar_store` serves from Postgres, falls back to the provider, and never serves
-  today's in-progress session
-- Technicals cut over: three downloads per page load → one ~10ms query
-- Full stack containerized; migrations run as an explicit step via `python -m app.db.migrate`,
-  which is safe on a schema previously built by dev `create_all`
-
-**Still open:** `get_history`/`get_overview`/`get_breadth` still fetch live; no backfill
-job yet (the store warms lazily); `tests/unit/test_tools.py` still makes live network calls.
-
-### Phase 13 — Conversational Agent ✅ COMPLETE
-A floating launcher (bottom-right, every page) opens an agent that explains what the
-indicators on the current ticker are showing and answers "is this a good time to buy?".
-
-- **`app/services/signals.py`** — the buy/sell reasoning, in Python rather than a prompt.
-  `derive_signals()` is pure over a `get_technicals()` payload and names every condition
-  that holds: RSI extremes, MACD crossovers, the MA ladder, 50/200 crosses, extension
-  from the 50-day, position in the 52-week range, upcoming earnings. Each carries
-  evidence, the horizon it speaks to, a reliability grade, and its invalidation
-  condition. `direction` is bullish/bearish/neutral — **there is no action verb anywhere
-  in the module, by construction.**
-- **`app/agents/chat/graph.py`** — `prepare_context → gather ⇄ tools → answer → verify`.
-  A bounded cycle (cap 3) closed by a deterministic node, as opposed to the analysis
-  graph's one-shot parallel fan-out. Context is fetched *before* the first model call,
-  so a zero-tool turn is still fully grounded.
-- **Tool calling, finally wired.** `ModelProvider.complete()` gained `tools`/`tool_choice`;
-  `registry.get_schema_for_llm()` had been emitting OpenAI schemas with no caller since
-  it was written. Anthropic translates through pure functions in `provider.py`.
-- **Guardrails.** `check_investment_advice(text, mode)` — `"chat"` is a strict superset
-  adding capitulation patterns, because a conversation gets argued with in ways a report
-  never is. `check_numeric_grounding()` checks every figure against the readings shown to
-  the model. Both replace the reply, rebuilt from the signal set rather than refusing.
-- **`POST /api/v1/chat`** and **`/chat/stream`** (SSE on a POST). History in Redis via the
-  `memory/session.py` helpers that had been unused since Phase 2.
-
-**Deviations from the plan, and why:**
-- **No verdict badge.** "Should I buy?" is answered as a conditional setup — what holds,
-  what would confirm it, what would invalidate it, what we cannot know about the user.
-  More defensible than a BUY/SELL chip and it makes the guardrail coherent instead of
-  something to work around.
-- **No LangGraph checkpointer.** Only `InMemorySaver` ships with the installed langgraph;
-  it survives neither a restart nor a second uvicorn worker. Redis instead.
-- **Streaming walks the node functions rather than `ainvoke`.** Token streaming has to
-  reach inside the answer step and a compiled graph does not expose that.
-- **Gather is a separate model call from answer.** Costs one cheap call; buys a streaming
-  path where no tool request can arrive mid-sentence.
-
-**Still open:** the model sometimes writes signal ids inline as well as in the trailing
-citation line (cosmetic); a turn is ~8-9s cold, most of it the two model calls; the
-`net_bias` chip can read "Leaning bullish" while the prose says "mixed" when a weak
-short-term signal opposes a strong long-term one — both are correct, but the wording
-could agree.
 
 ## Common Issues
 
@@ -329,3 +262,15 @@ could agree.
 - **`alembic upgrade head` says "relation users already exists"**: the schema was built by
   dev `create_all`, which records no revision. Use `make migrate` (`python -m app.db.migrate`),
   which stamps an unstamped schema to the right revision before upgrading
+- **`docker compose` fails with a socket error**: Docker Desktop itself is not
+  running. `open -a Docker`, wait for the daemon, retry
+- **A cached `None` reads back as a cache miss**: store a sentinel (`""`) if you
+  need to cache a negative result, or it re-fetches on every poll
+- **Times must be anchored to America/New_York, not UTC**: after 8pm ET the UTC
+  date has rolled over, which drops today's events off the calendar and, on a
+  Sunday night, returns the wrong week
+- **Yahoo and GICS disagree on four sector names**: normalise through
+  `market_data.normalise_sector` before showing them in one list
+- **Trust the code over any status list here**: a stale "stub for Phase 1"
+  comment in `orchestrator/graph.py` kept RAG marked unbuilt for months while
+  it was fully working. Fixed, but the lesson stands

@@ -91,11 +91,30 @@ async def get_breadth() -> dict:
     return await market_data.get_breadth()
 
 
+@router.get("/movers")
+async def get_movers(
+    cap: str = Query("all", description="all, large, mid or small"),
+    limit: int = Query(10, ge=1, le=25),
+) -> dict:
+    """The day's biggest gainers and losers within one market-cap tier."""
+    return await market_data.get_movers(cap, limit)
+
+
 @router.get("/events")
 async def get_events(
     days: int = Query(7, ge=1, le=31),
     symbols: str = Query("", description="Extra tickers to include in the earnings scan"),
 ) -> dict:
-    """Earnings and economic releases for the current week."""
+    """Earnings and economic releases over the next `days` days."""
     extra = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     return await market_data.get_events(days, extra)
+
+
+@router.get("/events/week")
+async def get_week_events(
+    offset: int = Query(0, ge=-26, le=26, description="0 = this week, -1 = last, +1 = next"),
+    symbols: str = Query("", description="Extra tickers to include in the earnings scan"),
+) -> dict:
+    """Earnings and economic releases for one calendar week (Mon–Sun)."""
+    extra = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return await market_data.get_week_events(offset, extra)

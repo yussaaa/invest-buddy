@@ -112,6 +112,22 @@ INDEX_SOURCES: dict[str, dict] = {
         "name_col": "Company",
         "sector_col": "Sector",
     },
+    # Not shown as breadth rows — these exist so the movers panel can name a
+    # sector for most mid- and small-cap names without a per-symbol lookup.
+    "sp400": {
+        "label": "S&P MidCap 400",
+        "url": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
+        "symbol_col": "Symbol",
+        "name_col": "Security",
+        "sector_col": "GICS Sector",
+    },
+    "sp600": {
+        "label": "S&P SmallCap 600",
+        "url": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
+        "symbol_col": "Symbol",
+        "name_col": "Security",
+        "sector_col": "GICS Sector",
+    },
 }
 
 DOW30_FALLBACK = [
@@ -582,6 +598,38 @@ def _fetch_constituents(index_key: str) -> list[dict]:
     raise ValueError(f"no constituent table found for {index_key}")
 
 
+# Wikipedia gives GICS names, yfinance gives Yahoo's own taxonomy, and the two
+# disagree on four sectors. Normalise both onto the labels already used by the
+# sector-performance panel, so one movers list never mixes "Financials" with
+# "Financial Services".
+SECTOR_ALIASES = {
+    "information technology": "Technology",
+    "technology": "Technology",
+    "financial services": "Financials",
+    "financials": "Financials",
+    "financial": "Financials",
+    "consumer cyclical": "Consumer Discretionary",
+    "consumer discretionary": "Consumer Discretionary",
+    "consumer defensive": "Consumer Staples",
+    "consumer staples": "Consumer Staples",
+    "healthcare": "Health Care",
+    "health care": "Health Care",
+    "basic materials": "Materials",
+    "materials": "Materials",
+    "communication services": "Communication Services",
+    "industrials": "Industrials",
+    "energy": "Energy",
+    "utilities": "Utilities",
+    "real estate": "Real Estate",
+}
+
+
+def normalise_sector(raw: Any) -> str | None:
+    if not raw or str(raw).strip().lower() in {"nan", "none", "other", ""}:
+        return None
+    return SECTOR_ALIASES.get(str(raw).strip().lower(), str(raw).strip())
+
+
 def _sector_lookup() -> dict[str, str]:
     """GICS sector by symbol, borrowed from the S&P 500 table."""
     try:
@@ -717,6 +765,199 @@ async def get_breadth() -> dict:
     return {"indices": rows, "as_of": datetime.now(timezone.utc).isoformat()}
 
 
+# ── top gainers / losers ──────────────────────────────────────────────────────
+
+MOVERS_TTL = 60.0
+SECTOR_TTL = 604800.0          # a company changes sector roughly never
+MOVERS_OVERSCAN = 60           # screened rows fetched per side, before filtering
+
+# Cap tiers as (min, max) market cap in USD. "all" keeps the floor so the list
+# is companies rather than the sub-$100m tape, where a 200% day means nothing.
+CAP_TIERS: dict[str, dict] = {
+    "all":   {"label": "All caps",  "min": 300_000_000,    "max": None},
+    "large": {"label": "Large cap", "min": 10_000_000_000, "max": None},
+    "mid":   {"label": "Mid cap",   "min": 2_000_000_000,  "max": 10_000_000_000},
+    "small": {"label": "Small cap", "min": 300_000_000,    "max": 2_000_000_000},
+}
+
+# Screener "region: us" still returns foreign OTC lines whose last print is days
+# old. Restrict to the exchanges an ordinary brokerage account can actually hit.
+US_EXCHANGES = {"NMS", "NYQ", "NGM", "NCM", "ASE", "PCX", "BTS", "NYS"}
+
+MIN_MOVER_PRICE = 1.0
+MIN_MOVER_VOLUME = 100_000
+
+
+def _screen_query(tier: dict):
+    """Equity screen for one cap tier: US, liquid, above the penny threshold."""
+    from yfinance import EquityQuery as Q
+
+    clauses = [
+        Q("eq", ["region", "us"]),
+        Q("gte", ["intradaymarketcap", tier["min"]]),
+        Q("gte", ["dayvolume", MIN_MOVER_VOLUME]),
+        Q("gte", ["intradayprice", MIN_MOVER_PRICE]),
+    ]
+    if tier["max"] is not None:
+        clauses.append(Q("lt", ["intradaymarketcap", tier["max"]]))
+    return Q("and", clauses)
+
+
+def _mover_row(quote: dict) -> dict | None:
+    """One screener quote, trimmed to what the panel shows."""
+    symbol = (quote.get("symbol") or "").upper()
+    change = _safe(quote.get("regularMarketChangePercent"))
+    if not symbol or change is None or change == 0:
+        return None
+    if quote.get("quoteType") != "EQUITY":
+        return None
+    if quote.get("exchange") not in US_EXCHANGES:
+        return None
+
+    return {
+        "symbol": symbol,
+        "name": quote.get("shortName") or symbol,
+        "sector": None,                     # filled in by _attach_sectors
+        "last": _round(quote.get("regularMarketPrice"), 2),
+        "change": _round(quote.get("regularMarketChange"), 2),
+        "change_percent": _round(change, 2),
+        "volume": _safe(quote.get("regularMarketVolume")),
+        "market_cap": _safe(quote.get("marketCap")),
+        "exchange": quote.get("fullExchangeName"),
+    }
+
+
+def _screen_movers(tier: dict, ascending: bool, limit: int) -> list[dict]:
+    """Screen one side of the tape. `ascending` gives losers, descending gainers."""
+    result = yf.screen(
+        _screen_query(tier),
+        sortField="percentchange",
+        sortAsc=ascending,
+        count=MOVERS_OVERSCAN,
+    )
+    rows = []
+    for quote in (result or {}).get("quotes", []):
+        row = _mover_row(quote)
+        # A gainer screen can spill into flat/negative names once the tradeable
+        # universe runs out; keep each list on its own side of zero.
+        if row and ((row["change_percent"] < 0) == ascending):
+            rows.append(row)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _index_sectors() -> dict[str, str]:
+    """Symbol -> sector across the S&P 1500, which covers most US movers."""
+    lookup: dict[str, str] = {}
+    for key in ("sp500", "sp400", "sp600"):
+        try:
+            for member in _fetch_constituents(key):
+                sector = normalise_sector(member.get("sector"))
+                if sector:
+                    lookup.setdefault(member["symbol"], sector)
+        except Exception as e:
+            log.warning("index_sectors_failed", index=key, error=str(e))
+    return lookup
+
+
+def _sector_via_info(symbol: str) -> str | None:
+    try:
+        return normalise_sector((yf.Ticker(symbol).info or {}).get("sector"))
+    except Exception:
+        return None
+
+
+async def _attach_sectors(rows: list[dict]) -> None:
+    """Name each mover's sector in place.
+
+    Two tiers, because the cheap one covers most of the list: the S&P 1500
+    membership tables are already cached for the breadth panel, and only the
+    symbols they miss cost a per-ticker `info` call. Those are cached for a
+    week individually, so an unknown symbol is slow once, not once per poll.
+    """
+    if not rows:
+        return
+
+    index_lookup = await _cached("sectors:index", CONSTITUENTS_TTL, _index_sectors)
+    unknown = []
+    for row in rows:
+        row["sector"] = index_lookup.get(row["symbol"])
+        if not row["sector"]:
+            unknown.append(row["symbol"])
+
+    if not unknown:
+        return
+
+    keys = {sym: f"sector:{sym}" for sym in unknown}
+    hits = await get_fresh_many(list(keys.values()), SECTOR_TTL)
+    missing = [sym for sym in unknown if keys[sym] not in hits]
+
+    if missing:
+        def fetch() -> dict[str, str | None]:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                return dict(zip(missing, pool.map(_sector_via_info, missing)))
+
+        try:
+            fetched = await asyncio.to_thread(fetch)
+        except Exception as e:
+            log.warning("sector_info_failed", count=len(missing), error=str(e))
+            fetched = {}
+
+        # A symbol Yahoo has no sector for is cached as "" rather than None:
+        # the cache reads a None back as a miss, which would re-fetch the same
+        # dead lookup on every poll for as long as the ticker keeps moving.
+        resolved = {keys[s]: fetched.get(s) or "" for s in missing}
+        await put_many(resolved, SECTOR_TTL)
+        hits.update(resolved)
+
+    # Anything still blank was in `unknown`, so it has a key either way.
+    for row in rows:
+        if not row["sector"]:
+            row["sector"] = hits.get(keys[row["symbol"]]) or None
+
+
+async def get_movers(cap: str = "all", limit: int = 10) -> dict:
+    """The day's biggest gainers and losers within one market-cap tier."""
+    cap = cap.lower()
+    tier = CAP_TIERS.get(cap)
+    if tier is None:
+        return {"cap": cap, "gainers": [], "losers": [], "error": f"unknown cap tier {cap!r}"}
+
+    limit = max(1, min(limit, 25))
+
+    def fetch() -> dict:
+        return {
+            "gainers": _screen_movers(tier, ascending=False, limit=limit),
+            "losers": _screen_movers(tier, ascending=True, limit=limit),
+        }
+
+    def complete(result: dict) -> bool:
+        return bool(result["gainers"] and result["losers"])
+
+    try:
+        sides = await _cached(
+            f"movers:{cap}:{limit}", MOVERS_TTL, fetch, should_cache=complete, lock=True
+        )
+    except Exception as e:
+        log.error("movers_fetch_failed", cap=cap, error=str(e))
+        return {"cap": cap, "gainers": [], "losers": [], "error": str(e)}
+
+    # Sectors are attached outside the cached fetch: the screen is worth
+    # re-running every minute, the sector of a ticker is not.
+    gainers = [dict(r) for r in sides["gainers"]]
+    losers = [dict(r) for r in sides["losers"]]
+    await _attach_sectors(gainers + losers)
+
+    return {
+        "cap": cap,
+        "cap_label": tier["label"],
+        "gainers": gainers,
+        "losers": losers,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def get_events(days: int = 7, extra_symbols: list[str] | None = None) -> dict:
     """Earnings and economic releases for the current week."""
     start, end = _week_bounds(days)
@@ -742,3 +983,114 @@ async def get_events(days: int = 7, extra_symbols: list[str] | None = None) -> d
             "economic": {"events": [], "available": False},
             "error": str(e),
         }
+
+
+# ── one calendar week of events, navigable ────────────────────────────────────
+
+# The calendar is fetched whole and sliced per week, so this TTL is what the
+# first visitor of the day pays, not what each arrow press costs.
+EARNINGS_CALENDAR_TTL = 21600.0     # 6 hours
+MAX_WEEK_OFFSET = 26
+
+
+def _iso_week_bounds(offset: int) -> tuple[date, date]:
+    """Monday through Sunday of the week `offset` weeks from this one.
+
+    Anchored to New York for the same reason `_week_bounds` is: after 8pm ET
+    the UTC date has already rolled over, which on a Sunday night would hand
+    back next week.
+    """
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    monday = today - timedelta(days=today.weekday()) + timedelta(weeks=offset)
+    return monday, monday + timedelta(days=6)
+
+
+def _earnings_history(symbol: str) -> list[dict]:
+    """Every earnings date yfinance knows for one symbol, past and scheduled.
+
+    `calendar` would be one cheap call, but it only ever returns the *next*
+    report — which cannot answer "who reported on Tuesday" for a week already
+    under way, let alone a past one. This endpoint is slower and returns ~3
+    years in a single call, which is what makes week navigation free.
+    """
+    try:
+        frame = yf.Ticker(symbol).get_earnings_dates(limit=24)
+    except Exception:
+        return []
+    if frame is None or frame.empty:
+        return []
+
+    rows = []
+    for stamp, row in frame.iterrows():
+        when = stamp.to_pydatetime() if hasattr(stamp, "to_pydatetime") else stamp
+        if not isinstance(when, datetime):
+            continue
+        rows.append({
+            "symbol": symbol,
+            "date": when.date().isoformat(),
+            # Yahoo timestamps the call itself: before the 9:30 open or after
+            # the 4pm close is the part traders actually plan around.
+            "session": "before_open" if when.hour < 12 else "after_close",
+            "eps_estimate": _round(row.get("EPS Estimate"), 3),
+            "reported_eps": _round(row.get("Reported EPS"), 3),
+            "surprise_percent": _round(row.get("Surprise(%)"), 2),
+        })
+    return rows
+
+
+def _fetch_earnings_calendar(universe: list[str]) -> dict[str, list[dict]]:
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        results = pool.map(_earnings_history, universe)
+    return {sym: rows for sym, rows in zip(universe, results) if rows}
+
+
+async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None = None) -> dict:
+    """Earnings and economic releases for one calendar week.
+
+    `week_offset` is relative to the current week — 0 is this one, -1 last
+    week, +1 next. Past weeks carry reported EPS and the surprise against
+    estimate; future weeks carry the estimate alone.
+    """
+    week_offset = max(-MAX_WEEK_OFFSET, min(week_offset, MAX_WEEK_OFFSET))
+    start, end = _iso_week_bounds(week_offset)
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+
+    universe = list(dict.fromkeys(EARNINGS_UNIVERSE + [s.upper() for s in (extra_symbols or [])]))
+
+    base = {
+        "week_offset": week_offset,
+        "week_start": start.isoformat(),
+        "week_end": end.isoformat(),
+        "today": today.isoformat(),
+        "is_current_week": start <= today <= end,
+    }
+
+    try:
+        calendar = await _cached(
+            f"earnings-calendar:{','.join(universe)}",
+            EARNINGS_CALENDAR_TTL,
+            lambda: _fetch_earnings_calendar(universe),
+            should_cache=bool,
+            lock=True,
+        )
+    except Exception as e:
+        log.error("earnings_calendar_failed", error=str(e))
+        calendar = {}
+
+    earnings = [
+        row
+        for rows in calendar.values()
+        for row in rows
+        if start.isoformat() <= row["date"] <= end.isoformat()
+    ]
+    earnings.sort(key=lambda r: (r["date"], r["symbol"]))
+
+    try:
+        economic = await _cached(
+            f"economic:{start}:{end}", EVENTS_TTL, lambda: _fetch_economic(start, end)
+        )
+    except Exception as e:
+        log.error("economic_fetch_failed", error=str(e))
+        economic = {"events": [], "available": False, "error": str(e)}
+
+    return {**base, "earnings": earnings, "economic": economic}

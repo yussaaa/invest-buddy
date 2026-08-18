@@ -1,14 +1,17 @@
 /**
  * MarketPage — overall market conditions: index cards, advance/decline breadth,
- * TradingView's live heatmap with index/timeframe pickers, sector performance,
- * macro benchmarks, and the week's earnings and economic releases.
+ * the day's top gainers and losers filtered by market-cap tier, TradingView's
+ * live heatmap with index/timeframe pickers, sector performance, macro
+ * benchmarks, and one navigable week of earnings and economic releases.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   Loader2,
   RefreshCw,
@@ -22,12 +25,15 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import type {
+  CapTier,
   EarningsEvent,
   IndexBreadth,
   MarketBreadth,
   MarketEvents,
+  MarketMovers,
   MarketOverview,
   MarketRow,
+  Mover,
 } from '@/lib/types'
 import TradingViewHeatmap from '@/components/market/TradingViewHeatmap'
 
@@ -38,6 +44,15 @@ const INDEX_OPTIONS = [
   { value: 'NASDAQ100', label: 'Nasdaq 100' },
   { value: 'DJDJI', label: 'Dow Jones 30' },
   { value: 'AllUSA', label: 'All US' },
+]
+
+// Cap tiers mirror CAP_TIERS in services/market_data.py — the bounds live
+// server-side, these are only the labels and the order they appear in.
+const CAP_TIERS: { value: CapTier; label: string; hint: string }[] = [
+  { value: 'all', label: 'All caps', hint: 'Every US listing above $300M' },
+  { value: 'large', label: 'Large cap', hint: 'Above $10B' },
+  { value: 'mid', label: 'Mid cap', hint: '$2B – $10B' },
+  { value: 'small', label: 'Small cap', hint: '$300M – $2B' },
 ]
 
 const HEATMAP_RANGES = [
@@ -249,6 +264,113 @@ function BreadthCard({ row }: { row: IndexBreadth }) {
   )
 }
 
+/** Market cap in the units a person reads it in: $4.9B, $812M. */
+function cap(v?: number | null): string {
+  if (v == null) return '—'
+  if (v >= 1e12) return `$${(v / 1e12).toFixed(2)}T`
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(0)}M`
+  return `$${v.toLocaleString('en-US')}`
+}
+
+/**
+ * One mover. The sector sits next to the ticker rather than in a column of its
+ * own — the question it answers is "what kind of company is this", which is
+ * part of reading the name, not a separate field to scan down.
+ */
+function MoverRow({ rank, row, onClick }: { rank: number; row: Mover; onClick: () => void }) {
+  const up = (row.change_percent ?? 0) > 0
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-3 border-b border-border/40 py-2 text-left transition-colors last:border-b-0 hover:bg-muted/40"
+    >
+      <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground/50">
+        {rank}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[13px] font-semibold text-foreground">{row.symbol}</span>
+          <Badge
+            variant="secondary"
+            className="shrink-0 px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide"
+          >
+            {row.sector ?? 'Unclassified'}
+          </Badge>
+        </div>
+        <p className="truncate text-[11px] text-muted-foreground/70">{row.name}</p>
+      </div>
+
+      <div className="shrink-0 text-right">
+        <p className="text-[13px] font-medium tabular-nums text-foreground">{num(row.last)}</p>
+        <p className="text-[10px] tabular-nums text-muted-foreground/60">{cap(row.market_cap)}</p>
+      </div>
+
+      <span
+        className={cn(
+          'w-[68px] shrink-0 text-right text-[13px] font-semibold tabular-nums',
+          up ? 'text-emerald-400' : 'text-rose-400'
+        )}
+      >
+        {pct(row.change_percent)}
+      </span>
+    </button>
+  )
+}
+
+function MoversCard({
+  title,
+  rows,
+  loading,
+  gaining,
+  onSelect,
+}: {
+  title: string
+  rows: Mover[]
+  loading: boolean
+  gaining: boolean
+  onSelect: (symbol: string) => void
+}) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2 py-4">
+        <div className="flex items-center gap-2">
+          {gaining ? (
+            <TrendingUp size={14} className="text-emerald-400" />
+          ) : (
+            <TrendingDown size={14} className="text-rose-400" />
+          )}
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        </div>
+        <Separator />
+
+        {loading && rows.length === 0 ? (
+          <div className="flex items-center gap-2 py-10 text-xs text-muted-foreground">
+            <Loader2 size={14} className="animate-spin" />
+            Screening the tape…
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="py-10 text-center text-xs text-muted-foreground/60">
+            Nothing in this tier right now.
+          </p>
+        ) : (
+          <div className="flex flex-col">
+            {rows.map((row, i) => (
+              <MoverRow
+                key={row.symbol}
+                rank={i + 1}
+                row={row}
+                onClick={() => onSelect(row.symbol)}
+              />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 /**
  * The next `count` trading days from `startIso` (weekends skipped).
  *
@@ -274,18 +396,76 @@ function isoDay(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/**
+ * One company's report inside a day column.
+ *
+ * A week that has already happened shows what was actually reported and how far
+ * it landed from the estimate; a week still ahead shows the estimate alone.
+ */
+function EarningsTile({
+  event,
+  onSelect,
+}: {
+  event: EarningsEvent
+  onSelect: (symbol: string) => void
+}) {
+  const reported = event.reported_eps != null
+  const surprise = event.surprise_percent
+  const session = event.session === 'before_open' ? 'before open' : 'after close'
+
+  const detail = reported
+    ? `${event.reported_eps!.toFixed(2)}${event.eps_estimate != null ? ` vs ${event.eps_estimate.toFixed(2)}` : ''}`
+    : event.eps_estimate != null
+      ? `est. ${event.eps_estimate.toFixed(2)}`
+      : null
+
+  return (
+    <button
+      onClick={() => onSelect(event.symbol)}
+      title={[
+        event.symbol,
+        session,
+        reported ? `reported ${event.reported_eps!.toFixed(2)}` : null,
+        event.eps_estimate != null ? `est. ${event.eps_estimate.toFixed(2)}` : null,
+        surprise != null ? `surprise ${pct(surprise)}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')}
+      className="flex flex-col rounded bg-card px-1.5 py-1 text-left transition-colors hover:bg-muted"
+    >
+      <div className="flex items-baseline justify-between gap-1">
+        <span className="font-mono text-[11px] font-semibold text-foreground">{event.symbol}</span>
+        {/* Before the open or after the close — the part that decides which
+            session the move lands in. */}
+        <span className="shrink-0 text-[8px] uppercase tracking-wide text-muted-foreground/50">
+          {event.session === 'before_open' ? 'bmo' : 'amc'}
+        </span>
+      </div>
+
+      {detail && (
+        <span className="text-[9px] tabular-nums text-muted-foreground/70">{detail}</span>
+      )}
+      {surprise != null && (
+        <span className={cn('text-[9px] tabular-nums', tone(surprise))}>{pct(surprise)} surp.</span>
+      )}
+    </button>
+  )
+}
+
 /** Mon–Fri style calendar: one column per trading day, tickers stacked inside. */
 function EarningsWeek({
   earnings,
   startIso,
+  todayIso,
   onSelect,
 }: {
   earnings: EarningsEvent[]
   startIso: string
+  todayIso: string
   onSelect: (symbol: string) => void
 }) {
   const days = businessDays(startIso, 5)
-  const today = startIso
+  const today = todayIso
 
   const byDay = new Map<string, EarningsEvent[]>()
   for (const e of earnings) {
@@ -332,32 +512,75 @@ function EarningsWeek({
               {items.length === 0 ? (
                 <span className="mt-3 text-center text-[10px] text-muted-foreground/30">—</span>
               ) : (
-                items.map(e => (
-                  <button
-                    key={e.symbol}
-                    onClick={() => onSelect(e.symbol)}
-                    title={
-                      e.eps_estimate != null
-                        ? `${e.symbol} · EPS est. ${e.eps_estimate.toFixed(2)}`
-                        : e.symbol
-                    }
-                    className="flex flex-col rounded bg-card px-1.5 py-1 text-left transition-colors hover:bg-muted"
-                  >
-                    <span className="font-mono text-[11px] font-semibold text-foreground">
-                      {e.symbol}
-                    </span>
-                    {e.eps_estimate != null && (
-                      <span className="text-[9px] tabular-nums text-muted-foreground/70">
-                        est. {e.eps_estimate.toFixed(2)}
-                      </span>
-                    )}
-                  </button>
-                ))
+                items.map(e => <EarningsTile key={e.symbol} event={e} onSelect={onSelect} />)
               )}
             </div>
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/** "Last week", "in 3 weeks" — the offset in words, so the dates have context. */
+function relativeWeek(offset: number): string {
+  if (offset === 0) return 'This week'
+  if (offset === -1) return 'Last week'
+  if (offset === 1) return 'Next week'
+  return offset < 0 ? `${-offset} weeks ago` : `in ${offset} weeks`
+}
+
+function WeekPicker({
+  offset,
+  onChange,
+  events,
+}: {
+  offset: number
+  onChange: Dispatch<SetStateAction<number>>
+  events: MarketEvents | null
+}) {
+  // Stepping off the rendered `offset` would collapse two quick clicks into
+  // one week — both would read the same pre-render value.
+  const step = (delta: number) =>
+    onChange(prev => Math.max(-26, Math.min(26, prev + delta)))
+
+  return (
+    <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+      <button
+        onClick={() => step(-1)}
+        disabled={offset <= -26}
+        title="Previous week"
+        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <ChevronLeft size={15} />
+      </button>
+
+      <div className="min-w-[168px] px-1 text-center">
+        <p className="text-xs font-medium leading-tight text-foreground">
+          {events ? `${formatDay(events.week_start)} – ${formatDay(events.week_end)}` : '—'}
+        </p>
+        <p className="text-[10px] leading-tight text-muted-foreground/60">
+          {relativeWeek(offset)}
+        </p>
+      </div>
+
+      <button
+        onClick={() => step(1)}
+        disabled={offset >= 26}
+        title="Next week"
+        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <ChevronRight size={15} />
+      </button>
+
+      {offset !== 0 && (
+        <button
+          onClick={() => onChange(0)}
+          className="ml-1 h-7 rounded px-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
+        >
+          Today
+        </button>
+      )}
     </div>
   )
 }
@@ -397,6 +620,13 @@ export default function MarketPage() {
   const [indexBreadth, setIndexBreadth] = useState<MarketBreadth | null>(null)
   const [loadingBreadth, setLoadingBreadth] = useState(true)
 
+  // Movers are kept per tier rather than as one value: switching the filter
+  // back to a tier already fetched should show it at once, not re-screen.
+  const [capTier, setCapTier] = useState<CapTier>('all')
+  const [movers, setMovers] = useState<Partial<Record<CapTier, MarketMovers>>>({})
+  const [loadingMovers, setLoadingMovers] = useState(true)
+
+  const [weekOffset, setWeekOffset] = useState(0)
   const [events, setEvents] = useState<MarketEvents | null>(null)
   const [loadingEvents, setLoadingEvents] = useState(true)
 
@@ -449,17 +679,61 @@ export default function MarketPage() {
     }
   }, [])
 
+  // Top movers — one screen per cap tier, refreshed on the server's own TTL
   useEffect(() => {
+    let cancelled = false
+    const controller = new AbortController()
+
+    async function load() {
+      try {
+        const data = await api.market.movers(capTier, 10, controller.signal)
+        if (!cancelled) setMovers(prev => ({ ...prev, [capTier]: data }))
+      } catch {
+        /* keep whatever this tier last showed */
+      } finally {
+        if (!cancelled) setLoadingMovers(false)
+      }
+    }
+
+    setLoadingMovers(true)
+    load()
+    const id = setInterval(load, 60000)
+    return () => {
+      cancelled = true
+      controller.abort()
+      clearInterval(id)
+    }
+  }, [capTier])
+
+  // Earnings + economic releases for whichever week is selected
+  useEffect(() => {
+    let cancelled = false
+    const controller = new AbortController()
+
+    setLoadingEvents(true)
     api.market
-      .events(7)
-      .then(setEvents)
-      .catch(() => setEvents(null))
-      .finally(() => setLoadingEvents(false))
-  }, [])
+      .weekEvents(weekOffset, controller.signal)
+      .then(data => {
+        if (!cancelled) setEvents(data)
+      })
+      .catch(() => {
+        if (!cancelled) setEvents(null)
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingEvents(false)
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [weekOffset])
 
   const breadth = overview?.breadth
   const earnings = events?.earnings ?? []
   const economic = events?.economic
+  const tierMovers = movers[capTier]
+  const activeTier = CAP_TIERS.find(t => t.value === capTier)
 
   return (
     <div className="max-w-[1500px] mx-auto px-6 py-6 flex flex-col gap-6">
@@ -468,7 +742,7 @@ export default function MarketPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Market Overview</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Index conditions, sector rotation and the week ahead.
+            Index conditions, the day's biggest movers, sector rotation and the week's events.
           </p>
         </div>
         {breadth && (
@@ -527,6 +801,62 @@ export default function MarketPage() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Top gainers and losers */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Top movers
+            </h2>
+            <p className="mt-0.5 text-[11px] text-muted-foreground/60">
+              Biggest percentage moves today · {activeTier?.hint}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+            {CAP_TIERS.map(tier => (
+              <button
+                key={tier.value}
+                onClick={() => setCapTier(tier.value)}
+                title={tier.hint}
+                className={cn(
+                  'h-7 rounded px-2.5 text-xs font-medium transition-colors',
+                  capTier === tier.value
+                    ? 'bg-primary/20 text-primary'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                )}
+              >
+                {tier.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {tierMovers?.error && (
+          <Alert variant="destructive">
+            <AlertCircle size={16} />
+            <AlertDescription>{tierMovers.error}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <MoversCard
+            title="Top 10 gainers"
+            rows={tierMovers?.gainers ?? []}
+            loading={loadingMovers}
+            gaining
+            onSelect={symbol => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)}
+          />
+          <MoversCard
+            title="Top 10 losers"
+            rows={tierMovers?.losers ?? []}
+            loading={loadingMovers}
+            gaining={false}
+            onSelect={symbol => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)}
+          />
+        </div>
       </div>
 
       {/* Heatmap */}
@@ -650,17 +980,15 @@ export default function MarketPage() {
         </Card>
       </div>
 
-      {/* Week ahead */}
+      {/* Economic events */}
       <div className="flex flex-col gap-3">
-        <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          <CalendarDays size={14} />
-          Week ahead
-          {events && (
-            <span className="normal-case tracking-normal text-[11px] text-muted-foreground/60">
-              {formatDay(events.week_start)} → {formatDay(events.week_end)}
-            </span>
-          )}
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <CalendarDays size={14} />
+            Economic events
+          </h2>
+          <WeekPicker offset={weekOffset} onChange={setWeekOffset} events={events} />
+        </div>
 
         <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
           {/* Earnings — laid out as a working-week calendar */}
@@ -680,6 +1008,7 @@ export default function MarketPage() {
                 <EarningsWeek
                   earnings={earnings}
                   startIso={events?.week_start ?? isoDay(new Date())}
+                  todayIso={events?.today ?? isoDay(new Date())}
                   onSelect={symbol => navigate(`/charting?ticker=${symbol}`)}
                 />
               )}
@@ -710,7 +1039,7 @@ export default function MarketPage() {
                 </div>
               ) : economic.events.length === 0 ? (
                 <p className="py-6 text-center text-xs text-muted-foreground/60">
-                  No major releases in the next 7 days.
+                  No major releases {relativeWeek(weekOffset).toLowerCase()}.
                 </p>
               ) : (
                 <div className="flex flex-col">
