@@ -5,7 +5,7 @@
  * in sync with whatever is on screen.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
@@ -31,6 +31,11 @@ import { useCachedResource } from '@/hooks/useCachedResource'
 import { K, TTL } from '@/lib/cacheKeys'
 import PriceChart, { MA_COLORS, MA_FALLBACK_COLOR, type ChartType } from '@/components/chart/PriceChart'
 import Section from '@/components/chart/Section'
+// Lazy so recharts lands in its own chunk — a reader who leaves the trend
+// section closed never downloads it.
+const TrendPanel = lazy(() => import('@/components/chart/trend/TrendPanel'))
+const TREND_SUBLABEL =
+  'SMA 20/50/200 · 21-session geometric slope, annualised · z-score and ±1.5σ vs the 200 DMA'
 import {
   readSectionPrefs,
   writeSectionPrefs,
@@ -433,6 +438,26 @@ export default function ChartingPage() {
         onOpenChange={open => toggleSection('technicals', open)}
       >
         <TechnicalPanel symbol={symbol} />
+      </Section>
+
+      <Section
+        id="trend"
+        title="Trend & extension"
+        sublabel={TREND_SUBLABEL}
+        summary="200 DMA slope · z-score · ±1.5σ band"
+        open={sections.trend}
+        onOpenChange={open => toggleSection('trend', open)}
+      >
+        <Suspense
+          fallback={
+            <div className="flex h-[300px] items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 size={16} className="animate-spin" />
+              Loading charts…
+            </div>
+          }
+        >
+          <TrendPanel symbol={symbol} />
+        </Suspense>
       </Section>
 
       <Section
