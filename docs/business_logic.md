@@ -159,7 +159,13 @@ All ratios are read directly from yfinance's pre-computed fields, except FCF Yie
 | **Income** | Dividend Yield | `dividendYield` | |
 | | EPS (TTM) | `trailingEps` | |
 | | EPS (Forward) | `forwardEps` | |
-| **Calculated** | FCF Yield | `freeCashflow / marketCap` | Custom calculation |
+| **Calculated** | FCF Yield | `Free Cash Flow (cash flow statement) / marketCap` | Custom calculation — see note below |
+
+> **Why FCF comes from the statement, not `info`.** `info["freeCashflow"]` is
+> unreliable: MSFT reports $16.5bn there against $67bn on its own cash flow
+> statement, which turns a ~1.9% yield into 0.46% with nothing raising. The
+> statement row is the source and `info` the fallback. Fixed 2026-08-18; it had
+> been wrong since this ratio was written.
 
 Cache: 1 hour
 
@@ -384,3 +390,67 @@ Every analysis includes a mandatory disclaimer:
 
 Currently: no rate limiting (development/demo mode).
 Planned: Redis token bucket per user_id, configurable rate per endpoint.
+
+
+---
+
+## Trend and extension (Phase 16)
+
+Computed in `services/trend.py` over the adjusted daily closes
+`services/technicals.py` already holds.
+
+| Quantity | Definition | Why this way |
+|---|---|---|
+| SMA slope | `((sma[t]/sma[t-21])**(1/21) - 1) * 100`, per day | Geometric over one trading month. At 5 sessions the 20-day line is noisy and the label flips every other day |
+| Annualised slope | `((1 + perDay/100)**252 - 1) * 100` | Compounded, not multiplied — 0.05%/day is 13.4%/yr, not 12.6%, a whole label bucket |
+| Sigma | Sample stdev (ddof=1) of price over the trailing 200 | Same window as the average, so band and z-score are one event |
+| Z-score | `(close - sma200) / sigma` | `None` when sigma is 0 — a halted series has no dispersion to measure against |
+| Band | `sma200 ± 1.5σ` | Touching the band *is* z = ±1.5, by construction |
+
+Slope labels, boundaries belonging to the stronger bucket: `strong_uptrend`
+≥ 20%/yr, `uptrend` ≥ 8% (roughly long-run equity drift), `weak_uptrend` ≥ 2%,
+`flat` below that, mirrored for downtrends.
+
+Z labels, boundaries belonging to the more extreme bucket: `extended_high`
+≥ 1.5, `elevated` ≥ 0.5, `neutral`, `depressed` ≤ -0.5, `extended_low` ≤ -1.5.
+The vocabulary is descriptive — a price two deviations above its average is a
+fact about dispersion, not a verdict, so it is never called cheap or expensive.
+
+**Windows are 20/50/200**, not the ladder's 5/20/50/200/250. A 5-day average's
+slope is an order of magnitude noisier and flattens the rest into the axis.
+
+## Valuation (Phase 16)
+
+`services/valuation_math.py` (arithmetic) and `services/valuation.py` (inputs).
+
+**Method: `fcfe_cost_of_equity`.** The free cash flow reported on a cash flow
+statement is after interest paid — a levered, equity claim. It is therefore
+discounted at the cost of equity, and **net debt is not subtracted**: the debt
+has already been serviced inside the cash flows. The familiar "discount at WACC,
+subtract net debt" applies to *unlevered* flow; using it here double-counts the
+debt into a number that is plausible, lower and wrong.
+
+| Input | Source | Notes |
+|---|---|---|
+| Base FCF | `.cashflow` row `Free Cash Flow` | **Not** `info["freeCashflow"]` — MSFT reports $16.5bn there against $67bn on its statement. Falls back to `Operating Cash Flow + Capital Expenditure` (capex is signed negative), then to `info` |
+| Shares | `info["sharesOutstanding"]` | Hard requirement; absent means no per-share value |
+| Growth anchor | `info["revenueGrowth"]`, clamped to [-10%, 20%] | Revenue beats earnings as an FCF proxy — less accounting noise |
+| Discount rate | CAPM: `riskFree + clamp(beta, 0.5, 2.5) × 5%`, clamped to [6%, 15%] | Both clamps reported with the raw value |
+| Terminal growth | 2.5% default | Roughly long-run nominal GDP |
+| Horizon | 10 years, growth fading linearly to terminal | A two-stage cliff produces a terminal value nobody believes |
+
+**Refusals.** Negative base FCF is declined rather than valued — a negative fair
+value is worse than no answer, and pre-profit and heavy-capex names land there
+routinely. A discount rate within 1pp of terminal growth is refused per
+scenario, so one broken case does not take the panel down.
+
+**Reported alongside every result** because the number alone misleads:
+`terminal_value_share` (typically 55–70% — the part assuming a rate forever),
+`implied_exit_fcf_multiple`, and the FCF history with its year-to-year spread,
+which runs from ~12% for a stable name to over 200% for one mid-ramp.
+
+**The headline is the reverse DCF**, not the fair value: the growth rate today's
+price already requires. A forward DCF on this data is systematically wrong —
+every mega-cap prices out 73–78% "overvalued" — because the terminal value rests
+on a growth estimate drawn from four noisy years. The inverse is robust and
+describes the price rather than targeting it.

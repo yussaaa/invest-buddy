@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.services import market_data, options, technicals
+from app.services import market_data, options, technicals, valuation
 
 router = APIRouter()
 
@@ -51,10 +51,39 @@ async def get_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL
     return await technicals.get_technicals(symbol)
 
 
+@router.get("/trend")
+async def get_trend(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    range: str = Query("2y", description="1y, 2y or 5y of series"),
+) -> dict:
+    """Price vs its 200-day average: SMA slopes, the ±1.5σ band and the z-score."""
+    return await technicals.get_trend(symbol, range)
+
+
 @router.get("/technicals/explain")
 async def explain_technicals(symbol: str = Query(..., description="Ticker, e.g. AAPL")) -> dict:
     """Plain-English read of the indicators above, written by the fast model."""
     return await technicals.explain_technicals(symbol)
+
+
+@router.get("/valuation")
+async def get_valuation(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    growth: float | None = Query(None, ge=-0.5, le=1.0, description="Year-1 FCF growth"),
+    terminal_growth: float | None = Query(None, ge=0.0, le=0.06),
+    discount_rate: float | None = Query(None, ge=0.03, le=0.30),
+    years: int = Query(10, ge=5, le=20),
+    fcf_base: str = Query("ttm", description="ttm or median"),
+) -> dict:
+    """Scenario-banded DCF, the sensitivity grid, and the market-implied growth rate."""
+    return await valuation.get_valuation(
+        symbol,
+        growth=growth,
+        terminal_growth=terminal_growth,
+        discount_rate=discount_rate,
+        years=years,
+        fcf_base=fcf_base,
+    )
 
 
 @router.get("/options/chain")

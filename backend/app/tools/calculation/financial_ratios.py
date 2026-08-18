@@ -19,6 +19,30 @@ def _safe(val) -> Optional[float]:
         return None
 
 
+def _statement_fcf(ticker: str) -> float | None:
+    """Latest reported free cash flow, from the cash flow statement itself."""
+    try:
+        frame = yf.Ticker(ticker).cashflow
+    except Exception:
+        return None
+    if frame is None or frame.empty:
+        return None
+
+    if "Free Cash Flow" in frame.index:
+        for value in frame.loc["Free Cash Flow"].values:
+            got = _safe(value)
+            if got is not None:
+                return got
+
+    # Capex arrives signed negative, so it adds.
+    if "Operating Cash Flow" in frame.index and "Capital Expenditure" in frame.index:
+        ocf = _safe(frame.loc["Operating Cash Flow"].values[0])
+        capex = _safe(frame.loc["Capital Expenditure"].values[0])
+        if ocf is not None:
+            return ocf + (capex or 0)
+    return None
+
+
 async def compute_financial_ratios(ticker: str) -> dict:
     """Compute key valuation and financial health ratios from yfinance info."""
     def _calc():
@@ -61,8 +85,14 @@ async def compute_financial_ratios(ticker: str) -> dict:
             "beta": _safe(info.get("beta")),
         }
 
-        # FCF yield = Free Cash Flow / Market Cap
-        fcf = _safe(info.get("freeCashflow"))
+        # FCF yield = Free Cash Flow / Market Cap.
+        #
+        # The cash flow statement is the source, not info["freeCashflow"] —
+        # that field is unreliable enough to invert the answer. MSFT reports
+        # $16.5bn there against $67bn on its own statement, which turns a ~1.9%
+        # yield into 0.46%. `info` remains the fallback for the handful of
+        # tickers with no statement rows.
+        fcf = _statement_fcf(ticker) or _safe(info.get("freeCashflow"))
         mkt_cap = _safe(info.get("marketCap"))
         if fcf and mkt_cap and mkt_cap > 0:
             ratios["fcf_yield"] = round(fcf / mkt_cap, 4)

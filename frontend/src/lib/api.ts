@@ -12,6 +12,8 @@ import type {
   MarketEvents,
   MarketMovers,
   MarketOverview,
+  TrendPayload,
+  Valuation,
   OptionsChain,
   OptionsExplanation,
   OptionsStrategies,
@@ -142,6 +144,19 @@ export const api = {
 
     breadth: (signal?: AbortSignal) =>
       request<MarketBreadth>('/market/breadth', { signal }),
+
+    trend: (symbol: string, range = '2y', signal?: AbortSignal) =>
+      request<TrendPayload>(
+        `/market/trend?symbol=${encodeURIComponent(symbol)}&range=${range}`,
+        { signal }
+      ),
+
+    valuation: (symbol: string, params: Record<string, number | string> = {}, signal?: AbortSignal) => {
+      const query = new URLSearchParams({ symbol, ...Object.fromEntries(
+        Object.entries(params).map(([k, v]) => [k, String(v)])
+      ) })
+      return request<Valuation>(`/market/valuation?${query}`, { signal })
+    },
 
     technicals: (symbol: string, signal?: AbortSignal) =>
       request<Technicals>(`/market/technicals?symbol=${encodeURIComponent(symbol)}`, { signal }),

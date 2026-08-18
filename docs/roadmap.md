@@ -28,6 +28,7 @@ had drifted badly enough to be actively misleading (it described Phase 3 as
 | **13** Chat agent | Bounded ReAct cycle, deterministic signals, chat guardrails | `agents/chat/` |
 | **14** Movers + week nav | Cap-tier movers with sectors, navigable events week | `services/market_data.py` |
 | **15** Client cache | TTL cache above the router; instant tab switches, persisted toolbars | `frontend/src/lib/clientCache.ts` |
+| **16** Trend + valuation | SMA slope, z-score and σ band; reverse-DCF valuation panel; collapsible charting sections | `services/trend.py`, `services/valuation*.py` |
 
 Phases 10–12 and 14 were never written into the phase list. They are recorded
 here and summarised in `CLAUDE.md`.
@@ -65,6 +66,11 @@ The three written documents exist. Not done:
 
 ### Correctness / hygiene
 
+- [x] ~~`financial_ratios.fcf_yield` read `info["freeCashflow"]`~~ — fixed
+      2026-08-18. That field reports MSFT at $16.5bn against $67bn on its own
+      cash flow statement, turning a ~1.9% yield into 0.46%. It was the single
+      custom calculation in the fundamentals stack, and it had been wrong since
+      it was written. Now reads the statement, with `info` as fallback.
 - [ ] **`get_options_chain` is registered under category `sentiment`** in
       `tools/registry.py`, not `options`. Harmless — nothing dispatches on
       category — but it misleads anyone reading the registry.
@@ -160,3 +166,30 @@ Ranked by value against effort:
    the fallback already exist; this is wiring plus tests.
 5. **Long-term memory** — the largest remaining piece, and the one that most
    changes what the product can claim.
+
+---
+
+## Opened by Phase 16
+
+- [ ] **Two slope numbers describe the same average.** `MaRow`'s tooltip shows
+      `slope_percent_5d` (arithmetic, 5 sessions) while the trend panel shows a
+      21-session geometric annualised figure. Both are labelled precisely, but
+      consolidating on the new definition is a clean follow-up — `MaRow` is
+      `slope_percent_5d`'s only consumer in the repo.
+- [ ] **No `explain_valuation` endpoint**, though both sibling panels have one.
+      Deliberate: it is the riskiest prose surface in the app, and the guard has
+      a hole — `\b(clearly|obviously|definitely) (under|over)valued\b` does not
+      catch *"appears undervalued"*. Widen the pattern before building it.
+- [ ] **`signals.py` still reads neither slope nor z-score**, so the chat agent
+      cannot cite them. Its `Category` literal declares `"volatility"` with no
+      rule emitting it — a slope rule and a `stretched_from_ma200` rule would
+      fill both gaps. Must keep the no-action-verb invariant.
+- [ ] **The trend summary widened the grounding evidence set** from 54 numbers
+      to 67, and the coincidental-grounding rate on $100–400 prices from 26.6%
+      to 32.3%. Deliberate and small — the series would have made it 1,258 and
+      47.3% — but the tolerance in `_is_grounded` is worth revisiting on its own
+      merits; 26.6% was already high before this branch touched it.
+- [ ] **The scenario band is asymmetric in output** even though its inputs are
+      symmetric, because value is convex in the discount rate: JNJ comes out
+      $126 / $246 / $799. That is real DCF behaviour rather than a bug, but a
+      reader may not expect it. The sensitivity grid is the mitigation.
