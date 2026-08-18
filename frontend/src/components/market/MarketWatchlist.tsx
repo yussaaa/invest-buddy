@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { cn, readJSON } from '@/lib/utils'
+import { cn, readFlag, readJSON, writeFlag, writeJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
 import type { Quote, Watchlist } from '@/lib/types'
 import { useQuotes } from '@/hooks/useQuotes'
@@ -363,19 +363,16 @@ export default function MarketWatchlist({
 
   // Persist panel + section state
   useEffect(() => {
-    localStorage.setItem(PANEL_KEY, JSON.stringify({ width }))
+    writeJSON(PANEL_KEY, { width })
   }, [width])
 
   useEffect(() => {
     const stored = readJSON<Record<string, boolean>>(PANEL_COLLAPSE_KEY, {})
-    localStorage.setItem(
-      PANEL_COLLAPSE_KEY,
-      JSON.stringify({ ...stored, [scope]: collapsed })
-    )
+    writeJSON(PANEL_COLLAPSE_KEY, { ...stored, [scope]: collapsed })
   }, [scope, collapsed])
 
   useEffect(() => {
-    localStorage.setItem(SECTIONS_KEY, JSON.stringify(collapsedSections))
+    writeJSON(SECTIONS_KEY, collapsedSections)
   }, [collapsedSections])
 
   useEffect(() => {
@@ -391,8 +388,8 @@ export default function MarketWatchlist({
         const lists = await api.watchlist.getAll(USER_ID)
         if (cancelled) return
 
-        if (lists.length === 0 && localStorage.getItem(SEEDED_KEY) !== 'true') {
-          localStorage.setItem(SEEDED_KEY, 'true')
+        if (lists.length === 0 && !readFlag(SEEDED_KEY)) {
+          writeFlag(SEEDED_KEY)
           const created: Watchlist[] = []
           for (const s of STARTER_SECTIONS) {
             created.push(await api.watchlist.create(USER_ID, s.name, s.tickers))

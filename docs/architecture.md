@@ -383,6 +383,64 @@ Conventions worth keeping:
 - Components under `components/ui/` are shadcn-style primitives; everything
   else is grouped by feature (`analysis/`, `chart/`, `chat/`, `market/`).
 
+#### The client cache
+
+`lib/clientCache.ts` + `hooks/useCachedResource.ts`. Deliberately the same shape
+as `services/cache.py` — TTL, single-flight, serve-last-good, `shouldCache` —
+so a stale value reads the same in both tiers. `lib/cacheKeys.ts` mirrors the
+server's key strings and TTLs, with every divergence commented.
+
+It exists because react-router unmounts a page on navigation. Every `useState`
+holding a response was thrown away and every effect re-ran: 5 fetches returning
+to `/charting`, 4 to `/market`, doubled in dev by StrictMode. The API answered
+in single-digit milliseconds throughout — nothing was slow, nothing was kept.
+
+Three things carry the design:
+
+- **`useSyncExternalStore` reads the store during the first render.** There is
+  no effect-then-setState gap, so cached data never flashes a spinner. This is
+  the whole mechanism; the rest is bookkeeping. It requires `Snapshot` to be
+  referentially stable, which is why `commit()` is the only place one is built.
+- **`isLoading` means "nothing to show", not "a request is running."** A
+  background revalidate of expired data leaves the old value on screen and sets
+  `isValidating` instead. Gating a spinner on `isValidating` would undo the
+  point.
+- **Nothing takes an AbortSignal, and unmount never cancels.** A shared request
+  cannot be cancelled by one of its consumers without corrupting the others,
+  and letting it finish is what warms the cache for the trip back. Single-flight
+  does the job aborting was doing, and dedupes across components as well.
+
+The stale-response race that AbortController used to guard against cannot occur:
+a response is stored under the key it was requested for, and a component reads
+the key it currently wants.
+
+UI selections persist alongside: chart range, cap tier and heatmap pickers in
+`localStorage` (preferences), the week offset in `sessionStorage` (a cursor —
+landing on "three weeks ago" tomorrow would be wrong). Every restored value is
+validated against its option list, because storage is user-editable and a value
+the toolbar does not offer would render a selection nothing can clear.
+
+**What it does not fix.** The TradingView heatmap rebuilds from a re-injected
+`<script>` on every mount and cannot be mutated in place, and the chart canvas
+is re-created so zoom and pan are lost even though the data is instant. Both
+need the page to stay mounted, not the data to be cached.
+
+**Future options, deliberately not taken:**
+
+- **TanStack Query** would subsume all of this plus the hand-rolled polling, at
+  the cost of a runtime dependency in a frontend that has none. If the cache
+  grows much past its current size, take it — the hand-rolled version is worth
+  keeping only while it stays small enough to read in one sitting.
+- **Keep-alive** — render `/charting` and `/market` together and toggle
+  visibility — is the only thing that fixes the heatmap rebuild and the lost
+  chart zoom. It costs timers running on the hidden page and a second live
+  TradingView socket, which is why it is not the first move.
+- **Per-symbol quote keys.** `useQuotes(['AAPL'])` and the watchlist's set are
+  different keys, so they poll separately even where they overlap. Mirroring the
+  backend's `get_fresh_many`/`put_many` — fetch the batch, store each symbol
+  under its own key — would unify them. At ~3 ms a call it has not been worth
+  the complexity.
+
 ---
 
 ## 6. Configuration

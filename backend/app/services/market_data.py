@@ -657,7 +657,12 @@ def _constituents_with_fallback(index_key: str) -> list[dict]:
 
 # ── advance/decline breadth ───────────────────────────────────────────────────
 
-BREADTH_TTL = 60.0
+# The scan prices ~700 constituents and takes minutes. `cached` stamps a value
+# with the time its fetch *started*, so a TTL shorter than the fetch produces
+# values that are already expired when written — they can never satisfy a
+# lookup, and every single request pays for a full cold scan. The TTL has to
+# exceed how long the work takes, not how fresh we would like the answer.
+BREADTH_TTL = 900.0
 
 BREADTH_INDICES = ["sp500", "nasdaq100", "dow30"]
 

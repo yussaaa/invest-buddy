@@ -6,7 +6,7 @@
  * call per symbol, and most of the time the numbers speak for themselves.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { AlertCircle, Loader2, Sparkles } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -14,11 +14,13 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { cached, put } from '@/lib/clientCache'
+import { K, TTL } from '@/lib/cacheKeys'
+import { useCachedResource, useCachedValue } from '@/hooks/useCachedResource'
 import type {
   DrawdownProfile,
   DrawdownStatus,
   MaLevel,
-  Technicals,
   TechnicalsExplanation,
 } from '@/lib/types'
 
@@ -183,48 +185,31 @@ interface TechnicalPanelProps {
 }
 
 export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
-  const [data, setData] = useState<Technicals | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const res = useCachedResource(
+    K.technicals(symbol),
+    () => api.market.technicals(symbol),
+    { ttl: TTL.technicals },
+  )
+  const data = res.data ?? null
+  const loading = res.isLoading
+  const error = res.error?.message ?? null
 
-  const [explanation, setExplanation] = useState<TechnicalsExplanation | null>(null)
+  // The explanation lives in the cache rather than in state, so a model round
+  // trip survives leaving the page. Keyed by symbol, so there is nothing to
+  // reset when the symbol changes — the key simply points somewhere else.
+  const explainKey = K.technicalsExplain(symbol)
+  const explanation = useCachedValue<TechnicalsExplanation>(explainKey).value ?? null
   const [explaining, setExplaining] = useState(false)
-
-  const abortRef = useRef<AbortController | null>(null)
-
-  useEffect(() => {
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
-
-    setLoading(true)
-    setError(null)
-    setExplanation(null)  // a new symbol invalidates the previous read
-
-    api.market
-      .technicals(symbol, controller.signal)
-      .then(result => {
-        if (controller.signal.aborted) return
-        setData(result)
-      })
-      .catch(e => {
-        if (!controller.signal.aborted) {
-          setError(e instanceof Error ? e.message : 'Failed to load indicators')
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-
-    return () => controller.abort()
-  }, [symbol])
 
   async function requestExplanation() {
     setExplaining(true)
     try {
-      setExplanation(await api.market.explainTechnicals(symbol))
+      await cached(explainKey, () => api.market.explainTechnicals(symbol), {
+        ttl: TTL.explanation,
+      })
     } catch (e) {
-      setExplanation({
+      // A failure renders as an unavailable explanation, as it always has.
+      put<TechnicalsExplanation>(explainKey, {
         symbol,
         available: false,
         reason: e instanceof Error ? e.message : 'Request failed',

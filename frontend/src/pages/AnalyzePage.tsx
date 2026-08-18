@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import { cn, readFlag, writeFlag } from '@/lib/utils'
 import { api } from '../lib/api'
 import { useAnalysis } from '../hooks/useAnalysis'
 import { useSSE } from '../hooks/useSSE'
@@ -75,6 +75,8 @@ interface UploadedFile {
   size_bytes: number
 }
 
+const DISCLAIMER_KEY = 'agent-invest-disclaimer-seen'
+
 export default function AnalyzePage() {
   const [searchParams] = useSearchParams()
   const [ticker, setTicker] = useState(() => searchParams.get('ticker')?.toUpperCase() ?? '')
@@ -106,11 +108,11 @@ export default function AnalyzePage() {
 
   // Disclaimer: only show on first visit
   const [showDisclaimer, setShowDisclaimer] = useState(() => {
-    return localStorage.getItem('agent-invest-disclaimer-seen') !== 'true'
+    return !readFlag(DISCLAIMER_KEY)
   })
 
   function dismissDisclaimer() {
-    localStorage.setItem('agent-invest-disclaimer-seen', 'true')
+    writeFlag(DISCLAIMER_KEY)
     setShowDisclaimer(false)
   }
 

@@ -1,59 +1,47 @@
 /**
  * useQuotes — polls the backend for quotes on a set of symbols.
- * One batched request per tick; the backend caches upstream calls.
+ *
+ * One batched request per tick, over the client cache. The cache is what makes
+ * the watchlist rail keep its prices when you change page, and what stops two
+ * components watching overlapping symbol sets from each running their own
+ * timer against the same key.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { api } from '../lib/api'
+import { K, TTL } from '../lib/cacheKeys'
+import { useCachedResource } from './useCachedResource'
 import type { Quote } from '../lib/types'
 
 export function useQuotes(symbols: string[], intervalMs = 15000) {
-  const [quotes, setQuotes] = useState<Record<string, Quote>>({})
-  const [loading, setLoading] = useState(false)
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Stable key so the resource only changes when the symbol set really does.
+  const joined = symbols.join(',')
 
-  // Stable key so the effect only re-runs when the symbol set actually changes.
-  const key = symbols.join(',')
-  const abortRef = useRef<AbortController | null>(null)
+  const res = useCachedResource(
+    joined ? K.quotes(symbols) : null,
+    () => api.market.quotes(joined.split(',')),
+    {
+      ttl: TTL.quotes,
+      refreshIntervalMs: intervalMs,
+      // Adding a ticker to a watchlist changes the key. Holding the previous
+      // response means the rail keeps showing prices instead of blanking while
+      // the wider set loads — the reason the old hook merged into prior state.
+      keepPreviousData: true,
+    },
+  )
 
-  const refresh = useCallback(async () => {
-    const list = key ? key.split(',') : []
-    if (list.length === 0) {
-      setQuotes({})
-      return
-    }
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
+  const quotes = useMemo(() => {
+    const map: Record<string, Quote> = {}
+    for (const q of res.data?.quotes ?? []) map[q.symbol] = q
+    return map
+  }, [res.data])
 
-    setLoading(true)
-    try {
-      const { quotes: fetched } = await api.market.quotes(list, controller.signal)
-      setQuotes(prev => {
-        const next = { ...prev }
-        for (const q of fetched) next[q.symbol] = q
-        return next
-      })
-      setUpdatedAt(Date.now())
-      setError(null)
-    } catch (e) {
-      if (controller.signal.aborted) return
-      setError(e instanceof Error ? e.message : 'Failed to load quotes')
-    } finally {
-      if (!controller.signal.aborted) setLoading(false)
-    }
-  }, [key])
-
-  useEffect(() => {
-    refresh()
-    if (!key) return
-    const id = setInterval(refresh, intervalMs)
-    return () => {
-      clearInterval(id)
-      abortRef.current?.abort()
-    }
-  }, [refresh, key, intervalMs])
-
-  return { quotes, loading, updatedAt, error, refresh }
+  return {
+    quotes,
+    loading: res.isLoading,
+    /** 0 until the first response — falsy, as the old `null` was. */
+    updatedAt: res.updatedAt,
+    error: res.error?.message ?? null,
+    refresh: res.refresh,
+  }
 }

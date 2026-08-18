@@ -208,7 +208,7 @@ async def _resolve(
                 await redis_client.unlock(_lock_key(key))
 
         _record(key, "miss")
-        _observe_fetch(key, time.time() - started)
+        _observe_fetch(key, time.time() - started, ttl)
 
         if should_cache is None or should_cache(value):
             await _store(key, value, ttl, started)
@@ -222,7 +222,22 @@ def _mark_stale(value: Any) -> Any:
     return value
 
 
-def _observe_fetch(key: str, seconds: float) -> None:
+def _observe_fetch(key: str, seconds: float, ttl: float) -> None:
+    # A value is stamped with the time its fetch *started*, so a producer
+    # slower than its own TTL writes a value that is already expired — it can
+    # never satisfy a lookup, and every request pays full price for a scan that
+    # looks, from the outside, like it is being cached. This went unnoticed on
+    # the breadth scan for a long time because nothing about it is visible: the
+    # endpoint answers correctly, just always slowly. Say so out loud.
+    if seconds >= ttl:
+        log.warning(
+            "cache_ttl_shorter_than_fetch",
+            key=key,
+            seconds=round(seconds, 1),
+            ttl=ttl,
+            hint="value is written already-expired and can never be served fresh",
+        )
+
     try:
         from app.observability.metrics import record_cache_fetch
 

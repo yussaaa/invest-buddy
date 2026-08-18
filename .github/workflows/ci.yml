@@ -47,7 +47,7 @@ jobs:
         run: pytest tests/unit -m "not network" -q
 
   frontend:
-    name: frontend · typecheck and build
+    name: frontend · typecheck, test and build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -71,6 +71,11 @@ jobs:
         # holding the API contract. A typecheck is what catches a payload that
         # drifted from the interface describing it.
         run: npx tsc --noEmit
+
+      - name: Unit tests
+        # Only the client cache. TTL boundaries, single-flight and
+        # serve-last-good are invisible to tsc and awkward to check by hand.
+        run: npm test
 
       - name: Build
         run: npm run build

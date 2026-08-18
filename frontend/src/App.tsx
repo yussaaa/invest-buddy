@@ -23,7 +23,7 @@ import {
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { ScreenContextProvider } from '@/context/ScreenContext'
-import { cn, readJSON } from '@/lib/utils'
+import { cn, readJSON, writeJSON } from '@/lib/utils'
 import ChatLauncher from './components/chat/ChatLauncher'
 import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
@@ -192,7 +192,7 @@ function AppShell() {
   )
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_KEY, JSON.stringify(sidebar))
+    writeJSON(SIDEBAR_KEY, sidebar)
   }, [sidebar])
 
   const setSidebarWidth = useCallback(

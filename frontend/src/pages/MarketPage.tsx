@@ -22,15 +22,16 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import { cn, readJSON, writeJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { peek } from '@/lib/clientCache'
+import { K, TTL } from '@/lib/cacheKeys'
+import { useCachedResource } from '@/hooks/useCachedResource'
 import type {
   CapTier,
   EarningsEvent,
   IndexBreadth,
-  MarketBreadth,
   MarketEvents,
-  MarketMovers,
   MarketOverview,
   MarketRow,
   Mover,
@@ -64,6 +65,55 @@ const HEATMAP_RANGES = [
   { value: 'Perf.YTD', label: 'YTD' },
   { value: 'Perf.Y', label: '1Y' },
 ]
+
+// How far the week arrows may travel, matching the API's own `ge=-26, le=26`
+// on /market/events/week. One constant, so the arrows, the clamp and the
+// server cannot drift apart.
+const MAX_WEEK_OFFSET = 26
+
+// Toolbar choices are preferences, not navigation: the filter you always use
+// should still be selected tomorrow. Validated on read against the option
+// tables above, because storage is user-editable and a value the toolbar does
+// not offer would leave a selection nothing can clear.
+const MARKET_PREFS_KEY = 'agent-invest-market'
+// The week is a cursor rather than a preference. It should survive a tab
+// switch and die with the tab — landing on "three weeks ago" tomorrow morning
+// would be wrong. That is exactly sessionStorage's lifetime.
+const MARKET_SESSION_KEY = 'agent-invest-market-session'
+
+interface MarketPrefs {
+  capTier: CapTier
+  index: string
+  blockColor: string
+}
+
+const DEFAULT_MARKET_PREFS: MarketPrefs = {
+  capTier: 'all',
+  index: 'SPX500',
+  blockColor: 'change',
+}
+
+function readMarketPrefs(): MarketPrefs {
+  const stored = readJSON<Partial<MarketPrefs>>(MARKET_PREFS_KEY, {})
+  return {
+    capTier: CAP_TIERS.some(t => t.value === stored.capTier)
+      ? (stored.capTier as CapTier)
+      : DEFAULT_MARKET_PREFS.capTier,
+    index: INDEX_OPTIONS.some(o => o.value === stored.index)
+      ? (stored.index as string)
+      : DEFAULT_MARKET_PREFS.index,
+    blockColor: HEATMAP_RANGES.some(o => o.value === stored.blockColor)
+      ? (stored.blockColor as string)
+      : DEFAULT_MARKET_PREFS.blockColor,
+  }
+}
+
+/** Clamp to the same bound the arrows enforce — storage is not to be trusted. */
+function readWeekOffset(): number {
+  const { weekOffset } = readJSON(MARKET_SESSION_KEY, { weekOffset: 0 }, sessionStorage)
+  if (typeof weekOffset !== 'number' || Number.isNaN(weekOffset)) return 0
+  return Math.max(-MAX_WEEK_OFFSET, Math.min(MAX_WEEK_OFFSET, Math.trunc(weekOffset)))
+}
 
 /** The same view on tradingview.com, so the widget can be opened full size. */
 function heatmapSourceUrl(dataSource: string, blockColor: string): string {
@@ -542,13 +592,13 @@ function WeekPicker({
   // Stepping off the rendered `offset` would collapse two quick clicks into
   // one week — both would read the same pre-render value.
   const step = (delta: number) =>
-    onChange(prev => Math.max(-26, Math.min(26, prev + delta)))
+    onChange(prev => Math.max(-MAX_WEEK_OFFSET, Math.min(MAX_WEEK_OFFSET, prev + delta)))
 
   return (
     <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
       <button
         onClick={() => step(-1)}
-        disabled={offset <= -26}
+        disabled={offset <= -MAX_WEEK_OFFSET}
         title="Previous week"
         className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
       >
@@ -566,7 +616,7 @@ function WeekPicker({
 
       <button
         onClick={() => step(1)}
-        disabled={offset >= 26}
+        disabled={offset >= MAX_WEEK_OFFSET}
         title="Next week"
         className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
       >
@@ -610,129 +660,70 @@ function PerformanceBar({ row }: { row: MarketRow }) {
 export default function MarketPage() {
   const navigate = useNavigate()
 
-  const [overview, setOverview] = useState<MarketOverview | null>(null)
-  const [overviewError, setOverviewError] = useState<string | null>(null)
-  const [loadingOverview, setLoadingOverview] = useState(true)
+  const [initialPrefs] = useState(readMarketPrefs)
+  const [index, setIndex] = useState(initialPrefs.index)
+  const [blockColor, setBlockColor] = useState(initialPrefs.blockColor)
+  const [capTier, setCapTier] = useState<CapTier>(initialPrefs.capTier)
+  const [weekOffset, setWeekOffset] = useState(readWeekOffset)
 
-  const [index, setIndex] = useState('SPX500')
-  const [blockColor, setBlockColor] = useState('change')
-
-  const [indexBreadth, setIndexBreadth] = useState<MarketBreadth | null>(null)
-  const [loadingBreadth, setLoadingBreadth] = useState(true)
-
-  // Movers are kept per tier rather than as one value: switching the filter
-  // back to a tier already fetched should show it at once, not re-screen.
-  const [capTier, setCapTier] = useState<CapTier>('all')
-  const [movers, setMovers] = useState<Partial<Record<CapTier, MarketMovers>>>({})
-  const [loadingMovers, setLoadingMovers] = useState(true)
-
-  const [weekOffset, setWeekOffset] = useState(0)
-  const [events, setEvents] = useState<MarketEvents | null>(null)
-  const [loadingEvents, setLoadingEvents] = useState(true)
-
-  // Overview — refreshed on a slow poll
   useEffect(() => {
-    let cancelled = false
+    writeJSON(MARKET_PREFS_KEY, { capTier, index, blockColor })
+  }, [capTier, index, blockColor])
 
-    async function load() {
-      try {
-        const data = await api.market.overview()
-        if (!cancelled) {
-          setOverview(prev => mergeOverview(prev, data))
-          setOverviewError(data.error ?? null)
-        }
-      } catch (e) {
-        if (!cancelled) setOverviewError(e instanceof Error ? e.message : 'Failed to load market data')
-      } finally {
-        if (!cancelled) setLoadingOverview(false)
-      }
-    }
-
-    load()
-    const id = setInterval(load, 30000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [])
-
-  // Advance/decline — one full constituent scan, so poll gently
   useEffect(() => {
-    let cancelled = false
-
-    async function load() {
-      try {
-        const data = await api.market.breadth()
-        if (!cancelled && data.indices.length) setIndexBreadth(data)
-      } catch {
-        /* keep whatever we already showed */
-      } finally {
-        if (!cancelled) setLoadingBreadth(false)
-      }
-    }
-
-    load()
-    const id = setInterval(load, 60000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [])
-
-  // Top movers — one screen per cap tier, refreshed on the server's own TTL
-  useEffect(() => {
-    let cancelled = false
-    const controller = new AbortController()
-
-    async function load() {
-      try {
-        const data = await api.market.movers(capTier, 10, controller.signal)
-        if (!cancelled) setMovers(prev => ({ ...prev, [capTier]: data }))
-      } catch {
-        /* keep whatever this tier last showed */
-      } finally {
-        if (!cancelled) setLoadingMovers(false)
-      }
-    }
-
-    setLoadingMovers(true)
-    load()
-    const id = setInterval(load, 60000)
-    return () => {
-      cancelled = true
-      controller.abort()
-      clearInterval(id)
-    }
-  }, [capTier])
-
-  // Earnings + economic releases for whichever week is selected
-  useEffect(() => {
-    let cancelled = false
-    const controller = new AbortController()
-
-    setLoadingEvents(true)
-    api.market
-      .weekEvents(weekOffset, controller.signal)
-      .then(data => {
-        if (!cancelled) setEvents(data)
-      })
-      .catch(() => {
-        if (!cancelled) setEvents(null)
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingEvents(false)
-      })
-
-    return () => {
-      cancelled = true
-      controller.abort()
-    }
+    writeJSON(MARKET_SESSION_KEY, { weekOffset }, sessionStorage)
   }, [weekOffset])
+
+  // Overview — the merge carrying a dropped symbol forward happens inside the
+  // fetcher rather than in a setState, so the carried-forward value is what
+  // lands in the cache and survives leaving the page.
+  const overviewRes = useCachedResource(
+    K.overview(),
+    () =>
+      api.market
+        .overview()
+        .then(next => mergeOverview(peek<MarketOverview>(K.overview()).value ?? null, next)),
+    { ttl: TTL.overview, refreshIntervalMs: 30_000 },
+  )
+  const overview = overviewRes.data ?? null
+  const overviewError = overviewRes.error?.message ?? overview?.error ?? null
+
+  // Breadth prices ~700 constituents and takes minutes, so it is polled on its
+  // own far slower clock. At 60s the previous request had not returned before
+  // the next went out, leaving two or three permanently in flight and eating
+  // the browser's per-origin connection budget. Single-flight now caps it at
+  // one; this interval keeps it that way.
+  const breadthRes = useCachedResource(
+    K.breadth(),
+    () => api.market.breadth(),
+    {
+      ttl: TTL.breadth,
+      refreshIntervalMs: 600_000,
+      shouldCache: b => b.indices.length > 0,
+    },
+  )
+  const indexBreadth = breadthRes.data ?? null
+
+  // Keyed per tier, so switching the filter back to one already fetched is
+  // instant — the job the component-local map used to do, except this one
+  // outlives the page.
+  const moversRes = useCachedResource(
+    K.movers(capTier),
+    () => api.market.movers(capTier, 10),
+    { ttl: TTL.movers, refreshIntervalMs: 60_000 },
+  )
+
+  const eventsRes = useCachedResource(
+    K.weekEvents(weekOffset),
+    () => api.market.weekEvents(weekOffset),
+    { ttl: TTL.weekEvents },
+  )
+  const events = eventsRes.data ?? null
 
   const breadth = overview?.breadth
   const earnings = events?.earnings ?? []
   const economic = events?.economic
-  const tierMovers = movers[capTier]
+  const tierMovers = moversRes.data
   const activeTier = CAP_TIERS.find(t => t.value === capTier)
 
   return (
@@ -761,7 +752,7 @@ export default function MarketPage() {
       )}
 
       {/* Index cards */}
-      {loadingOverview && !overview ? (
+      {overviewRes.isLoading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
           <Loader2 size={16} className="animate-spin" />
           Loading market data…
@@ -789,7 +780,7 @@ export default function MarketPage() {
           </span>
         </div>
 
-        {loadingBreadth && !indexBreadth ? (
+        {breadthRes.isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 size={16} className="animate-spin" />
             Counting advancers and decliners…
@@ -845,14 +836,14 @@ export default function MarketPage() {
           <MoversCard
             title="Top 10 gainers"
             rows={tierMovers?.gainers ?? []}
-            loading={loadingMovers}
+            loading={moversRes.isLoading}
             gaining
             onSelect={symbol => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)}
           />
           <MoversCard
             title="Top 10 losers"
             rows={tierMovers?.losers ?? []}
-            loading={loadingMovers}
+            loading={moversRes.isLoading}
             gaining={false}
             onSelect={symbol => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)}
           />
@@ -999,7 +990,7 @@ export default function MarketPage() {
               </h3>
               <Separator />
 
-              {loadingEvents ? (
+              {eventsRes.isLoading ? (
                 <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" />
                   Scanning large caps…
@@ -1024,7 +1015,7 @@ export default function MarketPage() {
               </h3>
               <Separator />
 
-              {loadingEvents ? (
+              {eventsRes.isLoading ? (
                 <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" />
                   Loading calendar…
