@@ -204,6 +204,11 @@ The `.env` file must be at the **project root** (not inside `backend/`). `config
   with no action verb anywhere in the module by construction
 - `backend/app/services/cache.py` — L1+L2 with single-flight and stale-fallback;
   every market read goes through it
+- `backend/app/services/trend.py` — SMA slope and z-score vs the 200 DMA; note
+  why its series must never enter the technicals payload
+- `backend/app/services/valuation_math.py` — DCF arithmetic, assumptions in the
+  signature; the reverse DCF is the number worth leading with
+- `frontend/src/lib/clientCache.ts` — the client-side twin of services/cache.py
 - `backend/app/services/market_data.py` — quotes, overview, breadth, movers, events
 - `backend/app/rag/retrieval/pipeline.py` — 3-stage retrieval (decompose,
   dense+BM25+RRF, cross-encoder rerank)
@@ -219,7 +224,7 @@ make eval       # RAGAS evaluation against golden dataset
 
 ## Implementation Phases
 
-Fourteen phases are shipped. **[docs/roadmap.md](docs/roadmap.md) is the
+Sixteen phases are shipped. **[docs/roadmap.md](docs/roadmap.md) is the
 authoritative status** — every line there was checked against the code rather
 than carried forward from the previous plan. This table is the summary.
 
@@ -239,6 +244,8 @@ than carried forward from the previous plan. This table is the summary.
 | 12 | Drawdown panel — distance below the 52-week high | ✅ |
 | 13 | Conversational agent — bounded ReAct over deterministic signals | ✅ |
 | 14 | Top movers by cap tier + navigable events week | ✅ |
+| 15 | Client-side cache — instant tab switches, persisted toolbars | ✅ |
+| 16 | Trend analytics + reverse-DCF valuation panel | ✅ |
 
 Phase 4 is the only wholly unstarted one. The open items inside shipped
 phases — a lazily-warmed bar store, live network calls in the unit suite, a
