@@ -254,14 +254,17 @@ class ToolRegistry:
             description="Get options chain data for put/call ratio and implied volatility skew.",
             parameters={"type": "object", "properties": {"ticker": {"type": "string"}}, "required": ["ticker"]},
             fn=get_options_chain,
-            category="sentiment",
+            # Filed with the options family, which is what it reads. Its one
+            # consumer is the sentiment agent, which uses the put/call ratio
+            # and IV skew as a positioning gauge — but category describes the
+            # data, not the caller. Nothing dispatches on it.
+            category="options",
             cache_ttl_seconds=900,
         ))
-        # Left alone deliberately: the tool above answers a *sentiment* question
-        # (put/call ratio, IV skew) for the sentiment agent and has no test
-        # coverage, so re-pointing it at the new service would change that
-        # agent's behaviour with nothing to catch it. The two below answer a
-        # different question and are additive.
+        # The implementation above is deliberately not re-pointed at
+        # services/options: it answers a *sentiment* question for the sentiment
+        # agent, and swapping its data source would change that agent's
+        # behaviour. The two below answer a different question and are additive.
         self.register(ToolDefinition(
             name="get_options_snapshot",
             description=(

@@ -28,7 +28,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Direction = Literal["bullish", "bearish", "neutral"]
 Timeframe = Literal["intraday", "short", "medium", "long"]
@@ -108,6 +108,28 @@ class Signal(BaseModel):
     )
 
 
+_BIAS_WORDS: dict[str, str] = {
+    "bullish": "Leaning bullish",
+    "bearish": "Leaning bearish",
+    "mixed": "Mixed",
+    "inconclusive": "Inconclusive",
+}
+
+
+def bias_phrase(net_bias: str, conflicts: list[str]) -> str:
+    """The overall lean in words, qualified when the horizons disagree.
+
+    A strong long-term trend can outweigh a weak short-term signal pointing the
+    other way, so `net_bias` reads "bullish" while `conflicts` is non-empty.
+    Both are correct, but the chip said "Leaning bullish" while the narration,
+    reading the conflicts, said "mixed". This phrase is the one both use.
+    """
+    base = _BIAS_WORDS.get(net_bias, "Inconclusive")
+    if conflicts and net_bias in ("bullish", "bearish"):
+        return f"{base}, with the horizons disagreeing"
+    return base
+
+
 class SignalSet(BaseModel):
     """Every condition that holds for one ticker, plus how they net out."""
 
@@ -126,7 +148,18 @@ class SignalSet(BaseModel):
         description="Which indicator families were computable. A missing family "
         "is a gap in the answer, not an absence of signal.",
     )
+    bias_phrase: str = Field(
+        default="",
+        description="How to say the overall lean in words. One phrase shared "
+        "by the chip, the narration and the blocked-reply summary, so they "
+        "cannot disagree.",
+    )
     disclaimer: str = DISCLAIMER
+
+    @model_validator(mode="after")
+    def _phrase_the_bias(self) -> "SignalSet":
+        self.bias_phrase = bias_phrase(self.net_bias, self.conflicts)
+        return self
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

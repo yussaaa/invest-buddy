@@ -10,7 +10,9 @@ Two things make the tiering honest:
 
 * Values carry the timestamp they were produced at, not the time this pod read
   them. Re-stamping on an L2 hit would let a 10s value live 10s in Redis and
-  another 10s in L1.
+  another 10s in L1. "Produced" means when the fetch *finished*: stamping at
+  the start made any producer slower than its own TTL write values that were
+  already expired, which could never be served (see `_observe_fetch`).
 * A cold key is fetched once. Without single-flight, every pod and every open
   tab races to refill it simultaneously, which is what gets us rate limited.
 """
@@ -44,6 +46,12 @@ STALE_MULTIPLIER = 20
 # giving up and fetching itself. Never block a request indefinitely on a lock.
 LOCK_WAIT_SECONDS = 2.0
 LOCK_POLL_SECONDS = 0.1
+
+# Floor on how long the cross-replica lock is held. It used to expire with the
+# value's TTL, so a 46s overview fetch under a 30s TTL lost its lock mid-flight
+# and a second replica started the same fan-out. The lock is released in a
+# `finally` the moment the fetch ends; this only bounds a crashed holder.
+LOCK_HOLD_SECONDS = 180.0
 
 _CACHE: dict[str, tuple[float, Any]] = {}
 
@@ -186,7 +194,9 @@ async def _resolve(
             return from_l2
 
         # Expensive fan-outs additionally coordinate across replicas.
-        if lock and not await redis_client.try_lock(_lock_key(key), ttl):
+        if lock and not await redis_client.try_lock(
+            _lock_key(key), max(ttl, LOCK_HOLD_SECONDS)
+        ):
             waited = await _await_other_replica(key, ttl)
             if waited is not None:
                 _record(key, "l2")
@@ -207,11 +217,14 @@ async def _resolve(
             if lock:
                 await redis_client.unlock(_lock_key(key))
 
+        finished = time.time()
         _record(key, "miss")
-        _observe_fetch(key, time.time() - started, ttl)
+        _observe_fetch(key, finished - started, ttl)
 
         if should_cache is None or should_cache(value):
-            await _store(key, value, ttl, started)
+            # Stamped at completion. Its data is at most (fetch time + TTL) old
+            # when last served, which is the honest bound for a slow producer.
+            await _store(key, value, ttl, finished)
         return value
 
 
@@ -223,19 +236,20 @@ def _mark_stale(value: Any) -> Any:
 
 
 def _observe_fetch(key: str, seconds: float, ttl: float) -> None:
-    # A value is stamped with the time its fetch *started*, so a producer
-    # slower than its own TTL writes a value that is already expired — it can
-    # never satisfy a lookup, and every request pays full price for a scan that
-    # looks, from the outside, like it is being cached. This went unnoticed on
-    # the breadth scan for a long time because nothing about it is visible: the
-    # endpoint answers correctly, just always slowly. Say so out loud.
+    # Values used to be stamped with the time their fetch *started*, so a
+    # producer slower than its own TTL wrote values that were already expired —
+    # every request paid full price for a scan that looked cached. That went
+    # unnoticed on the breadth scan for a long time. Stamping at completion
+    # fixed the trap, but a fetch longer than its TTL is still worth hearing
+    # about: the window is spent mostly fetching, so the first caller after
+    # every expiry waits the whole fetch out.
     if seconds >= ttl:
         log.warning(
             "cache_ttl_shorter_than_fetch",
             key=key,
             seconds=round(seconds, 1),
             ttl=ttl,
-            hint="value is written already-expired and can never be served fresh",
+            hint="every expiry pays a fetch longer than the TTL window",
         )
 
     try:
@@ -289,6 +303,26 @@ async def cached_async(
 ) -> Any:
     """Same contract as `cached`, for a coroutine factory."""
     return await _resolve(key, ttl, fn, should_cache, lock)
+
+
+async def age(key: str) -> float | None:
+    """Seconds since `key`'s value was produced, from L1 or L2; None if absent.
+
+    For refresh-ahead jobs, which want to replace a value *before* it expires
+    rather than let the next visitor pay for the fetch.
+    """
+    hit = _CACHE.get(key)
+    if hit:
+        return time.time() - hit[0]
+    envelope = await redis_client.cache_get(_redis_key(key))
+    if isinstance(envelope, dict) and isinstance(envelope.get("t"), (int, float)):
+        return time.time() - envelope["t"]
+    return None
+
+
+async def prime(key: str, value: Any, ttl: float) -> None:
+    """Write a freshly produced value to both tiers, stamped now."""
+    await _store(key, value, ttl, time.time())
 
 
 def peek(key: str) -> Any | None:

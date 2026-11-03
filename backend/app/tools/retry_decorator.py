@@ -22,6 +22,20 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 
+# NewsAPI error codes worth retrying; every other code (apiKeyInvalid,
+# apiKeyMissing, apiKeyDisabled, apiKeyExhausted, parameterInvalid, ...) is
+# permanent for the request as made.
+_NEWSAPI_RETRYABLE = {"rateLimited", "unexpectedError"}
+
+
+def _newsapi_code(exc: BaseException) -> str | None:
+    payload = getattr(exc, "exception", None)
+    if isinstance(payload, dict):
+        code = payload.get("code")
+        return str(code) if code else None
+    return None
+
+
 def _is_retryable(exc: BaseException) -> bool:
     """Return True if the exception should trigger a retry.
 
@@ -52,8 +66,15 @@ def _is_retryable(exc: BaseException) -> bool:
     try:
         from newsapi.newsapi_exception import NewsAPIException
         if isinstance(exc, NewsAPIException):
+            # NewsAPI reports errors by code, not HTTP status — an invalid key
+            # arrives as {'code': 'apiKeyInvalid', ...} with no "401" anywhere,
+            # so matching on the status text retried it three times and cost
+            # every chat turn that asked for news about four seconds.
+            code = _newsapi_code(exc)
+            if code is not None:
+                return code in _NEWSAPI_RETRYABLE
             msg = str(exc).lower()
-            if "401" in msg or "403" in msg or "apikeydisabled" in msg:
+            if "401" in msg or "403" in msg or "apikey" in msg:
                 return False
     except ImportError:
         pass

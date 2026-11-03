@@ -157,3 +157,28 @@ async def test_delete_symbol_bars(db_session):
 
     assert removed == 4
     assert await get_daily_bars(db_session, "TEST7", date(1990, 1, 1), market_today()) == []
+
+
+async def test_market_data_reads_settled_closes_through_its_own_session():
+    """The overview/breadth path opens its own session, outside any request.
+
+    Written and cleaned up through AsyncSessionLocal rather than the rollback
+    fixture, because a separate session cannot see a savepoint's rows.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.services import market_data as md
+
+    symbol = "ZZMDTEST"
+    async with AsyncSessionLocal() as session:
+        await upsert_daily_bars(session, _bars(symbol, 10))
+        await session.commit()
+    try:
+        closes = await md._stored_closes([symbol], days=30)
+        rows = closes[symbol]
+        assert len(rows) == 10
+        assert rows == sorted(rows), "oldest first, so the splice appends today last"
+        assert rows[-1][0] == market_today() - timedelta(days=1)
+    finally:
+        async with AsyncSessionLocal() as session:
+            await delete_symbol_bars(session, symbol)
+            await session.commit()

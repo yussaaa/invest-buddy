@@ -35,8 +35,8 @@ dev-local:  ## Run backend + frontend locally (no Docker needed)
 	@(cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000) &
 	@cd frontend && npm run dev
 
-test:  ## Run backend unit tests
-	cd backend && source .venv/bin/activate && python -m pytest tests/unit -v
+test:  ## Run backend unit tests (offline — same selection as CI)
+	cd backend && source .venv/bin/activate && python -m pytest tests/unit -m "not network" -v
 
 test-all:  ## Run all tests
 	cd backend && source .venv/bin/activate && python -m pytest -v

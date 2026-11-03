@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     vol_data_provider: Literal["realized_proxy", "marketdata"] = "realized_proxy"
     marketdata_api_key: str = ""
 
+    # ── Background warm-up (services/warmup.py) ────────────────────────────
+    # Backfills the bar store and refreshes the earnings calendar ahead of
+    # expiry, so the first visitor after a cold start or a TTL never waits.
+    warmup_enabled: bool = True
+
     # ── Chat agent ──────────────────────────────────────────────────────────
     chat_enabled: bool = True
     # The reasoning is deterministic (services/signals.py), so the model only
@@ -110,6 +115,10 @@ class Settings(BaseSettings):
     # local Qwens are unreliable at it. Off means the agent answers from the
     # pre-fetched signals in one pass rather than failing.
     chat_tools_enabled: bool = True
+    # Start streaming the answer alongside the first gather call, and keep it
+    # when gather asks for no tool (most turns). Saves gather's round trip on
+    # time-to-first-token; costs a few discarded tokens on tool turns.
+    chat_speculative_answer: bool = True
 
     # ── Monitoring ──────────────────────────────────────────────────────────
     monitoring_backend: Literal["mlflow", "wandb", "none"] = "mlflow"
