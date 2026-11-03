@@ -361,3 +361,30 @@ class BarCoverage(Base):
             ),
             "last_error": self.last_error,
         }
+
+
+class SocialMentionSnapshot(Base):
+    """One hourly sample of a ticker's place on a social mention board.
+
+    The baseline a mention z-score needs. ApeWisdom reports "now" and "24
+    hours ago" and keeps nothing older, so the history has to be ours — and in
+    Postgres rather than Redis, because Redis here is a cache that may evict,
+    and silently losing the baseline would make every ticker look unusual.
+
+    Hour-truncated `bucket` in the key makes the hourly job idempotent: a
+    second run inside the same hour is a no-op, not a duplicate.
+    """
+    __tablename__ = "social_mention_snapshots"
+
+    source: Mapped[str] = mapped_column(String(16), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    bucket: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+
+    rank: Mapped[int | None] = mapped_column(Integer)
+    mentions: Mapped[int] = mapped_column(Integer, nullable=False)
+    upvotes: Mapped[int | None] = mapped_column(Integer)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_social_mention_snapshots_bucket", "bucket"),)

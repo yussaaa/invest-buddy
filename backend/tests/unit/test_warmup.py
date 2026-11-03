@@ -20,6 +20,12 @@ def isolated(monkeypatch):
     monkeypatch.setattr(warmup.redis_client, "try_lock", fake.try_lock)
     cache._CACHE.clear()
     warmup._last_backfill = None
+
+    async def no_snapshot():
+        return 0
+
+    # Every tick also snapshots the mention board; keep that off the network.
+    monkeypatch.setattr(warmup, "run_social_snapshot", no_snapshot)
     yield fake
     cache._CACHE.clear()
 
@@ -150,3 +156,45 @@ def _async_return(value):
 
 def _explode(*a, **k):
     raise AssertionError("should not have fetched")
+
+
+async def test_the_social_snapshot_runs_once_per_hour_across_replicas(monkeypatch):
+    ran = []
+
+    async def snapshot():
+        ran.append("social")
+        return 3
+
+    async def nothing():
+        return False
+
+    monkeypatch.setattr(md, "refresh_earnings_calendar", nothing)
+    monkeypatch.setattr(warmup, "run_backfill", nothing)
+    monkeypatch.setattr(warmup, "run_social_snapshot", snapshot)
+
+    await warmup.tick()
+    await warmup.tick()                 # same hour: the lock is still held
+
+    assert ran == ["social"]
+
+
+async def test_the_social_snapshot_can_be_turned_off(monkeypatch):
+    from app.config import get_settings
+
+    ran = []
+
+    async def snapshot():
+        ran.append("social")
+        return 0
+
+    async def nothing():
+        return False
+
+    monkeypatch.setattr(md, "refresh_earnings_calendar", nothing)
+    monkeypatch.setattr(warmup, "run_backfill", nothing)
+    monkeypatch.setattr(warmup, "run_social_snapshot", snapshot)
+    monkeypatch.setattr(get_settings(), "social_snapshot_enabled", False)
+
+    await warmup.tick()
+
+    assert ran == []

@@ -1,6 +1,6 @@
 """Background warm-up: pay the slow fetches before a visitor has to.
 
-Two jobs, run from the app's lifespan rather than a scheduler — the stack has
+Three jobs, run from the app's lifespan rather than a scheduler — the stack has
 none, and neither job is worth adding one for:
 
 * **Bar backfill.** The bar store warms lazily, so the first chart of a cold
@@ -9,6 +9,9 @@ none, and neither job is worth adding one for:
   evening after the close, this walks the symbols the UI actually shows.
 * **Earnings calendar refresh-ahead.** The movers calendar costs ~36s cold and
   expires every 6h. Refreshing it at 85% of its TTL means nobody ever waits.
+* **Social mention snapshot.** Hourly, the top of the Reddit mention board is
+  stored in Postgres, because ApeWisdom keeps no history and a mention spike
+  means nothing without a baseline (services/social/history.py).
 
 With several replicas only one should do the work, so each job takes a Redis
 lock for its interval. When Redis is unavailable every replica runs both —
@@ -134,6 +137,39 @@ def backfill_due(now: datetime, last: datetime | None) -> bool:
     return now >= cutoff > last
 
 
+SOCIAL_SNAPSHOT_SECONDS = 3600
+SOCIAL_SNAPSHOT_PAGES = 2           # the top ~200 by mentions
+
+
+async def run_social_snapshot() -> int:
+    """Store the Reddit mention board — the history a mention z-score needs.
+
+    Two requests an hour to an unofficial free API; both pages are cached for
+    five minutes, so a visitor's trending table in the same window costs none.
+    """
+    from app.services import signals_page
+    from app.services.social import apewisdom
+
+    pages = await asyncio.gather(
+        *(apewisdom.fetch_page(apewisdom.DEFAULT_FILTER, p)
+          for p in range(1, SOCIAL_SNAPSHOT_PAGES + 1)),
+        return_exceptions=True,
+    )
+    rows = [row for page in pages if isinstance(page, dict) and not page.get("stale")
+            for row in page.get("rows", [])]
+    written = await signals_page.record_board(rows) if rows else 0
+
+    from app.db.repositories_social import prune
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        pruned = await prune(session)
+        await session.commit()
+    if pruned:
+        log.info("warmup_social_snapshot_pruned", rows=pruned)
+    return written
+
+
 async def tick() -> None:
     """One pass of every job. Each job fails on its own."""
     global _last_backfill
@@ -145,6 +181,17 @@ async def tick() -> None:
                 log.info("warmup_earnings_calendar_refreshed")
     except Exception as e:
         log.warning("warmup_earnings_calendar_failed", error=str(e))
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.social_enabled and settings.social_snapshot_enabled:
+        try:
+            if await _leader("social-snapshot", SOCIAL_SNAPSHOT_SECONDS):
+                written = await run_social_snapshot()
+                log.info("warmup_social_snapshot", rows=written)
+        except Exception as e:
+            log.warning("warmup_social_snapshot_failed", error=str(e).splitlines()[0][:200])
 
     now = datetime.now(MARKET_TZ)
     if backfill_due(now, _last_backfill):
