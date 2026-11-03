@@ -25,8 +25,14 @@ from app.tools.registry import ToolResult
 class FakeProvider(ModelProvider):
     """Replays a script of LLMResponses and records what it was sent."""
 
-    def __init__(self, script: list[LLMResponse], supports_tools: bool = True):
+    def __init__(self, script: list[LLMResponse], supports_tools: bool = True,
+                 stream_script: Optional[list[str]] = None):
         self._script = list(script)
+        # Streamed answers can be scripted separately. Speculation starts the
+        # answer stream alongside gather, so on a shared script the two race
+        # for the next entry; a separate one keeps tool-turn tests exact.
+        self._stream_script = list(stream_script) if stream_script is not None else None
+        self.cancelled_streams = 0
         self._supports_tools = supports_tools
         self.calls: list[dict] = []
         self.streamed: list[dict] = []
@@ -44,10 +50,20 @@ class FakeProvider(ModelProvider):
 
     async def stream(self, messages, model, temperature=0.1, max_tokens=4096,
                      on_usage=None) -> AsyncIterator[str]:
+        import asyncio
+
         self.streamed.append({"messages": messages, "model": model})
-        text = self._script.pop(0).content if self._script else "streamed answer"
-        for word in text.split(" "):
-            yield word + " "
+        if self._stream_script is not None:
+            text = self._stream_script.pop(0) if self._stream_script else "streamed answer"
+        else:
+            text = self._script.pop(0).content if self._script else "streamed answer"
+        try:
+            for word in text.split(" "):
+                await asyncio.sleep(0)   # a real stream yields to the loop
+                yield word + " "
+        except (asyncio.CancelledError, GeneratorExit):
+            self.cancelled_streams += 1
+            raise
         if on_usage:
             on_usage(10, 20)
 
@@ -511,11 +527,13 @@ async def test_the_signal_set_is_emitted_before_any_token(patched, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_activity_is_surfaced_as_it_happens(patched, monkeypatch):
-    use_provider(monkeypatch, FakeProvider([
-        reply(tool_calls=[ToolCall(id="c1", name="get_recent_news", arguments={})]),
-        reply("ENOUGH"),
-        reply("Answer."),
-    ]))
+    use_provider(monkeypatch, FakeProvider(
+        [
+            reply(tool_calls=[ToolCall(id="c1", name="get_recent_news", arguments={})]),
+            reply("ENOUGH"),
+        ],
+        stream_script=["Speculated before the news.", "Answer."],
+    ))
 
     events = await collect()
     names = [name for name, _ in events]
@@ -609,3 +627,114 @@ async def test_a_blocked_reply_opens_with_the_same_lean_the_chip_shows(patched, 
 
     assert state["blocked"]
     assert f"Overall: **{state['signal_set'].bias_phrase}**" in state["answer"]
+
+
+
+# ── Speculative answer ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_no_tool_turn_keeps_the_answer_started_alongside_gather(patched, monkeypatch):
+    provider = use_provider(monkeypatch, FakeProvider(
+        [reply("ENOUGH")], stream_script=["RSI is 22.0 today."],
+    ))
+
+    events = dict(await collect())
+
+    assert len(provider.streamed) == 1, "the speculative stream was the answer"
+    assert provider.cancelled_streams == 0
+    assert events["done"]["content"] == "RSI is 22.0 today."
+    # Same request a non-speculative turn would have sent.
+    assert provider.streamed[0]["messages"][-1]["content"].startswith("Now answer")
+    assert events["done"]["usage"]["completion_tokens"] == 5 + 20, "gather + answer"
+
+
+@pytest.mark.asyncio
+async def test_a_tool_turn_discards_the_speculation_and_answers_with_the_results(
+    patched, monkeypatch
+):
+    class AnswersFromWhatItSees(FakeProvider):
+        """Streams what a real model would: it can only mention news it was given."""
+
+        async def stream(self, messages, model, **kwargs):
+            saw_tool = any(m.get("role") == "tool" for m in messages)
+            self._stream_script = (
+                ["With the news: RSI 22.0."] if saw_tool
+                else ["Speculated words that must never be shown."]
+            )
+            async for chunk in super().stream(messages, model, **kwargs):
+                yield chunk
+
+    provider = use_provider(monkeypatch, AnswersFromWhatItSees([
+        reply(tool_calls=[ToolCall(id="c1", name="get_recent_news", arguments={})]),
+        reply("ENOUGH"),
+    ]))
+
+    events = await collect()
+    tokens = "".join(p["text"] for name, p in events if name == "token")
+
+    assert "Speculated" not in tokens, "a discarded speculation leaked to the client"
+    assert dict(events)["done"]["content"] == "With the news: RSI 22.0."
+    # The answer that counted saw the tool result.
+    assert any(m.get("role") == "tool" for m in provider.streamed[-1]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_speculation_can_be_switched_off(patched, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "chat_speculative_answer", False)
+    provider = use_provider(monkeypatch, FakeProvider(
+        [reply("ENOUGH")], stream_script=["RSI is 22.0 today."],
+    ))
+    events = dict(await collect())
+    assert events["done"]["content"] == "RSI is 22.0 today."
+    assert len(provider.streamed) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_speculation_when_gather_will_not_run(patched, monkeypatch):
+    """Without tools gather is skipped, so there is nothing to overlap with."""
+    provider = use_provider(monkeypatch, FakeProvider(
+        [], supports_tools=False, stream_script=["RSI is 22.0 today."],
+    ))
+    events = dict(await collect())
+    assert events["done"]["content"] == "RSI is 22.0 today."
+    assert provider.calls == [], "gather made no model call"
+
+
+@pytest.mark.asyncio
+async def test_tokens_buffered_by_a_discarded_speculation_are_never_shown(patched, monkeypatch):
+    """The realistic case: the answer streams for a while before gather decides."""
+    import asyncio
+
+    class SlowGather(FakeProvider):
+        async def complete(self, *args, **kwargs):
+            await asyncio.sleep(0.02)          # the speculative stream runs meanwhile
+            return await super().complete(*args, **kwargs)
+
+        async def stream(self, messages, model, **kwargs):
+            if any(m.get("role") == "tool" for m in messages):
+                self._stream_script = ["Final."]
+                async for chunk in super().stream(messages, model, **kwargs):
+                    yield chunk
+                return
+            try:
+                while True:                     # still going when gather decides
+                    await asyncio.sleep(0.001)
+                    yield "early "
+            except (asyncio.CancelledError, GeneratorExit):
+                self.cancelled_streams += 1
+                raise
+
+    provider = use_provider(monkeypatch, SlowGather([
+        reply(tool_calls=[ToolCall(id="c1", name="get_recent_news", arguments={})]),
+        reply("ENOUGH"),
+    ]))
+
+    events = await collect()
+    tokens = "".join(p["text"] for name, p in events if name == "token")
+
+    assert "early" not in tokens
+    assert tokens.strip() == "Final."
+    assert provider.cancelled_streams == 1

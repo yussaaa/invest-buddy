@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # local Qwens are unreliable at it. Off means the agent answers from the
     # pre-fetched signals in one pass rather than failing.
     chat_tools_enabled: bool = True
+    # Start streaming the answer alongside the first gather call, and keep it
+    # when gather asks for no tool (most turns). Saves gather's round trip on
+    # time-to-first-token; costs a few discarded tokens on tool turns.
+    chat_speculative_answer: bool = True
 
     # ── Monitoring ──────────────────────────────────────────────────────────
     monitoring_backend: Literal["mlflow", "wandb", "none"] = "mlflow"
