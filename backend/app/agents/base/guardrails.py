@@ -110,10 +110,23 @@ _SMALL_NUMBER_CEILING = 12
 # Four-digit integers in this band read as years, not readings.
 _YEAR_RANGE = (1900, 2100)
 
-# A model that rounds 28.44 to 28.4, or to 28, is describing the same reading.
-# Anything looser starts accepting genuinely different numbers.
-_GROUNDING_RELATIVE_TOLERANCE = 0.02
-_GROUNDING_ABSOLUTE_TOLERANCE = 0.05
+# An integer followed by a period word names a window, not a reading: "the
+# 200-day", "a 50 DMA", "over 21 sessions". The loose tolerance this module
+# used to have grounded these by accident against nearby prices.
+_WINDOW_SUFFIX = re.compile(
+    r"[\s-]?(?:day|week|month|session|period|bar|year)s?\b|\s?DMA\b|\s?SMA\b|\s?EMA\b",
+    re.IGNORECASE,
+)
+
+# A figure is grounded when a known reading rounds — or truncates — to it at
+# the precision it was written with: 28.44 grounds "28.4" and "28", 195.6
+# grounds "$195" and "$196". It used to be max(0.05, 2% of the reading) plus
+# a round-to-integer clause, which on a $250 stock accepted anything within
+# ±$5 of any of ~30 price-like readings: about 31% of random $100–400 prices
+# passed as grounded (tests/unit/test_grounding_rate.py measures it).
+#
+# Float slack only — the rule itself has no tolerance knob to loosen.
+_GROUNDING_EPSILON = 1e-9
 
 # Hallucination-check system prompt
 _HALLUCINATION_SYSTEM_PROMPT = (
@@ -261,20 +274,27 @@ def _parse_number(token: str) -> Optional[float]:
         return None
 
 
-def _is_grounded(candidate: float, evidence: set[float]) -> bool:
+def _decimals(token: str) -> int:
+    """How many decimal places the figure was written with."""
+    digits = token.rstrip("%")
+    return len(digits.split(".", 1)[1]) if "." in digits else 0
+
+
+def _is_grounded(candidate: float, evidence: set[float], decimals: int = 2) -> bool:
+    """Does some known reading round or truncate to `candidate` at `decimals`?
+
+    Magnitude only. Prose carries the sign as a word — a reading stored as
+    -4.18 is quoted as "4.18% below", and treating that as a different number
+    would flag correct sentences as invented.
+    """
+    value = abs(candidate)
+    step = 10.0 ** -decimals
     for known in evidence:
-        tolerance = max(
-            _GROUNDING_ABSOLUTE_TOLERANCE, abs(known) * _GROUNDING_RELATIVE_TOLERANCE
-        )
-        # Magnitude only. Prose carries the sign as a word — a reading stored as
-        # -4.18 is quoted as "4.18% below", and treating that as a different
-        # number would flag correct sentences as invented.
-        for value, reading in ((candidate, known), (abs(candidate), abs(known))):
-            if abs(value - reading) <= tolerance:
-                return True
-            # A reading quoted to fewer decimals than it was computed to.
-            if round(value, 1) == round(reading, 1) or round(value) == round(reading):
-                return True
+        reading = abs(known)
+        if abs(reading - value) <= step / 2 + _GROUNDING_EPSILON:
+            return True                     # rounded to the written precision
+        if 0 <= reading - value < step - _GROUNDING_EPSILON:
+            return True                     # truncated: 195.6 quoted as "195"
     return False
 
 
@@ -289,7 +309,8 @@ def check_numeric_grounding(text: str, evidence: Any) -> list[str]:
 
     Deliberately ignored, because prose is full of them and none are claims
     about a stock: integers at or below 12 (counts, list positions, "3 of 5
-    averages") and four-digit years.
+    averages"), four-digit years, and integers naming a window ("the 200-day",
+    "over 21 sessions").
 
     Args:
         text: The candidate reply.
@@ -306,18 +327,21 @@ def check_numeric_grounding(text: str, evidence: Any) -> list[str]:
     _collect_numbers(evidence, known)
 
     ungrounded: list[str] = []
-    for token in _NUMBER_RE.findall(text):
+    for match in _NUMBER_RE.finditer(text):
+        token = match.group()
         candidate = _parse_number(token)
         if candidate is None:
             continue
         if abs(candidate) <= _SMALL_NUMBER_CEILING and float(candidate).is_integer():
+            continue
+        if float(candidate).is_integer() and _WINDOW_SUFFIX.match(text, match.end()):
             continue
         if (
             float(candidate).is_integer()
             and _YEAR_RANGE[0] <= candidate <= _YEAR_RANGE[1]
         ):
             continue
-        if not _is_grounded(candidate, known):
+        if not _is_grounded(candidate, known, _decimals(token)):
             ungrounded.append(token)
 
     return ungrounded
