@@ -305,7 +305,7 @@ async def persistence_node(state: AgentState) -> dict:
 
         params = {
             "ticker": ticker,
-            "model_provider": settings.model_provider,
+            "model_provider": settings.active_provider,
             "fast_model": settings.fast_model,
             "smart_model": settings.smart_model,
             "analysis_depth": state.get("analysis_depth", "standard"),

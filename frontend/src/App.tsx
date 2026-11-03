@@ -24,6 +24,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { ScreenContextProvider } from '@/context/ScreenContext'
 import { cn, readJSON, writeJSON } from '@/lib/utils'
+import { api } from './lib/api'
+import { setLlmProvider } from './lib/llmProvider'
 import ChatLauncher from './components/chat/ChatLauncher'
 import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
@@ -194,6 +196,15 @@ function AppShell() {
   useEffect(() => {
     writeJSON(SIDEBAR_KEY, sidebar)
   }, [sidebar])
+
+  // The saved model provider, so requests carry it without a Settings visit.
+  // localStorage covers the first requests; this corrects it if the choice
+  // was changed from another browser.
+  useEffect(() => {
+    api.preferences.get('anonymous')
+      .then(p => setLlmProvider(p.llm_provider))
+      .catch(() => { /* server default */ })
+  }, [])
 
   const setSidebarWidth = useCallback(
     (width: number) => setSidebar(prev => (prev.width === width ? prev : { ...prev, width })),

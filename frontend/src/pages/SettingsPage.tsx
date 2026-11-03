@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Save, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
+import { Save, Loader2, CheckCircle, AlertCircle, Cpu, RefreshCw } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { api } from '../lib/api'
-import type { UserPreferences } from '../lib/types'
+import { setLlmProvider } from '../lib/llmProvider'
+import type { LlmConnectionTest, LlmProviderList, UserPreferences } from '../lib/types'
 
 const USER_ID = 'anonymous'
 
@@ -34,7 +35,7 @@ function RadioGroup<T extends string>({
 }: {
   label: string
   name: string
-  options: { value: T; label: string; description?: string }[]
+  options: { value: T; label: string; description?: string; disabled?: boolean; title?: string }[]
   value: T
   onChange: (v: T) => void
 }) {
@@ -45,11 +46,14 @@ function RadioGroup<T extends string>({
         {options.map(opt => (
           <label
             key={opt.value}
+            title={opt.title}
             className={cn(
-              'flex flex-col gap-0.5 px-4 py-3 rounded-lg border cursor-pointer transition-colors select-none',
-              value === opt.value
-                ? 'border-primary/70 bg-primary/10 text-primary'
-                : 'border-border bg-card text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'
+              'flex flex-col gap-0.5 px-4 py-3 rounded-lg border transition-colors select-none',
+              opt.disabled
+                ? 'border-border/60 bg-card text-muted-foreground/50 cursor-not-allowed'
+                : value === opt.value
+                  ? 'border-primary/70 bg-primary/10 text-primary cursor-pointer'
+                  : 'border-border bg-card text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground cursor-pointer'
             )}
           >
             <input
@@ -57,6 +61,7 @@ function RadioGroup<T extends string>({
               name={name}
               value={opt.value}
               checked={value === opt.value}
+              disabled={opt.disabled}
               onChange={() => onChange(opt.value)}
               className="sr-only"
             />
@@ -83,16 +88,55 @@ const DEFAULT_PREFS: UserPreferences = {
 
 export default function SettingsPage() {
   const [prefs, setPrefs] = useState<UserPreferences>(DEFAULT_PREFS)
+  const [providers, setProviders] = useState<LlmProviderList | null>(null)
+  const [tests, setTests] = useState<Record<string, LlmConnectionTest | 'running'>>({})
   const [loading, setLoading] = useState(true)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   useEffect(() => {
-    api.preferences.get(USER_ID)
-      .then(p => setPrefs(p))
-      .catch(() => { /* use defaults */ })
-      .finally(() => setLoading(false))
+    Promise.allSettled([
+      api.preferences.get(USER_ID).then(p => {
+        setPrefs(p)
+        setLlmProvider(p.llm_provider)
+      }),
+      api.preferences.llmProviders().then(list => {
+        setProviders(list)
+        testConnections(list)
+      }),
+    ]).finally(() => setLoading(false))
   }, [])
+
+  function testConnections(list: LlmProviderList, fresh = false) {
+    for (const p of list.providers.filter(p => p.available)) {
+      setTests(t => ({ ...t, [p.id]: 'running' }))
+      api.preferences.testLlmProvider(p.id, fresh)
+        .then(result => setTests(t => ({ ...t, [p.id]: result })))
+        .catch(e => setTests(t => ({
+          ...t,
+          [p.id]: { id: p.id, ok: false, error: String(e), latency_ms: null },
+        })))
+    }
+  }
+
+  function connectionLabel(id: string, smartModel: string): string {
+    const test = tests[id]
+    if (test === undefined) return smartModel
+    if (test === 'running') return `${smartModel} · testing…`
+    if (test.ok) return `${smartModel} · connected ${((test.latency_ms ?? 0) / 1000).toFixed(1)}s`
+    return `${smartModel} · not working`
+  }
+
+  // A saved choice whose key has since been removed is not what the server
+  // uses; show the default it falls back to instead.
+  const savedProvider = providers?.providers.find(
+    p => p.id === prefs.llm_provider && p.available,
+  )
+  const selectedProvider = savedProvider?.id ?? providers?.default ?? ''
+  const selectedInfo = providers?.providers.find(p => p.id === selectedProvider)
+  const selectedTest = tests[selectedProvider]
+  const selectedFailure =
+    selectedTest && selectedTest !== 'running' && !selectedTest.ok ? selectedTest.error : null
 
   function toggleSector(sector: string) {
     setPrefs(p => ({
@@ -112,8 +156,10 @@ export default function SettingsPage() {
         investment_horizon: prefs.investment_horizon,
         analysis_depth: prefs.analysis_depth,
         preferred_sectors: prefs.preferred_sectors,
+        ...(providers ? { llm_provider: selectedProvider } : {}),
       })
       setPrefs(saved)
+      setLlmProvider(saved.llm_provider)
       setSaveState('saved')
       setTimeout(() => setSaveState('idle'), 3000)
     } catch (e) {
@@ -189,6 +235,61 @@ export default function SettingsPage() {
           />
 
           <Separator />
+
+          {/* Model provider */}
+          {providers && (
+            <>
+              <div className="flex flex-col gap-2">
+                <RadioGroup
+                  label="Model Provider"
+                  name="llm_provider"
+                  value={selectedProvider}
+                  onChange={v => setPrefs(p => ({ ...p, llm_provider: v }))}
+                  options={providers.providers.map(p => ({
+                    value: p.id,
+                    label: p.id === providers.default ? `${p.label} · default` : p.label,
+                    description: p.available ? connectionLabel(p.id, p.smart_model) : 'Not configured',
+                    disabled: !p.available,
+                    title: (() => {
+                      const t = tests[p.id]
+                      return p.reason ?? (t && t !== 'running' && !t.ok ? t.error ?? undefined : undefined)
+                    })(),
+                  }))}
+                />
+                {selectedInfo && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <Cpu size={13} />
+                      Fast tier <span className="font-mono text-foreground/80">{selectedInfo.fast_model}</span>
+                      · smart tier <span className="font-mono text-foreground/80">{selectedInfo.smart_model}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => testConnections(providers, true)}
+                      className="flex items-center gap-1 hover:text-foreground transition-colors"
+                    >
+                      <RefreshCw size={12} /> Test connections
+                    </button>
+                  </div>
+                )}
+                {selectedFailure && (
+                  <div className="flex items-start gap-2 text-xs text-red-400">
+                    <AlertCircle size={14} className="mt-px shrink-0" />
+                    <span>
+                      This provider's last test call failed, so analyses and chat will fail on it
+                      too: <span className="font-mono">{selectedFailure}</span>
+                    </span>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Used for analyses, chat and explanations. Credentials come from the
+                  server's <span className="font-mono">.env</span>; providers without a key are disabled.
+                </p>
+              </div>
+
+              <Separator />
+            </>
+          )}
 
           {/* Preferred Sectors */}
           <div className="flex flex-col gap-3">

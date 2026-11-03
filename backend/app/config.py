@@ -4,11 +4,22 @@ All settings are read from environment variables (or a .env file).
 See .env.example for the full list of supported variables.
 """
 
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+ProviderName = Literal["openai", "anthropic", "qwen", "ollama", "vllm"]
+PROVIDER_NAMES: tuple[str, ...] = ("openai", "anthropic", "qwen", "ollama", "vllm")
+
+# The provider a request asked for (Settings page → X-LLM-Provider header →
+# app/models/selection.py). Unset means MODEL_PROVIDER from .env. A ContextVar
+# rather than a mutated setting because two browsers can choose differently,
+# and the analysis fan-out's tasks inherit it from the request that started them.
+requested_provider: ContextVar[Optional[str]] = ContextVar("requested_provider", default=None)
 
 
 def _find_env_file() -> Path | None:
@@ -54,6 +65,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_fast_model: str = "claude-haiku-4-5"
     anthropic_smart_model: str = "claude-sonnet-4-6"
+    # Thinking depth for models that always think (Opus 4.7+, the 5.x line).
+    # Empty means the model's own default; ignored by the 4.6-and-older models.
+    anthropic_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = ""
 
     # Qwen (DashScope)
     dashscope_api_key: str = ""
@@ -119,28 +133,23 @@ class Settings(BaseSettings):
 
     # ── Derived helpers ─────────────────────────────────────────────────────
     @property
+    def active_provider(self) -> str:
+        """The provider for this request: the user's choice, else MODEL_PROVIDER."""
+        return requested_provider.get() or self.model_provider
+
+    def models_for(self, provider: str) -> tuple[str, str]:
+        """(fast, smart) model names for a provider."""
+        return (getattr(self, f"{provider}_fast_model"), getattr(self, f"{provider}_smart_model"))
+
+    @property
     def fast_model(self) -> str:
         """Return the fast (cheap) model name for the active provider."""
-        mapping = {
-            "openai": self.openai_fast_model,
-            "anthropic": self.anthropic_fast_model,
-            "qwen": self.qwen_fast_model,
-            "ollama": self.ollama_fast_model,
-            "vllm": self.vllm_fast_model,
-        }
-        return mapping[self.model_provider]
+        return self.models_for(self.active_provider)[0]
 
     @property
     def smart_model(self) -> str:
         """Return the smart (reasoning) model name for the active provider."""
-        mapping = {
-            "openai": self.openai_smart_model,
-            "anthropic": self.anthropic_smart_model,
-            "qwen": self.qwen_smart_model,
-            "ollama": self.ollama_smart_model,
-            "vllm": self.vllm_smart_model,
-        }
-        return mapping[self.model_provider]
+        return self.models_for(self.active_provider)[1]
 
     @property
     def cors_origins_list(self) -> list[str]:
