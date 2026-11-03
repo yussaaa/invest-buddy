@@ -191,6 +191,15 @@ def test_a_nearby_but_different_price_is_not_grounded():
     assert check_numeric_grounding("Support is at $201.75.", {"level": 201.7}) == ["$201.75"]
 
 
+def test_a_figure_with_a_magnitude_suffix_is_scaled_before_checking():
+    """ "63.8M shares" was checked as 63.8 and blocked a correct reply."""
+    evidence = {"volume": 63_812_400, "market_cap": 3_412_000_000_000}
+    assert check_numeric_grounding("Volume of 63.8M shares.", evidence) == []
+    assert check_numeric_grounding("Volume of 63.8 million.", evidence) == []
+    assert check_numeric_grounding("A $3.41T company.", evidence) == []
+    assert check_numeric_grounding("Volume of 71.2M shares.", evidence) == ["71.2M"]
+
+
 def test_window_lengths_are_not_treated_as_claims():
     text = "The 200-day and the 50 DMA, measured over 21 sessions."
     assert check_numeric_grounding(text, {}) == []

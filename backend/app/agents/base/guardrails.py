@@ -100,8 +100,20 @@ _COMPILED_CHAT_PATTERNS = _COMPILED_ADVICE_PATTERNS + [
 
 # ── Numeric grounding ──────────────────────────────────────────────────────
 
-# Any run of digits with optional decimals, sign and thousands separators.
-_NUMBER_RE = re.compile(r"[-+]?\$?\d[\d,]*(?:\.\d+)?%?")
+# Any run of digits with optional decimals, sign, thousands separators and a
+# magnitude suffix. Without the suffix, "volume of 63.8M" was checked as 63.8
+# against a reading of 63,812,400 and blocked as invented.
+_NUMBER_RE = re.compile(
+    r"[-+]?\$?\d[\d,]*(?:\.\d+)?%?"
+    r"(?:\s?(?:[KMBT](?![A-Za-z])|(?i:thousand|million|billion|trillion|bn|mn)\b))?"
+)
+
+_MAGNITUDES = {
+    "k": 1e3, "thousand": 1e3,
+    "m": 1e6, "mn": 1e6, "million": 1e6,
+    "b": 1e9, "bn": 1e9, "billion": 1e9,
+    "t": 1e12, "trillion": 1e12,
+}
 
 # Counts, list positions and paragraph numbers are not claims about a stock.
 # Ordinary prose is full of them and none carry information worth checking.
@@ -266,34 +278,45 @@ def _collect_numbers(value: Any, into: set[float]) -> None:
             _collect_numbers(item, into)
 
 
+def _split_magnitude(token: str) -> tuple[str, float]:
+    """("63.8", 1e6) from "63.8M"; (token, 1.0) when there is no suffix."""
+    match = re.search(r"\s?([A-Za-z]+)$", token)
+    if match and match.group(1).lower() in _MAGNITUDES:
+        return token[: match.start()], _MAGNITUDES[match.group(1).lower()]
+    return token, 1.0
+
+
 def _parse_number(token: str) -> Optional[float]:
-    cleaned = token.replace("$", "").replace(",", "").replace("%", "")
+    digits, scale = _split_magnitude(token)
+    cleaned = digits.replace("$", "").replace(",", "").replace("%", "")
     try:
-        return float(cleaned)
+        return float(cleaned) * scale
     except ValueError:
         return None
 
 
-def _decimals(token: str) -> int:
-    """How many decimal places the figure was written with."""
-    digits = token.rstrip("%")
-    return len(digits.split(".", 1)[1]) if "." in digits else 0
+def _precision(token: str) -> float:
+    """The step the figure was written to: "28.4" → 0.1, "63.8M" → 100,000."""
+    digits, scale = _split_magnitude(token)
+    digits = digits.rstrip("%")
+    decimals = len(digits.split(".", 1)[1]) if "." in digits else 0
+    return (10.0 ** -decimals) * scale
 
 
-def _is_grounded(candidate: float, evidence: set[float], decimals: int = 2) -> bool:
-    """Does some known reading round or truncate to `candidate` at `decimals`?
+def _is_grounded(candidate: float, evidence: set[float], step: float = 0.01) -> bool:
+    """Does some known reading round or truncate to `candidate` at `step`?
 
     Magnitude only. Prose carries the sign as a word — a reading stored as
     -4.18 is quoted as "4.18% below", and treating that as a different number
     would flag correct sentences as invented.
     """
     value = abs(candidate)
-    step = 10.0 ** -decimals
     for known in evidence:
         reading = abs(known)
-        if abs(reading - value) <= step / 2 + _GROUNDING_EPSILON:
+        slack = _GROUNDING_EPSILON * max(1.0, reading)
+        if abs(reading - value) <= step / 2 + slack:
             return True                     # rounded to the written precision
-        if 0 <= reading - value < step - _GROUNDING_EPSILON:
+        if 0 <= reading - value < step - slack:
             return True                     # truncated: 195.6 quoted as "195"
     return False
 
@@ -341,7 +364,7 @@ def check_numeric_grounding(text: str, evidence: Any) -> list[str]:
             and _YEAR_RANGE[0] <= candidate <= _YEAR_RANGE[1]
         ):
             continue
-        if not _is_grounded(candidate, known, _decimals(token)):
+        if not _is_grounded(candidate, known, _precision(token)):
             ungrounded.append(token)
 
     return ungrounded
