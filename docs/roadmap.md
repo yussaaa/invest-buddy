@@ -29,6 +29,7 @@ had drifted badly enough to be actively misleading (it described Phase 3 as
 | **14** Movers + week nav | Cap-tier movers with sectors, navigable events week | `services/market_data.py` |
 | **15** Client cache | TTL cache above the router; instant tab switches, persisted toolbars | `frontend/src/lib/clientCache.ts` |
 | **16** Trend + valuation | SMA slope, z-score and σ band; reverse-DCF valuation panel; collapsible charting sections | `services/trend.py`, `services/valuation*.py` |
+| **17** Signals | Reddit mention board (ApeWisdom) + StockTwits self-tags, deterministic crowd rules, Yahoo preset screens, hourly mention history, `/signals` page, cited research agent | `services/social/`, `services/social_signals.py`, `agents/research/` |
 
 Phases 10–12 and 14 were never written into the phase list. They are recorded
 here and summarised in `CLAUDE.md`.
@@ -44,7 +45,10 @@ The only wholly unstarted phase.
 - [ ] Long-term user profile learning (preferred sectors, risk drift)
 - [ ] Conversation memory across sessions — `memory/session.py` is per-session
       today; nothing accumulates
-- [ ] Citation-completeness enforcement (currently checked, not enforced)
+- [ ] Citation-completeness enforcement (currently checked, not enforced) —
+      **partly done in Phase 17**: the research agent strips citations that
+      resolve to no source and drops uncited drivers
+      (`agents/research/graph.py:verify`). The analysis path still only checks.
 - [ ] Confidence recalibration
 - [ ] **Investment-advice rewriting rather than detection.** The chat agent
       already rebuilds a failed reply from its signal set
@@ -174,6 +178,45 @@ The three written documents exist. Not done:
 
 ---
 
+## Opened by Phase 17
+
+Not built yet, in rough order of value:
+
+- [ ] **Wikipedia pageviews as a second attention source.** Free, keyless
+      (needs a User-Agent), and 60+ days of daily history on day one — a real
+      z-score while our own ApeWisdom history is still filling. Needs a
+      ticker → article mapping, cached for a week.
+- [ ] **Put/call volume signal** from the option chain `services/options.py`
+      already fetches — positioning with no new source.
+- [ ] **Insider purchases** via yfinance `insider_purchases`; easier than
+      parsing Form 4, which `get_sec_filings` does not fetch.
+- [ ] **A custom "unusual volume" screen** as an `EquityQuery`, once the
+      accepted fields are confirmed.
+- [ ] **Lexicon scoring (VADER) for untagged StockTwits messages** — more than
+      half are untagged. A new dependency, so it changes the shared `.venv`.
+- [ ] **Real Reddit API and X providers.** Both are placeholders on the same
+      interface today (`services/social/placeholders.py`); they report what is
+      missing and return a caveat.
+- [ ] **The trending overlay on screens uses L1 only** (`screens.reddit_overlay`
+      peeks the board cache), so a fresh replica shows no Reddit ranks until
+      its trending table has loaded once.
+
+Rejected: **pytrends (Google Trends).** Unofficial, unmaintained, and
+rate-limited routinely; "Google search" is covered by Tavily (`search_web`),
+which the research agent uses.
+
+Fixed on the way in (2026-11-03):
+
+- [x] ~~Chat grounding never saw tool results~~ — `_grounding_evidence` passed
+      `tool_records` (name, latency, success), so any figure quoted from a tool
+      read as invented. Payloads are now kept (`agents/base/tool_loop.py`).
+- [x] ~~`prepare_context_node` passed the ticker as a string~~ to
+      `get_events(extra_symbols=...)`, which iterated it into letters.
+- [x] ~~httpx 4xx responses were retried~~ three times with backoff; only 429
+      and 5xx are now (`tools/retry_decorator.py`).
+
+---
+
 ## Accepted trade-offs
 
 Not bugs, and not worth relitigating without new information:
@@ -187,6 +230,8 @@ Not bugs, and not worth relitigating without new information:
 | **No LangGraph checkpointer** | Only `InMemorySaver` ships with the installed version; survives neither restart nor a second worker | A durable checkpointer landing upstream |
 | **Chat gather is a separate model call** | Buys a streaming path where no tool request arrives mid-sentence. Its latency is now hidden on no-tool turns by speculating the answer alongside it | Nothing; the cheap call is worth it |
 | **pgvector over Qdrant** | One datastore instead of two | Scale that Postgres cannot serve |
+| **StockTwits is best-effort** | Free and the only self-stated crowd direction, but it sits behind Cloudflare and refuses some server clients. A 15-minute breaker turns that into a caveat | A licensed social-data feed |
+| **Mention attention never has a direction** | A spike says people are talking, not which way; extremes are as often late as early | Evidence that some attention pattern leads price, measured, not assumed |
 
 ---
 

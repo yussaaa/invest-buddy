@@ -43,6 +43,9 @@ The backend classifier (LLM-powered) can override these defaults — e.g., a "Fu
 | **SEC EDGAR** | `sec-edgar-downloader` | No | 10-K, 10-Q, 8-K filings (full text, public API) |
 | **News Articles** | `newsapi-python` | Yes (free tier) | Headlines, descriptions, sources, dates (degrades gracefully without key) |
 | **Web Search** | `tavily-python` | Yes (free tier) | Structured web search results + AI-synthesized answer (degrades gracefully) |
+| **Reddit mentions** | `httpx` → ApeWisdom | No | Ticker mention counts, upvotes and rank, now and 24h ago (unofficial, free) |
+| **StockTwits** | `httpx` | No | Recent messages' self-tagged Bullish/Bearish counts (best-effort; Cloudflare may refuse) |
+| **Preset screens** | `yfinance` `yf.screen` | No | Yahoo's predefined equity screeners |
 
 ### yfinance — Market Data (no API key)
 
@@ -454,3 +457,44 @@ price already requires. A forward DCF on this data is systematically wrong —
 every mega-cap prices out 73–78% "overvalued" — because the terminal value rests
 on a growth estimate drawn from four noisy years. The inverse is robust and
 describes the price rather than targeting it.
+
+## Social sentiment and signals (Phase 17)
+
+**What is measured.** Two different things, never blended:
+
+- **Attention** — how much a ticker is discussed. ApeWisdom's mention count is
+  a rolling 24-hour window over Reddit (WSB, r/stocks, r/investing, r/options
+  …). Attention has **no direction**: every attention rule is `neutral`.
+- **Self-reported mood** — StockTwits users tag a message Bullish or Bearish.
+  The share of *tagged* messages that are bullish is the reading. Untagged
+  messages (often more than half) are counted and shown, never imputed.
+
+**Rules** (`services/social_signals.py`; all `category="social"`):
+
+| Rule | Direction | Fires when |
+|---|---|---|
+| `mention_spike` | neutral | robust z ≥ 2 against ≥7 days of stored daily history |
+| `mention_surge_24h` | neutral | no baseline yet; mentions ≥ 3× yesterday and ≥ 25 |
+| `rank_climb` | neutral | ≥ 15 places, or newly top-20; and ≥ 25 mentions |
+| `attention_fading` | neutral | was top-20; mentions ≤ half of yesterday |
+| `crowd_bullish` | bullish (low) | ≥ 15 tagged, ≥ 80% bullish |
+| `crowd_bearish` | bearish (low) | ≥ 15 tagged, ≤ 45% bullish |
+| `crowd_one_sided` | neutral | ≥ 90% bullish while attention is elevated |
+| `short_interest_high` | neutral (medium) | ≥ 20% of float sold short |
+
+The crowd thresholds are asymmetric because StockTwits tags rest at roughly
+60–65% bullish — users tag what they own. The minimum-mentions floor exists
+because deep in the board a few posts move a ticker hundreds of places.
+
+**Baseline.** ApeWisdom keeps no history, so an hourly job stores the top ~200
+in `social_mention_snapshots` (90-day retention). The z-score uses one sample
+per New York date (the last), with median/MAD rather than mean/σ so one meme
+day does not hide the next.
+
+**Off the board is not zero.** Only the top few hundred tickers are published.
+A ticker outside them is reported with `rank = null` and a caveat.
+
+**Research briefs** cite numbered sources built from tool payloads; a brief that
+recommends, predicts a price, quotes a figure found in no source, or has no
+cited driver is replaced by a templated one assembled from the sources.
+

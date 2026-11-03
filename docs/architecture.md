@@ -10,7 +10,7 @@ built versus what is not, see [roadmap.md](roadmap.md).
 
 ## 1. The shape of the thing
 
-Three independent surfaces share one backend. They are worth separating in your
+Four independent surfaces share one backend. They are worth separating in your
 head, because they have almost nothing in common at runtime:
 
 | Surface | Entry point | Cost | Latency |
@@ -18,6 +18,7 @@ head, because they have almost nothing in common at runtime:
 | **Analysis** — the multi-agent report | `POST /api/v1/analysis` | ~$0.011/run | 30–60s |
 | **Chat** — the floating agent | `POST /api/v1/chat[/stream]` | ~2 model calls | 8–9s cold |
 | **Market dashboard** — charts, quotes, movers | `GET /api/v1/market/*` | no model calls | 10ms–40s |
+| **Signals** — social trending, screens, research | `GET/POST /api/v1/signals/*` | none, except explain / research buttons | 50ms–30s |
 
 The dashboard is the one people actually click around in, and it never invokes
 an LLM except on explicit "explain this" buttons. Keep that distinction: most
@@ -26,13 +27,13 @@ never grow a model call on a hot path.
 
 ```
                         ┌──────────────────────────────┐
-   React (Vite, 5173)   │  /charting  /market  /analyze │
-                        │  /watchlist /history /settings│
+   React (Vite, 5173)   │  /charting  /market /signals  │
+                        │  /analyze /watchlist /history │
                         └───────────────┬──────────────┘
                                         │ REST + SSE
                         ┌───────────────▼──────────────┐
    FastAPI (8000)       │  api/v1/router.py            │
-                        │  analysis chat market        │
+                        │  analysis chat market signals│
                         │  watchlist preferences       │
                         │  feedback upload health      │
                         └───┬──────────┬────────────┬──┘
@@ -45,7 +46,7 @@ never grow a model call on a hot path.
                   │        │           │         │ signals       │
             ┌─────▼───┐ ┌──▼──────┐ ┌──▼──────┐  └──┬────────────┘
             │ tools/  │ │ rag/    │ │ signals │     │
-            │ (24)    │ │pgvector │ │ (pure)  │     │
+            │ (27)    │ │pgvector │ │ (pure)  │     │
             └────┬────┘ └────┬────┘ └─────────┘     │
                  │           │                       │
             ┌────▼───────────▼───────────────────────▼────┐
@@ -162,6 +163,67 @@ langgraph, and it survives neither a restart nor a second uvicorn worker.
 
 ---
 
+## 3b. Flow four — the Signals page and the research agent (Phase 17)
+
+`/signals` answers "what is the crowd talking about, and why?". It has a
+deterministic half and an agentic half, kept apart the same way chat keeps
+`signals.py` apart from its narration.
+
+```
+ ApeWisdom (Reddit mentions) ─┐                      ┌─ /signals/trending
+ StockTwits (self-tags) ──────┼─ services/social/ ───┤
+ yfinance info (short int.) ──┘        │             ├─ /signals/ticker ──▶ social_signals.py
+                                       ▼             │                       (pure rules)
+           hourly snapshot ──▶ social_mention_snapshots ──▶ history.py (robust z)
+ yf.screen presets ─────────── services/screens.py ──┴─ /signals/screen
+
+ /signals/research/stream:
+   prepare (no LLM: snapshot, quote, news, one web search)
+     → gather ⇄ tools  (≤2 iterations, ≤4 calls, ≤3 web searches, 60s budget)
+     → answer (streamed)  → verify (citations, advice, grounding)
+```
+
+**Providers never raise.** Every reading carries `available` and `caveat`; a
+dead source becomes a sentence on the page. Reddit API and X are placeholder
+providers on the same interface (`placeholders.py`) and say what is missing.
+
+**StockTwits is behind Cloudflare** and refuses some server clients with a 403
+challenge page. `social/http.py` raises `SourceBlocked` for 401/403/429 or a
+non-JSON body, nothing retries it, and a 15-minute breaker (`social:st:blocked`)
+answers the next calls. Message bodies are never stored — only counts.
+
+**Attention has no direction.** `social_signals.py` has eight rules. The four
+attention rules (`mention_spike`, `mention_surge_24h`, `rank_climb`,
+`attention_fading`) are always `neutral`; only `crowd_bullish` /
+`crowd_bearish` lean, graded `low`, with asymmetric thresholds (80% / 45%)
+because StockTwits tags rest at ~60–65% bullish. The module reuses
+`signals.py`'s models and scorer, so one weak crowd reading cannot read as
+conviction, and it is a separate module so a StockTwits outage cannot change a
+chart chip. Same invariants: no action verb in the source, every sentence
+passes the advice check in strict and chat mode (`test_social_signals.py`).
+
+**History is ours.** ApeWisdom reports only "now" and "24h ago". An hourly
+warmup job stores the top ~200 in Postgres; `history.py` takes the last sample
+per New York date (counts are rolling 24h windows, so hourly samples overlap)
+and computes a median/MAD z-score. Under 7 days it returns `None` and the
+rules fall back to the 24h comparison.
+
+**The research agent cites ids, not links.** `agents/research/sources.py`
+numbers every citable thing from tool payloads (`S1`…`S15`). The model sees
+`<untrusted_source id="S3">` blocks — third-party text, fenced and trimmed —
+and may cite `[S3]`; the URL the reader clicks comes from the book. Verify
+strips ids that resolve to nothing, drops drivers left uncited, and on advice
+wording or an ungrounded figure swaps in a templated brief built from source
+titles and the deterministic conditions (`guarded: true`). Grounding evidence
+includes every number in the source text the model was shown, parsed the way
+`check_numeric_grounding` parses prose. Briefs that pass are cached 30 min.
+
+The agent shares its tool-execution step with chat
+(`agents/base/tool_loop.py`), which returns the payloads alongside the records
+— the fix that let chat ground a figure quoted from a tool result at all.
+
+---
+
 ## 4. Flow three — the market dashboard
 
 No LLM. `api/v1/market.py` is deliberately thin; everything lives in
@@ -207,6 +269,11 @@ to one ~10ms query.
 | sectors | 7 days | A company changes sector roughly never |
 | index constituents | 24 h | Membership changes a few times a year |
 | profile | 10 min | Static-ish company metadata |
+| social board pages (`social:ape:*`) | 5 min | Unofficial free API; be polite |
+| StockTwits stream (`social:st:*`) | 5 min | Plus a 15-min breaker after a refusal |
+| ticker crowd snapshot (`social:snap:*`) | 2 min | Assembled from the above |
+| preset screens (`screen:*`) | 2 min | One `yf.screen` per preset |
+| social explanation / research brief | 15 / 30 min | Keyed by model provider |
 
 ### Top movers (Phase 14)
 
@@ -296,16 +363,16 @@ value calibrates faster than a disclaimer.
 
 ### Tools and the registry
 
-`tools/registry.py` — **24 tools**, declaratively registered. Adding a data
+`tools/registry.py` — **27 tools**, declaratively registered. Adding a data
 source is one file plus one registry call.
 
 Grouped by the `category` the registry actually assigns, so these are greppable:
 
 | Category | Tools |
 |---|---|
-| `market_data` | `get_company_overview`, `get_price_history`, `get_earnings_calendar` |
+| `market_data` | `get_company_overview`, `get_price_history`, `get_earnings_calendar`, `get_stock_screen` |
 | `fundamental` | `get_income_statement`, `get_balance_sheet`, `get_cash_flow`, `compute_financial_ratios` |
-| `sentiment` | `get_analyst_ratings` |
+| `sentiment` | `get_analyst_ratings`, `get_social_sentiment`, `get_trending_tickers` |
 | `options` | `get_options_chain` ¹, `get_options_snapshot`, `screen_option_strategies` |
 | `technical` | `compute_rsi`, `compute_macd`, `compute_bollinger_bands`, `compute_moving_averages`, `compute_support_resistance` |
 | `risk` | `compute_historical_volatility`, `compute_var`, `compute_beta`, `compute_sharpe_sortino`, `compute_max_drawdown` |
@@ -379,7 +446,7 @@ skips it entirely.
 
 ### Persistence
 
-Postgres via SQLAlchemy async + Alembic (`db/`). Nine tables:
+Postgres via SQLAlchemy async + Alembic (`db/`). Ten tables:
 
 | Table | Holds |
 |---|---|
@@ -392,6 +459,7 @@ Postgres via SQLAlchemy async + Alembic (`db/`). Nine tables:
 | `ticker_entities` | Entity graph for retrieval |
 | `daily_bars` | Settled OHLCV, raw + adjusted |
 | `bar_coverage` | Which ranges are known-complete |
+| `social_mention_snapshots` | Hourly Reddit mention-board samples, 90 days (Postgres, not Redis: losing the baseline silently would make every ticker look unusual) |
 
 Migrations run through `python -m app.db.migrate` (`make migrate`), **not**
 bare `alembic upgrade head` — it stamps a schema previously built by dev
@@ -419,6 +487,7 @@ React 18 + Vite + TypeScript + Tailwind. Routes:
 |---|---|---|
 | `/charting` | `ChartingPage` | Default. Lightweight Charts v5, technicals, options |
 | `/market` | `MarketPage` | Indices, breadth, movers, heatmap, sectors, events |
+| `/signals` | `SignalsPage` | Reddit mention board, preset screens, ticker crowd panel, research brief |
 | `/analyze` | `AnalyzePage` | Multi-agent run with live SSE agent tracker |
 | `/watchlist` | `WatchlistPage` | Saved tickers |
 | `/history` | `HistoryPage` | Past runs |
@@ -433,7 +502,7 @@ Conventions worth keeping:
 - `context/ScreenContext.tsx` tells the chat agent what is on screen. This is
   how the floating agent knows which ticker you are looking at.
 - Components under `components/ui/` are shadcn-style primitives; everything
-  else is grouped by feature (`analysis/`, `chart/`, `chat/`, `market/`).
+  else is grouped by feature (`analysis/`, `chart/`, `chat/`, `market/`, `signals/`).
 
 #### The client cache
 
@@ -537,6 +606,7 @@ most common setup mistake.
 | `ALPHA_VANTAGE_KEY` | Unused fallback |
 | `MARKETDATA_API_KEY` | Volatility falls back to the realized proxy |
 | `WANDB_API_KEY` | MLflow only |
+| `REDDIT_CLIENT_ID` / `_SECRET`, `X_BEARER_TOKEN` | Placeholders — shown as "not set up" on /signals |
 
 **Tuning knobs that change behaviour:**
 
@@ -550,6 +620,9 @@ RAG_TOP_K=8
 RAG_CHUNK_SIZE=512
 EMBEDDING_PROVIDER=local         # local (bge-small) or openai
 VOL_DATA_PROVIDER=realized_proxy # or marketdata (paid)
+STOCKTWITS_ENABLED=true          # best-effort; Cloudflare may refuse
+SOCIAL_SNAPSHOT_ENABLED=true     # hourly mention history
+RESEARCH_MAX_WEB_SEARCHES=3      # Tavily credits per research run
 MONITORING_BACKEND=mlflow        # mlflow|wandb|none
 ```
 
@@ -672,6 +745,13 @@ Things that have cost time before, in rough order of how much:
 10. **Times are anchored to America/New_York, not UTC.** After 8pm ET the UTC
     date has rolled over; a UTC anchor drops today's events off the calendar
     and, on a Sunday night, hands back the wrong week.
+11. **Missing from the ApeWisdom board is not zero mentions.** Only the top few
+    hundred are published; off-board tickers get `rank=None` and a caveat.
+12. **A smaller rank is more discussion.** A model read "rank 6, 24h ago 14"
+    as a fall; agent payloads now carry `rank_movement` in words.
+13. **Every number a model may quote must be in its evidence** — including
+    properties of a source, like the 24-hour window of a mention count, and the
+    date (without `TODAY` the research agent searched last year's quarter).
 
 ---
 

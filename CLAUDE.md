@@ -4,6 +4,8 @@
 
 Agent Invest is a multi-agent stock investment analysis platform. It uses LangGraph to orchestrate 6 specialist AI agents (Fundamental, Sentiment, Technical, Risk, Market Research, Options) that fan out in parallel, each calling domain-specific tools, producing structured outputs that are checked by guardrails and synthesized into a final report.
 
+A `/signals` page adds social sentiment (Reddit mentions via ApeWisdom, StockTwits self-tags), preset screens, and an on-demand research agent that writes cited briefs.
+
 This is a **portfolio project** for Senior AI Engineer roles — designed to demonstrate production-grade agent orchestration, RAG, evaluation, and deployment skills.
 
 ## Where the documentation is
@@ -36,22 +38,25 @@ backend/app/
   agents/           # 6 specialists + orchestrator + chat agent + guardrails
     orchestrator/   #   graph.py (the centrepiece), router.py, synthesiser.py
     chat/           #   bounded ReAct cycle behind the floating agent
-    base/           #   AgentState, AgentResult schemas, guardrails
+    research/       #   cited "why is this ticker in focus?" briefs (Signals page)
+    base/           #   AgentState, AgentResult schemas, guardrails, tool_loop
   services/         # the non-LLM half: market data, options, technicals,
-                    # signals, cache, bar store, drawdown, volatility
-  tools/            # 24 tools + MCP server + registry
+                    # signals, cache, bar store, drawdown, volatility,
+                    # social/ (ApeWisdom, StockTwits, placeholders),
+                    # social_signals, screens
+  tools/            # 27 tools + MCP server + registry
   models/           # ModelProvider abstraction (5 providers, fast/smart tiers)
   rag/              # ingestion + 3-stage retrieval over pgvector (built)
-  api/v1/           # 8 routers: analysis chat market watchlist
+  api/v1/           # 9 routers: analysis chat market signals watchlist
                     # preferences feedback upload health
-  db/               # SQLAlchemy models, Alembic, repositories (9 tables)
+  db/               # SQLAlchemy models, Alembic, repositories (10 tables)
   memory/           # Redis-backed session + chat history
   cache/            # Redis client
   observability/    # MLflow/W&B client, RAGAS evaluator, Prometheus metrics
   evaluation/       # Golden dataset + offline eval
 frontend/src/
-  pages/            # Charting, Market, Analyze, Watchlist, History, Settings
-  components/       # analysis/ chart/ chat/ market/ ui/
+  pages/            # Charting, Market, Signals, Analyze, Watchlist, History, Settings
+  components/       # analysis/ chart/ chat/ market/ signals/ ui/
   hooks/            # useSSE, useAnalysis, useChatStream, useQuotes
   context/          # ScreenContext — tells the chat agent what is on screen
   lib/              # api.ts (all URLs), types.ts, sse.ts
@@ -196,7 +201,7 @@ The `.env` file must be at the **project root** (not inside `backend/`). `config
 - `backend/app/agents/orchestrator/graph.py` — LangGraph StateGraph (the architectural centerpiece)
 - `backend/app/agents/base/state.py` — AgentState TypedDict shared across all nodes
 - `backend/app/agents/base/schemas.py` — AgentResult, FinalReport, QueryClassification
-- `backend/app/tools/registry.py` — Central tool registry (24 tools)
+- `backend/app/tools/registry.py` — Central tool registry (27 tools)
 - `backend/app/models/provider.py` — ModelProvider abstraction
 - `backend/app/config.py` — Settings with auto-discovery of .env file
 - `backend/app/agents/chat/graph.py` — the chat agent's bounded ReAct cycle
@@ -213,6 +218,10 @@ The `.env` file must be at the **project root** (not inside `backend/`). `config
 - `backend/app/rag/retrieval/pipeline.py` — 3-stage retrieval (decompose,
   dense+BM25+RRF, cross-encoder rerank)
 - `frontend/src/lib/api.ts` — the only place that knows backend URLs
+- `backend/app/services/social_signals.py` — crowd rules; attention is neutral
+  by design, only self-tags lean, same no-action-verb invariant as signals.py
+- `backend/app/agents/research/graph.py` — the research agent; citations are
+  source ids from `sources.py`, never model-written URLs
 
 ## Testing
 
@@ -224,7 +233,7 @@ make eval       # RAGAS evaluation against golden dataset
 
 ## Implementation Phases
 
-Sixteen phases are shipped. **[docs/roadmap.md](docs/roadmap.md) is the
+Seventeen phases are shipped. **[docs/roadmap.md](docs/roadmap.md) is the
 authoritative status** — every line there was checked against the code rather
 than carried forward from the previous plan. This table is the summary.
 
@@ -246,6 +255,7 @@ than carried forward from the previous plan. This table is the summary.
 | 14 | Top movers by cap tier + navigable events week | ✅ |
 | 15 | Client-side cache — instant tab switches, persisted toolbars | ✅ |
 | 16 | Trend analytics + reverse-DCF valuation panel | ✅ |
+| 17 | Signals — social trending, crowd signals, screens, research agent | ✅ |
 
 Phase 4 is the only wholly unstarted one. The open items inside shipped
 phases — a lazily-warmed bar store, live network calls in the unit suite, a
@@ -278,6 +288,11 @@ phases — a lazily-warmed bar store, live network calls in the unit suite, a
   Sunday night, returns the wrong week
 - **Yahoo and GICS disagree on four sector names**: normalise through
   `market_data.normalise_sector` before showing them in one list
+- **StockTwits returns a Cloudflare 403 to some clients**: curl is refused while
+  httpx often is not. It is best-effort by design — a 15-minute breaker turns a
+  refusal into a caveat. Don't retry it harder
+- **Off the ApeWisdom board is not zero mentions**: only the top few hundred
+  are published; a smaller rank number means *more* discussion
 - **Trust the code over any status list here**: a stale "stub for Phase 1"
   comment in `orchestrator/graph.py` kept RAG marked unbuilt for months while
   it was fully working. Fixed, but the lesson stands
