@@ -253,16 +253,16 @@ Grouped by the `category` the registry actually assigns, so these are greppable:
 |---|---|
 | `market_data` | `get_company_overview`, `get_price_history`, `get_earnings_calendar` |
 | `fundamental` | `get_income_statement`, `get_balance_sheet`, `get_cash_flow`, `compute_financial_ratios` |
-| `sentiment` | `get_analyst_ratings`, `get_options_chain` ¹ |
-| `options` | `get_options_snapshot`, `screen_option_strategies` |
+| `sentiment` | `get_analyst_ratings` |
+| `options` | `get_options_chain` ¹, `get_options_snapshot`, `screen_option_strategies` |
 | `technical` | `compute_rsi`, `compute_macd`, `compute_bollinger_bands`, `compute_moving_averages`, `compute_support_resistance` |
 | `risk` | `compute_historical_volatility`, `compute_var`, `compute_beta`, `compute_sharpe_sortino`, `compute_max_drawdown` |
 | `news` | `get_recent_news`, `get_sec_filings` |
 | `web` | `search_web` |
 
-¹ `get_options_chain` is registered under `sentiment`, which looks like a
-slip — put/call ratio is a sentiment read, but the tool returns a chain.
-Harmless today; see [roadmap.md](roadmap.md).
+¹ `get_options_chain` is consumed by the sentiment agent — put/call ratio and
+IV skew are a positioning read — but it returns chain data, so it is filed
+with the options tools. It was under `sentiment` until 2026-11-03.
 
 `registry.get_schema_for_llm()` emits OpenAI-shaped function schemas. It had no
 caller from the time it was written until Phase 13 wired tool calling — worth
