@@ -47,6 +47,9 @@ BLOCKED_EVERYWHERE = [
     "Now is the time to buy.",
     "It is guaranteed to return 20% this year.",
     "The stock is clearly undervalued.",
+    "The stock appears undervalued on these assumptions.",
+    "Shares look significantly overvalued.",
+    "MSFT seems to be undervalued.",
     "Shares will surge to $400 by December.",
     "This is an excellent buying opportunity.",
 ]
@@ -65,6 +68,33 @@ BLOCKED_IN_CHAT_ONLY = [
     "Cut your losses here.",
     "In your position, I'd hold off.",
     "Should you buy? Probably.",
+]
+
+
+# What the valuation explanation must remain free to say: what the price
+# implies and how the model's output moves, never what the stock *is*.
+PERMITTED_IN_VALUATION = [
+    "At $420 the market is pricing in roughly 11.8% annual FCF growth for ten years.",
+    "The model's base-case value sits below the current price.",
+    "The price implies 12% growth, above the 8% the base case assumes.",
+    "Value is most sensitive to the discount rate: a point lower moves it to $512.",
+    "The terminal value is 72% of the total, so the result leans on assumptions far out.",
+    "The bull case assumes 5 points more growth and a 1.5-point lower discount rate.",
+    "Analysts' mean target is shown for reference, not used in the calculation.",
+]
+
+# Verdicts — fine in no wording, but only the valuation surface enforces the
+# bare forms, because analyst reports compare multiples to peers.
+BLOCKED_IN_VALUATION = [
+    "On these numbers MSFT is undervalued.",
+    "The shares are overvalued relative to the base case.",
+    "The stock is cheap here.",
+    "That makes it look expensive.",
+    "At this price it is a bargain.",
+    "The stock is fairly valued.",
+    "Fair value is $480 per share.",
+    "The intrinsic value of $512 leaves a margin of safety.",
+    "The market has mispriced the growth.",
 ]
 
 
@@ -95,6 +125,25 @@ def test_chat_mode_is_a_superset_never_a_relaxation():
         strict = check_investment_advice(text, mode="strict")
         chat = check_investment_advice(text, mode="chat")
         assert len(chat) >= len(strict), f"chat mode was more permissive on: {text}"
+
+
+@pytest.mark.parametrize("text", PERMITTED + PERMITTED_IN_VALUATION)
+def test_valuation_mode_still_permits_describing_what_the_price_implies(text):
+    assert check_investment_advice(text, mode="valuation") == []
+
+
+@pytest.mark.parametrize("text", BLOCKED_IN_VALUATION)
+def test_valuation_mode_blocks_verdicts_in_any_wording(text):
+    assert check_investment_advice(text, mode="valuation"), f"valuation let through: {text}"
+
+
+def test_valuation_mode_is_a_superset_of_chat():
+    corpus = (PERMITTED + BLOCKED_EVERYWHERE + BLOCKED_IN_CHAT_ONLY
+              + PERMITTED_IN_VALUATION + BLOCKED_IN_VALUATION)
+    for text in corpus:
+        chat = check_investment_advice(text, mode="chat")
+        valuation = check_investment_advice(text, mode="valuation")
+        assert len(valuation) >= len(chat), f"valuation was more permissive on: {text}"
 
 
 def test_strict_is_the_default_so_existing_callers_are_untouched():
