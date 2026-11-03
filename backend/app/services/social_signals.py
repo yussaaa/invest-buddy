@@ -40,7 +40,7 @@ SOCIAL_DISCLAIMER = (
 # ── Attention (Reddit via ApeWisdom) ───────────────────────────────────────
 SPIKE_Z = 2.0                 # robust z vs the stored daily history
 SURGE_MULTIPLE = 3.0          # vs 24h ago, while history is too short for z
-MIN_MENTIONS = 25             # below this a "3x" is 4 → 12, i.e. nothing
+MIN_MENTIONS = 25             # below this a "3x" or a 300-place climb is a few posts
 RANK_CLIMB_PLACES = 15
 TOP_RANK = 20
 FADE_MULTIPLE = 0.5
@@ -125,8 +125,11 @@ def attention_signals(symbol: str, reading: Any) -> list[Signal]:
             invalidation="Ends when mentions drop below three times the prior day's count.",
         ))
 
+    # Deep in the board a handful of posts moves a ticker hundreds of places,
+    # so a climb only counts once there is real volume behind it.
     newly_top = rank <= TOP_RANK and (rank_before is None or rank_before > TOP_RANK)
-    if (rank_change is not None and rank_change >= RANK_CLIMB_PLACES) or newly_top:
+    climbed = rank_change is not None and rank_change >= RANK_CLIMB_PLACES
+    if (climbed or newly_top) and mentions >= MIN_MENTIONS:
         places = rank_change if rank_change is not None else None
         out.append(Signal(
             id="rank_climb", label="Climbing the board", category="social",

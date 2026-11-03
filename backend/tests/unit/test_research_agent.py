@@ -52,10 +52,10 @@ Palantir is in focus after a large Army contract and an earnings beat [S2].
 - Shares climbed after an earnings beat, with revenue up 39% [S3]
 
 ## What the crowd shows
-PLTR moved from rank 14 to rank 6 on the Reddit mention board. StockTwits was unavailable.
+PLTR moved from rank 14 to rank 6 on the Reddit mention board in 24 hours. StockTwits was unavailable.
 
 ## What would change the picture
-- Details of the contract scope changing
+- **Contract scope**: details of the contract scope changing
 
 ## What isn't known
 - Whether the attention persists"""
@@ -121,6 +121,7 @@ async def test_a_cited_brief_survives_verify(patched, monkeypatch):
     assert not result["replaced"] and not brief["guarded"]
     assert [d["source_ids"] for d in brief["drivers"]] == [["S2"], ["S3"]]
     assert "[S" not in brief["drivers"][0]["text"]
+    assert brief["what_would_change"] == ["Contract scope: details of the contract scope changing"]
     by_id = {s["id"]: s for s in brief["sources"]}
     assert by_id["S2"]["url"] == "https://reuters.example/pltr-army"
     assert [e for e, _ in events][:3] == ["start", "context", "sources"]

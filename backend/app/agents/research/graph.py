@@ -155,7 +155,7 @@ def context_block(run: Run) -> str:
     crowd = {
         "reddit": {k: (snap.get("reddit") or {}).get(k) for k in (
             "available", "caveat", "rank", "rank_24h_ago", "mentions", "mentions_24h_ago",
-            "mention_change_pct", "attention_z")},
+            "mention_change_pct", "attention_z")} | {"window_hours": 24},
         "stocktwits": {k: (snap.get("stocktwits") or {}).get(k) for k in (
             "available", "caveat", "bullish", "bearish", "bull_pct")},
         "conditions": _conditions(snap.get("social_signal_set")),
@@ -308,11 +308,20 @@ def bullets(text: str) -> list[str]:
 
 
 def _strip_markers(text: str) -> str:
-    return re.sub(r"\s*\[S\d{1,2}\]", "", text).strip()
+    """Plain text for the structured fields: no citation markers, no bold.
+
+    `markdown` keeps both; the parsed fields are rendered as text, where a
+    literal `**` reads as a bug.
+    """
+    text = re.sub(r"\s*\[S\d{1,2}\]", "", text)
+    return text.replace("**", "").strip()
 
 
 def grounding_evidence(run: Run) -> dict:
     return {
+        # Mention counts are rolling 24-hour windows; "in 24 hours" is a
+        # property of the source, not a reading, but it is still a number.
+        "windows": {"reddit_window_hours": 24},
         "snapshot": run.snapshot,
         "quote": run.quote,
         "payloads": run.payloads,

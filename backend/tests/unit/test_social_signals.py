@@ -74,15 +74,18 @@ def test_the_surge_fallback_steps_aside_once_history_exists():
     assert "mention_surge_24h" not in ids(result) and "mention_spike" not in ids(result)
 
 
-@pytest.mark.parametrize("rank, before, change, fires", [
-    (40, 55, 15, True),
-    (40, 54, 14, False),
-    (20, 21, 1, True),        # new to the top 20
-    (21, 25, 4, False),
-    (18, None, None, True),   # new to the board, straight into the top 20
+@pytest.mark.parametrize("rank, before, change, mentions, fires", [
+    (40, 55, 15, 40, True),
+    (40, 54, 14, 40, False),
+    (20, 21, 1, 40, True),          # new to the top 20
+    (21, 25, 4, 40, False),
+    (18, None, None, 40, True),     # new to the board, straight into the top 20
+    (31, 418, 387, 11, False),      # a few posts deep in the board is not a climb
+    (31, 418, 387, 25, True),
 ])
-def test_rank_climb(rank, before, change, fires):
-    result = derive(reddit=reddit(rank=rank, rank_24h_ago=before, rank_change=change))
+def test_rank_climb(rank, before, change, mentions, fires):
+    result = derive(reddit=reddit(rank=rank, rank_24h_ago=before, rank_change=change,
+                                  mentions=mentions, mentions_24h_ago=mentions))
     assert ("rank_climb" in ids(result)) is fires
 
 
