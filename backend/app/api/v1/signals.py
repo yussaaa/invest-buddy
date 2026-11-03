@@ -8,9 +8,20 @@ source never blanks the page.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+import json
+from typing import AsyncIterator
 
+import structlog
+from fastapi import APIRouter, HTTPException, Query, status
+from sse_starlette.sse import EventSourceResponse
+
+from app.agents.research.graph import run_research, stream_research
+from app.agents.research.schemas import ResearchRequest
+from app.config import get_settings
 from app.services import screens, signals_page
+from app.services.llm_guard import has_llm_credentials, missing_credentials_reason
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -55,3 +66,42 @@ async def get_ticker(symbol: str = Query(..., description="Ticker, e.g. PLTR")) 
 async def explain_ticker(symbol: str = Query(..., description="Ticker, e.g. PLTR")) -> dict:
     """A guarded plain-English read of the crowd snapshot."""
     return await signals_page.explain_ticker(symbol)
+
+
+def _require_research() -> None:
+    settings = get_settings()
+    if not settings.research_enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="The research agent is disabled (RESEARCH_ENABLED=false).")
+    if not has_llm_credentials(settings):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=missing_credentials_reason(settings))
+
+
+@router.post("/research/stream")
+async def research_stream(request: ResearchRequest):
+    """Why is this ticker in focus — streamed.
+
+    Events: start, context, sources, tool_call, tool_result, token, flag,
+    done, error. `done.replaced` means the streamed draft failed review and
+    `done.brief` is the templated replacement.
+    """
+    _require_research()
+
+    async def events() -> AsyncIterator[dict]:
+        try:
+            async for event, payload in stream_research(request.ticker, request.question):
+                yield {"event": event, "data": json.dumps(payload, default=str)}
+        except Exception as exc:
+            log.error("research_stream_endpoint_failed", error=str(exc), exc_info=True)
+            yield {"event": "error",
+                   "data": json.dumps({"message": "The research run could not complete."})}
+
+    return EventSourceResponse(events())
+
+
+@router.post("/research")
+async def research(request: ResearchRequest) -> dict:
+    """The same run as one JSON response."""
+    _require_research()
+    return await run_research(request.ticker, request.question)

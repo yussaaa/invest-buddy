@@ -138,3 +138,31 @@ def test_a_model_reply_with_advice_or_invented_numbers_is_refused():
     b = signals_page.brief({"symbol": "PLTR", "reddit": {"rank": 4, "mentions": 120}})
     assert signals_page.review("Mentions are up; time to buy PLTR.", b)
     assert signals_page.review("PLTR has 4,512 mentions today.", b)
+
+
+async def test_research_is_refused_when_disabled(client, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "research_enabled", False)
+    response = await client.post("/signals/research", json={"ticker": "PLTR"})
+    assert response.status_code == 503 and "RESEARCH_ENABLED" in response.json()["detail"]
+
+
+async def test_research_stream_frames_events(client, monkeypatch):
+    async def fake_stream(ticker, question=None):
+        yield "start", {"ticker": ticker, "cached": False}
+        yield "token", {"text": "hi"}
+        yield "done", {"brief": {"ticker": ticker}, "replaced": False}
+
+    monkeypatch.setattr(signals_api, "stream_research", fake_stream)
+    monkeypatch.setattr(signals_api, "has_llm_credentials", lambda settings: True)
+    response = await client.post("/signals/research/stream", json={"ticker": "PLTR"})
+    body = response.text
+    assert response.status_code == 200
+    assert body.index("event: start") < body.index("event: token") < body.index("event: done")
+
+
+async def test_research_validates_the_ticker(client, monkeypatch):
+    monkeypatch.setattr(signals_api, "has_llm_credentials", lambda settings: True)
+    response = await client.post("/signals/research", json={"ticker": ""})
+    assert response.status_code == 422
