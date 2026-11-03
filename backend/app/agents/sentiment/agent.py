@@ -107,6 +107,8 @@ class SentimentAnalysisAgent:
                 "query": f"{ticker} stock news sentiment analyst outlook site:finance.yahoo.com OR site:seekingalpha.com OR site:reuters.com",
                 "max_results": 5,
             }),
+            # Retail discussion — the half of rule 5 nothing used to supply.
+            self._call_tool("get_social_sentiment", {"ticker": ticker}),
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -132,6 +134,10 @@ class SentimentAnalysisAgent:
             "get_analyst_ratings": "Analyst Ratings and Price Targets",
             "get_options_chain": "Options Chain Data (Put/Call Ratio, IV)",
             "search_web": "Web Search Results",
+            "get_social_sentiment": (
+                "Retail / Social Sentiment (Reddit mentions via ApeWisdom, "
+                "StockTwits self-tags, short interest)"
+            ),
         }
         for key, label in section_map.items():
             data = tool_data.get(key)
@@ -204,12 +210,17 @@ class SentimentAnalysisAgent:
             "get_analyst_ratings": ("market_data", f"{ticker} — Analyst Ratings & Price Targets"),
             "get_options_chain": ("market_data", f"{ticker} — Options Chain (Put/Call, IV)"),
             "search_web": ("web", f"{ticker} — Web Search Intelligence"),
+            "get_social_sentiment": ("social", f"{ticker} — Reddit mentions & StockTwits tags"),
+        }
+        citation_urls = {
+            "get_social_sentiment": f"https://apewisdom.io/stocks/{ticker}/",
         }
         for key, (source_type, title) in citation_config.items():
             if tool_data.get(key) is not None:
                 citations.append(Citation(
                     source_type=source_type,  # type: ignore[arg-type]
                     title=title,
+                    url=citation_urls.get(key),
                     ticker=ticker,
                     excerpt=f"Data retrieved via {key} tool",
                 ))

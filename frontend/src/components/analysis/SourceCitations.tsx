@@ -13,6 +13,7 @@ const SOURCE_TYPE_COLORS: Record<string, string> = {
   analyst_report: 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/20',
   market_data: 'bg-green-500/20 text-green-300 hover:bg-green-500/20',
   social_media: 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/20',
+  social: 'bg-pink-500/20 text-pink-300 hover:bg-pink-500/20',
 }
 
 function sourceTypeColor(type: string): string {

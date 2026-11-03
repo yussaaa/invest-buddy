@@ -161,3 +161,45 @@ def test_options_chain_is_filed_with_the_options_tools():
     categories = {name: registry._tools[name].category
                   for name in ("get_options_chain", "get_options_snapshot")}
     assert categories == {"get_options_chain": "options", "get_options_snapshot": "options"}
+
+
+# ── Social tools ────────────────────────────────────────────────────────────
+
+
+def test_the_social_tools_are_registered_with_valid_schemas():
+    registry = ToolRegistry.get()
+    schemas = {s["function"]["name"]: s["function"]
+               for s in registry.get_schema_for_llm(
+                   ["get_social_sentiment", "get_trending_tickers", "get_stock_screen"])}
+
+    assert set(schemas) == {"get_social_sentiment", "get_trending_tickers", "get_stock_screen"}
+    assert schemas["get_social_sentiment"]["parameters"]["required"] == ["ticker"]
+    presets = schemas["get_stock_screen"]["parameters"]["properties"]["preset"]["enum"]
+    assert "most_actives" in presets and "most_shorted_stocks" in presets
+
+
+async def test_get_social_sentiment_condenses_the_snapshot(monkeypatch):
+    from app.services import signals_page
+    from app.tools.social import social_tool
+
+    async def snapshot(symbol):
+        return {
+            "symbol": "PLTR", "disclaimer": "d",
+            "reddit": {"available": True, "rank": 4, "mentions": 120, "history": [1, 2, 3],
+                       "url": "https://x", "caveat": None},
+            "stocktwits": {"available": False, "caveat": "blocked"},
+            "positioning": {"short_percent_float": 2.6},
+            "social_signal_set": {"signals": [{"id": "rank_climb", "label": "Climbing",
+                                               "direction": "neutral", "rationale": "r",
+                                               "evidence": {"rank": 4}}],
+                                  "bias_phrase": "Inconclusive", "coverage": {}},
+            "technical_signal_set": {"signals": ["large"]},
+        }
+
+    monkeypatch.setattr(signals_page, "get_ticker_snapshot", snapshot)
+    result = await social_tool.get_social_sentiment("pltr")
+
+    assert result["reddit"]["rank"] == 4 and "history" not in result["reddit"]
+    assert "technical_signal_set" not in result
+    assert result["caveats"] == ["blocked"]
+    assert result["conditions"][0]["id"] == "rank_climb"
