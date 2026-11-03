@@ -93,7 +93,7 @@ async def prepare_context_node(state: ChatState) -> dict:
         technicals_service.get_technicals(ticker),
         market_data.get_quotes([ticker]),
         market_data.get_profile(ticker),
-        market_data.get_events(days=14, extra_symbols=ticker),
+        market_data.get_events(days=14, extra_symbols=[ticker]),
         return_exceptions=True,
     )
 

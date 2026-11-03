@@ -738,3 +738,20 @@ async def test_tokens_buffered_by_a_discarded_speculation_are_never_shown(patche
     assert "early" not in tokens
     assert tokens.strip() == "Final."
     assert provider.cancelled_streams == 1
+
+
+@pytest.mark.asyncio
+async def test_the_on_screen_ticker_joins_the_earnings_universe_as_one_symbol(patched, monkeypatch):
+    """A bare string iterates into letters, so AAPL became ['A','A','P','L']."""
+    seen: list = []
+
+    async def fake_events(days=7, extra_symbols=None):
+        seen.append(extra_symbols)
+        return {"earnings": [], "economic": {"events": [], "available": False}}
+
+    monkeypatch.setattr(chat_graph.market_data, "get_events", fake_events)
+    use_provider(monkeypatch, FakeProvider([reply("ENOUGH"), reply("ok")]))
+
+    await run()
+
+    assert seen == [["AAPL"]]
