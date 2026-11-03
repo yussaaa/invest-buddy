@@ -159,6 +159,9 @@ class UserPreferencesRow(Base):
     preferred_sectors: Mapped[list | None] = mapped_column(ARRAY(String))
     preferred_metrics: Mapped[list | None] = mapped_column(ARRAY(String))
     recent_tickers: Mapped[list | None] = mapped_column(ARRAY(String))
+    # Model provider chosen on the Settings page; empty or NULL means the
+    # server default (MODEL_PROVIDER). Credentials still come from .env.
+    llm_provider: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -178,6 +181,7 @@ class UserPreferencesRow(Base):
             "preferred_sectors": self.preferred_sectors or [],
             "preferred_metrics": self.preferred_metrics or [],
             "recent_tickers": self.recent_tickers or [],
+            "llm_provider": self.llm_provider or None,
         }
 
 

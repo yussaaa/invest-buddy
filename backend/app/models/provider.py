@@ -21,6 +21,7 @@ level — they are the part worth unit-testing, and doing so needs no API key.
 from __future__ import annotations
 
 import json
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -277,12 +278,52 @@ class VLLMProvider(_LocalProvider):
 # ── Anthropic provider ──────────────────────────────────────────────────────
 
 
+# Claude models up to the 4.6 generation accept sampling parameters and forced
+# tool_choice. Newer ones do not: Opus 4.7+, the 5.x line and Fable return a 400
+# for `temperature`, and the 5.5 generation also for tool_choice `any`. They also
+# think on every call, and take `output_config.effort` as the depth control.
+# The *old* models are matched by name, so a model released next month falls on
+# the side that sends nothing it might reject.
+_LEGACY_CLAUDE = re.compile(
+    r"^claude-(?:3|(?:opus|sonnet|haiku)-4(?:-[0-6])?(?:-\d{8})?$)"
+)
+
+
+THINKING_HEADROOM_TOKENS = 8192
+
+
+def is_legacy_claude(model: str) -> bool:
+    """True for models that take temperature and forced tool_choice."""
+    return bool(_LEGACY_CLAUDE.match(model))
+
+
 class AnthropicProvider(ModelProvider):
     """Calls api.anthropic.com — requires ANTHROPIC_API_KEY."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, effort: str = ""):
         import anthropic
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._effort = effort
+
+    def _request(self, model: str, system: str, messages: list, temperature: float,
+                 max_tokens: int) -> dict[str, Any]:
+        """The arguments every request shares, shaped for the model's generation."""
+        kwargs: dict[str, Any] = dict(
+            model=model, system=system, messages=messages, max_tokens=max_tokens,
+        )
+        if is_legacy_claude(model):
+            kwargs["temperature"] = temperature
+        else:
+            # Thinking draws on the same budget as the reply. Every caller
+            # sized its cap for the reply alone, so on these models the cap
+            # was being spent on thinking: a 60-token probe came back empty,
+            # and the synthesiser's 2048 cut its JSON off mid-string. The cap
+            # is a ceiling, not a spend, so the headroom costs nothing unless
+            # the model actually thinks that long.
+            kwargs["max_tokens"] = max_tokens + THINKING_HEADROOM_TOKENS
+            if self._effort:
+                kwargs["output_config"] = {"effort": self._effort}
+        return kwargs
 
     async def complete(
         self,
@@ -306,17 +347,11 @@ class AnthropicProvider(ModelProvider):
         if response_format and response_format.get("type") == "json_object":
             system += "\n\nYou must respond with valid JSON only."
 
-        kwargs: dict[str, Any] = dict(
-            model=model,
-            system=system,
-            messages=user_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        kwargs = self._request(model, system, user_messages, temperature, max_tokens)
         anthropic_tools = to_anthropic_tools(tools)
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
-            choice = to_anthropic_tool_choice(tool_choice)
+            choice = to_anthropic_tool_choice(tool_choice, model)
             if choice:
                 kwargs["tool_choice"] = choice
 
@@ -324,6 +359,8 @@ class AnthropicProvider(ModelProvider):
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         text, calls = parse_anthropic_content(resp.content)
+        if response_format and response_format.get("type") == "json_object":
+            text = extract_json_text(text)
         return LLMResponse(
             content=text,
             model=resp.model,
@@ -348,11 +385,7 @@ class AnthropicProvider(ModelProvider):
         )
 
         async with self._client.messages.stream(
-            model=model,
-            system=system,
-            messages=user_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
+            **self._request(model, system, user_messages, temperature, max_tokens)
         ) as s:
             async for text in s.text_stream:
                 yield text
@@ -429,15 +462,18 @@ def to_anthropic_tools(tools: Optional[list[dict]]) -> list[dict]:
     return out
 
 
-def to_anthropic_tool_choice(tool_choice: Optional[str]) -> Optional[dict]:
+def to_anthropic_tool_choice(tool_choice: Optional[str], model: Optional[str] = None) -> Optional[dict]:
     """OpenAI's tool_choice string → Anthropic's object form.
 
     "none" returns None; the caller drops `tools` entirely for that case, which
-    is how Anthropic expresses it.
+    is how Anthropic expresses it. "required" becomes `auto` on models that
+    reject forced tool use; the prompt has to ask for the call instead.
     """
     if tool_choice in (None, "auto"):
         return {"type": "auto"}
     if tool_choice == "required":
+        if model and not is_legacy_claude(model):
+            return {"type": "auto"}
         return {"type": "any"}
     if tool_choice == "none":
         return None
@@ -500,6 +536,30 @@ def _as_dict(arguments: Any) -> dict:
     except (json.JSONDecodeError, TypeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+_FENCE = re.compile(r"^```[a-zA-Z]*\s*\n?(.*?)\n?```\s*$", re.S)
+
+
+def extract_json_text(text: str) -> str:
+    """The JSON object in a reply that was asked for JSON only.
+
+    OpenAI's json_object mode guarantees bare JSON; Anthropic has no such mode
+    for schema-less output, only the instruction in the system prompt. Claude
+    often honours it inside a ```json fence, or after a sentence of preamble,
+    and every caller does a plain `json.loads` — which made every specialist
+    and the synthesiser fall back on this provider. Normalising here keeps the
+    contract the callers were written against. Text with no object in it is
+    returned unchanged, so the caller's parse error still says what came back.
+    """
+    stripped = text.strip()
+    fenced = _FENCE.match(stripped)
+    if fenced:
+        stripped = fenced.group(1).strip()
+    if stripped.startswith(("{", "[")):
+        return stripped
+    start, end = stripped.find("{"), stripped.rfind("}")
+    return stripped[start:end + 1] if 0 <= start < end else text
 
 
 def parse_anthropic_content(content: Any) -> tuple[str, list[ToolCall]]:

@@ -12,6 +12,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://agent_invest:password@postgres:5432/agent_invest
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://ollama:11434
+      # .env's localhost:5050 is right for a native backend; inside the
+      # container it is the container itself, and every run's metric logging
+      # retried against it for ~4 minutes before the result was saved.
+      MLFLOW_TRACKING_URI: http://mlflow:5050
     depends_on:
       postgres:
         condition: service_healthy

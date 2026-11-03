@@ -236,7 +236,7 @@ async def explain_options(symbol: str, strategy: str = "all") -> dict:
 
     try:
         return await cached_async(
-            f"options_explain:{symbol}:{strategy}",
+            f"options_explain:{settings.active_provider}:{symbol}:{strategy}",
             EXPLANATION_TTL,
             fetch,
             should_cache=lambda r: bool(r.get("explanation")),

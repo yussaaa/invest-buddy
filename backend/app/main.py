@@ -10,6 +10,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 
 from app.config import get_settings
+from app.models.selection import ProviderSelectionMiddleware
 from app.api.v1.router import api_router
 
 log = structlog.get_logger(__name__)
@@ -104,6 +105,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # The user's model provider, from the X-LLM-Provider header the frontend
+    # sends on every call. Added after CORS so it sits inside it.
+    application.add_middleware(ProviderSelectionMiddleware)
 
     # Prometheus metrics endpoint
     @application.get("/metrics")
