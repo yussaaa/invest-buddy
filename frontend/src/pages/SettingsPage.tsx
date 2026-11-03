@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Save, Loader2, CheckCircle, AlertCircle, Cpu, RefreshCw } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -33,7 +33,7 @@ function RadioGroup<T extends string>({
   value,
   onChange,
 }: {
-  label: string
+  label?: string
   name: string
   options: { value: T; label: string; description?: string; disabled?: boolean; title?: string }[]
   value: T
@@ -41,7 +41,7 @@ function RadioGroup<T extends string>({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <Label className="text-sm font-semibold">{label}</Label>
+      {label && <Label className="text-sm font-semibold">{label}</Label>}
       <div className="flex flex-wrap gap-2">
         {options.map(opt => (
           <label
@@ -72,6 +72,15 @@ function RadioGroup<T extends string>({
           </label>
         ))}
       </div>
+    </div>
+  )
+}
+
+function SectionHeader({ title, description }: { title: string; description: ReactNode }) {
+  return (
+    <div>
+      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
     </div>
   )
 }
@@ -183,150 +192,161 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Customize how analyses are tailored to your profile.
+          Your investment profile, and the models that run your analyses.
         </p>
       </div>
 
-      {/* Preferences form */}
-      <Card>
-        <CardContent className="pt-6 flex flex-col gap-7">
+      {/* Investment profile */}
+      <section className="flex flex-col gap-3">
+        <SectionHeader
+          title="Investment Profile"
+          description="How analyses are weighted to your goals."
+        />
+        <Card>
+          <CardContent className="pt-6 flex flex-col gap-7">
 
-          {/* Risk Tolerance */}
-          <RadioGroup
-            label="Risk Tolerance"
-            name="risk_tolerance"
-            value={prefs.risk_tolerance}
-            onChange={v => setPrefs(p => ({ ...p, risk_tolerance: v }))}
-            options={[
-              { value: 'conservative', label: 'Conservative', description: 'Capital preservation' },
-              { value: 'moderate', label: 'Moderate', description: 'Balanced growth' },
-              { value: 'aggressive', label: 'Aggressive', description: 'Maximum growth' },
-            ]}
-          />
+            {/* Risk Tolerance */}
+            <RadioGroup
+              label="Risk Tolerance"
+              name="risk_tolerance"
+              value={prefs.risk_tolerance}
+              onChange={v => setPrefs(p => ({ ...p, risk_tolerance: v }))}
+              options={[
+                { value: 'conservative', label: 'Conservative', description: 'Capital preservation' },
+                { value: 'moderate', label: 'Moderate', description: 'Balanced growth' },
+                { value: 'aggressive', label: 'Aggressive', description: 'Maximum growth' },
+              ]}
+            />
 
-          <Separator />
+            <Separator />
 
-          {/* Investment Horizon */}
-          <RadioGroup
-            label="Investment Horizon"
-            name="investment_horizon"
-            value={prefs.investment_horizon}
-            onChange={v => setPrefs(p => ({ ...p, investment_horizon: v }))}
-            options={[
-              { value: 'short', label: 'Short-term', description: '< 1 year' },
-              { value: 'medium', label: 'Medium-term', description: '1 - 5 years' },
-              { value: 'long', label: 'Long-term', description: '5+ years' },
-            ]}
-          />
+            {/* Investment Horizon */}
+            <RadioGroup
+              label="Investment Horizon"
+              name="investment_horizon"
+              value={prefs.investment_horizon}
+              onChange={v => setPrefs(p => ({ ...p, investment_horizon: v }))}
+              options={[
+                { value: 'short', label: 'Short-term', description: '< 1 year' },
+                { value: 'medium', label: 'Medium-term', description: '1 - 5 years' },
+                { value: 'long', label: 'Long-term', description: '5+ years' },
+              ]}
+            />
 
-          <Separator />
+            <Separator />
 
-          {/* Analysis Depth */}
-          <RadioGroup
-            label="Analysis Depth"
-            name="analysis_depth"
-            value={prefs.analysis_depth}
-            onChange={v => setPrefs(p => ({ ...p, analysis_depth: v }))}
-            options={[
-              { value: 'quick', label: 'Quick', description: '~15s - fewer agents' },
-              { value: 'standard', label: 'Standard', description: '~45s - all agents' },
-              { value: 'deep', label: 'Deep', description: '~90s - deep research' },
-            ]}
-          />
+            {/* Analysis Depth */}
+            <RadioGroup
+              label="Analysis Depth"
+              name="analysis_depth"
+              value={prefs.analysis_depth}
+              onChange={v => setPrefs(p => ({ ...p, analysis_depth: v }))}
+              options={[
+                { value: 'quick', label: 'Quick', description: '~15s - fewer agents' },
+                { value: 'standard', label: 'Standard', description: '~45s - all agents' },
+                { value: 'deep', label: 'Deep', description: '~90s - deep research' },
+              ]}
+            />
 
-          <Separator />
+            <Separator />
 
-          {/* Model provider */}
-          {providers && (
-            <>
-              <div className="flex flex-col gap-2">
-                <RadioGroup
-                  label="Model Provider"
-                  name="llm_provider"
-                  value={selectedProvider}
-                  onChange={v => setPrefs(p => ({ ...p, llm_provider: v }))}
-                  options={providers.providers.map(p => ({
-                    value: p.id,
-                    label: p.id === providers.default ? `${p.label} · default` : p.label,
-                    description: p.available ? connectionLabel(p.id, p.smart_model) : 'Not configured',
-                    disabled: !p.available,
-                    title: (() => {
-                      const t = tests[p.id]
-                      return p.reason ?? (t && t !== 'running' && !t.ok ? t.error ?? undefined : undefined)
-                    })(),
-                  }))}
-                />
-                {selectedInfo && (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Cpu size={13} />
-                      Fast tier <span className="font-mono text-foreground/80">{selectedInfo.fast_model}</span>
-                      · smart tier <span className="font-mono text-foreground/80">{selectedInfo.smart_model}</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => testConnections(providers, true)}
-                      className="flex items-center gap-1 hover:text-foreground transition-colors"
-                    >
-                      <RefreshCw size={12} /> Test connections
-                    </button>
-                  </div>
-                )}
-                {selectedFailure && (
-                  <div className="flex items-start gap-2 text-xs text-red-400">
-                    <AlertCircle size={14} className="mt-px shrink-0" />
-                    <span>
-                      This provider's last test call failed, so analyses and chat will fail on it
-                      too: <span className="font-mono">{selectedFailure}</span>
-                    </span>
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Used for analyses, chat and explanations. Credentials come from the
-                  server's <span className="font-mono">.env</span>; providers without a key are disabled.
+            {/* Preferred Sectors */}
+            <div className="flex flex-col gap-3">
+              <div>
+                <Label className="text-sm font-semibold">Preferred Sectors</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Select sectors to weight in analysis (leave blank for all).
                 </p>
               </div>
-
-              <Separator />
-            </>
-          )}
-
-          {/* Preferred Sectors */}
-          <div className="flex flex-col gap-3">
-            <div>
-              <Label className="text-sm font-semibold">Preferred Sectors</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Select sectors to weight in analysis (leave blank for all).
-              </p>
+              <div className="flex flex-wrap gap-2">
+                {SECTORS.map(sector => {
+                  const selected = prefs.preferred_sectors.includes(sector)
+                  return (
+                    <button
+                      key={sector}
+                      type="button"
+                      onClick={() => toggleSector(sector)}
+                      className={cn(
+                        'px-3 py-2 rounded-lg border text-sm font-medium transition-colors',
+                        selected
+                          ? 'border-primary/70 bg-primary/15 text-primary'
+                          : 'border-border bg-card text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'
+                      )}
+                    >
+                      {sector}
+                    </button>
+                  )
+                })}
+              </div>
+              {prefs.preferred_sectors.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {prefs.preferred_sectors.length} sector{prefs.preferred_sectors.length !== 1 ? 's' : ''} selected
+                </p>
+              )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {SECTORS.map(sector => {
-                const selected = prefs.preferred_sectors.includes(sector)
-                return (
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Model provider */}
+      {providers && (
+        <section className="flex flex-col gap-3">
+          <SectionHeader
+            title="Model Provider"
+            description={
+              <>
+                The language models behind analyses, chat and explanations. Credentials come
+                from the server's <span className="font-mono">.env</span>; providers without a
+                key are disabled.
+              </>
+            }
+          />
+          <Card>
+            <CardContent className="pt-6 flex flex-col gap-2">
+              <RadioGroup
+                name="llm_provider"
+                value={selectedProvider}
+                onChange={v => setPrefs(p => ({ ...p, llm_provider: v }))}
+                options={providers.providers.map(p => ({
+                  value: p.id,
+                  label: p.id === providers.default ? `${p.label} · default` : p.label,
+                  description: p.available ? connectionLabel(p.id, p.smart_model) : 'Not configured',
+                  disabled: !p.available,
+                  title: (() => {
+                    const t = tests[p.id]
+                    return p.reason ?? (t && t !== 'running' && !t.ok ? t.error ?? undefined : undefined)
+                  })(),
+                }))}
+              />
+              {selectedInfo && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <Cpu size={13} />
+                    Fast tier <span className="font-mono text-foreground/80">{selectedInfo.fast_model}</span>
+                    · smart tier <span className="font-mono text-foreground/80">{selectedInfo.smart_model}</span>
+                  </span>
                   <button
-                    key={sector}
                     type="button"
-                    onClick={() => toggleSector(sector)}
-                    className={cn(
-                      'px-3 py-2 rounded-lg border text-sm font-medium transition-colors',
-                      selected
-                        ? 'border-primary/70 bg-primary/15 text-primary'
-                        : 'border-border bg-card text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground'
-                    )}
+                    onClick={() => testConnections(providers, true)}
+                    className="flex items-center gap-1 hover:text-foreground transition-colors"
                   >
-                    {sector}
+                    <RefreshCw size={12} /> Test connections
                   </button>
-                )
-              })}
-            </div>
-            {prefs.preferred_sectors.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {prefs.preferred_sectors.length} sector{prefs.preferred_sectors.length !== 1 ? 's' : ''} selected
-              </p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+                </div>
+              )}
+              {selectedFailure && (
+                <div className="flex items-start gap-2 text-xs text-red-400">
+                  <AlertCircle size={14} className="mt-px shrink-0" />
+                  <span>
+                    This provider's last test call failed, so analyses and chat will fail on it
+                    too: <span className="font-mono">{selectedFailure}</span>
+                  </span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
       {/* Save button + feedback */}
       <div className="flex items-center gap-4">
@@ -337,14 +357,14 @@ export default function SettingsPage() {
           {saveState === 'saving' ? (
             <><Loader2 size={15} className="animate-spin" /> Saving...</>
           ) : (
-            <><Save size={15} /> Save Preferences</>
+            <><Save size={15} /> Save Settings</>
           )}
         </Button>
 
         {saveState === 'saved' && (
           <div className="flex items-center gap-2 text-green-400 text-sm">
             <CheckCircle size={16} />
-            Preferences saved
+            Settings saved
           </div>
         )}
 
