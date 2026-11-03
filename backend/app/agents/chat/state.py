@@ -41,6 +41,8 @@ class ChatState(TypedDict, total=False):
     messages: Annotated[list[dict], _append_list]
     tool_iterations: int
     tool_records: Annotated[list[dict], _append_list]
+    # What each tool returned, for the grounding check in verify.
+    tool_payloads: Annotated[list[dict], _append_list]
 
     # ── Output ──────────────────────────────────────────────────────────────
     answer: str
@@ -81,6 +83,7 @@ def new_state(
         messages=[],
         tool_iterations=0,
         tool_records=[],
+        tool_payloads=[],
         answer="",
         signals_cited=[],
         flags=[],

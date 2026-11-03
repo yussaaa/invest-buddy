@@ -755,3 +755,39 @@ async def test_the_on_screen_ticker_joins_the_earnings_universe_as_one_symbol(pa
     await run()
 
     assert seen == [["AAPL"]]
+
+
+@pytest.mark.asyncio
+async def test_a_figure_quoted_from_a_tool_result_is_grounded(patched, monkeypatch):
+    """Records carry no numbers, so verify used to read tool figures as invented."""
+    async def execute(name, arguments):
+        patched.executed.append((name, arguments))
+        return ToolResult(success=True, latency_ms=3,
+                          data={"stocktwits": {"bull_pct": 72.4, "tagged": 29}})
+
+    monkeypatch.setattr(patched, "execute", execute)
+    use_provider(monkeypatch, FakeProvider([
+        reply(tool_calls=[ToolCall(id="c1", name="get_social_sentiment",
+                                   arguments={"ticker": "AAPL"})]),
+        reply("ENOUGH"),
+        reply("Of 29 tagged messages, 72.4% are tagged bullish."),
+    ]))
+
+    state = await run()
+
+    assert not state["blocked"], state["flags"]
+    assert state["tool_payloads"][0]["data"]["stocktwits"]["bull_pct"] == 72.4
+
+
+@pytest.mark.asyncio
+async def test_a_figure_in_no_tool_result_is_still_caught(patched, monkeypatch):
+    use_provider(monkeypatch, FakeProvider([
+        reply(tool_calls=[ToolCall(id="c1", name="get_social_sentiment",
+                                   arguments={"ticker": "AAPL"})]),
+        reply("ENOUGH"),
+        reply("Of 29 tagged messages, 93.7% are tagged bullish."),
+    ]))
+
+    state = await run()
+
+    assert state["blocked"]
