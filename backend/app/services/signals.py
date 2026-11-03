@@ -30,6 +30,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.trend import SLOPE_LOOKBACK, SLOPE_STRONG, SLOPE_TREND, Z_EXTENDED
+
 Direction = Literal["bullish", "bearish", "neutral"]
 Timeframe = Literal["intraday", "short", "medium", "long"]
 Reliability = Literal["low", "medium", "high"]
@@ -402,6 +404,85 @@ def _trend_signals(ladder: dict) -> list[Signal]:
     return out
 
 
+def _stretch_and_slope_signals(trend: dict) -> list[Signal]:
+    """The 200-day average's own slope, and how far price is stretched from it.
+
+    Both come from `services/trend.py`'s summary, so the numbers a narration can
+    quote here are the ones the trend panel shows beside its chart. Without
+    these rules the chat agent saw the summary in its grounding evidence but had
+    no signal carrying it, so it could neither cite the slope nor the z-score.
+    """
+    if not _usable(trend):
+        return []
+
+    out: list[Signal] = []
+    window = str(TREND_MA)
+    slope = ((trend.get("slopes") or {}).get(window) or {})
+    annualised = _num(slope.get("annualised_percent"))
+    if annualised is not None and abs(annualised) >= SLOPE_TREND:
+        rising = annualised > 0
+        out.append(Signal(
+            id=f"ma{TREND_MA}_slope_{'rising' if rising else 'falling'}",
+            label=f"{TREND_MA}-day average {'rising' if rising else 'falling'}",
+            category="trend",
+            direction="bullish" if rising else "bearish",
+            timeframe="long",
+            strength=_ratio(abs(annualised) - SLOPE_TREND, SLOPE_STRONG),
+            reliability="medium",
+            evidence={
+                "annualised_percent": annualised,
+                "label": slope.get("label"),
+                "lookback_sessions": SLOPE_LOOKBACK,
+                "threshold_percent": SLOPE_TREND,
+            },
+            rationale=(
+                f"The {TREND_MA}-day average itself is {'rising' if rising else 'falling'} "
+                f"at an annualised {abs(annualised):.1f}% over the last {SLOPE_LOOKBACK} "
+                f"sessions. A long average turns slowly, so its slope describes the "
+                f"direction of the trend over months rather than the next move."
+            ),
+            invalidation=(
+                f"Stops applying once the annualised slope is back within "
+                f"{SLOPE_TREND:.0f}% of flat."
+            ),
+        ))
+
+    z = _num(trend.get("z_score"))
+    distance = _num(trend.get("distance_percent"))
+    if z is not None and abs(z) >= Z_EXTENDED:
+        stretched_up = z > 0
+        # Opposite the stretch, as with extended_from_ma50: this is a
+        # mean-reversion observation about dispersion, graded low because the
+        # tendency is real but weak and price can stay stretched for months.
+        out.append(Signal(
+            id=f"stretched_from_ma{TREND_MA}",
+            label=f"Stretched from the {TREND_MA}-day average",
+            category="volatility",
+            direction="bearish" if stretched_up else "bullish",
+            timeframe="medium",
+            strength=_ratio(abs(z) - Z_EXTENDED, 1.5),
+            reliability="low",
+            evidence={
+                "z_score": z,
+                "distance_percent": distance,
+                "threshold_sigma": Z_EXTENDED,
+            },
+            rationale=(
+                f"Price sits {abs(z):.2f} standard deviations "
+                f"{'above' if stretched_up else 'below'} its {TREND_MA}-day average"
+                + (f", {abs(distance):.1f}% away" if distance is not None else "")
+                + ". Moves this far outside the usual range tend to narrow, though "
+                f"the tendency is weak and a strong trend can hold price there."
+            ),
+            invalidation=(
+                f"Stops applying once price is back within {Z_EXTENDED:.1f} standard "
+                f"deviations of the {TREND_MA}-day average."
+            ),
+        ))
+
+    return out
+
+
 def _level_signals(drawdown: dict) -> list[Signal]:
     """Where price sits inside its own 52-week range."""
     if not _usable(drawdown):
@@ -609,10 +690,12 @@ def derive_signals(
     macd = technicals.get("macd") or {}
     ladder = technicals.get("moving_averages") or {}
     drawdown = technicals.get("drawdown") or {}
+    trend = technicals.get("trend") or {}
 
     signals = [
         *_momentum_signals(rsi, macd),
         *_trend_signals(ladder),
+        *_stretch_and_slope_signals(trend),
         *_level_signals(drawdown),
         *_event_signals(symbol, events),
     ]
@@ -639,6 +722,7 @@ def derive_signals(
         coverage={
             "momentum": _usable(rsi) or _usable(macd),
             "trend": _usable(ladder),
+            "volatility": _usable(trend) and trend.get("z_score") is not None,
             "level": _usable(drawdown),
             "event": bool(events),
         },
