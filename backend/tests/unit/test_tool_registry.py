@@ -154,3 +154,10 @@ async def test_registry_rejects_an_unknown_tool():
     assert not result.success
     assert "Unknown tool" in result.error
 
+
+
+def test_options_chain_is_filed_with_the_options_tools():
+    registry = ToolRegistry.get()
+    categories = {name: registry._tools[name].category
+                  for name in ("get_options_chain", "get_options_snapshot")}
+    assert categories == {"get_options_chain": "options", "get_options_snapshot": "options"}
