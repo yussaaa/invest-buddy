@@ -1240,6 +1240,36 @@ def _fetch_earnings_calendar(universe: list[str]) -> dict[str, list[dict]]:
     return {sym: rows for sym, rows in zip(universe, results) if rows}
 
 
+def _earnings_universe(extra_symbols: list[str] | None = None) -> list[str]:
+    return list(dict.fromkeys(EARNINGS_UNIVERSE + [s.upper() for s in (extra_symbols or [])]))
+
+
+def _earnings_key(universe: list[str]) -> str:
+    """Shared by the endpoint and the warm-up job, so the two cannot drift."""
+    return f"earnings-calendar:{','.join(universe)}"
+
+
+async def refresh_earnings_calendar(ahead: float = 0.85) -> bool:
+    """Re-fetch the default calendar once it is `ahead` of the way to expiry.
+
+    The cold fetch costs ~36s and the frontend always asks for the default
+    universe, so refreshing that one key ahead of expiry means no visitor ever
+    waits for it. Returns True if it fetched.
+    """
+    from app.services import cache
+
+    universe = _earnings_universe()
+    key = _earnings_key(universe)
+    current_age = await cache.age(key)
+    if current_age is not None and current_age < EARNINGS_CALENDAR_TTL * ahead:
+        return False
+
+    calendar = await asyncio.to_thread(_fetch_earnings_calendar, universe)
+    if calendar:
+        await cache.prime(key, calendar, EARNINGS_CALENDAR_TTL)
+    return bool(calendar)
+
+
 async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None = None) -> dict:
     """Earnings and economic releases for one calendar week.
 
@@ -1251,7 +1281,7 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
     start, end = _iso_week_bounds(week_offset)
     today = datetime.now(ZoneInfo("America/New_York")).date()
 
-    universe = list(dict.fromkeys(EARNINGS_UNIVERSE + [s.upper() for s in (extra_symbols or [])]))
+    universe = _earnings_universe(extra_symbols)
 
     base = {
         "week_offset": week_offset,
@@ -1263,7 +1293,7 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
 
     try:
         calendar = await _cached(
-            f"earnings-calendar:{','.join(universe)}",
+            _earnings_key(universe),
             EARNINGS_CALENDAR_TTL,
             lambda: _fetch_earnings_calendar(universe),
             should_cache=bool,

@@ -71,8 +71,18 @@ async def lifespan(app: FastAPI):
         await setup_pgvector(engine)
         log.info("pgvector_setup_complete")
 
+    warmup = None
+    if settings.warmup_enabled:
+        import asyncio
+
+        from app.services.warmup import run_warmup_loop
+
+        warmup = asyncio.create_task(run_warmup_loop(), name="warmup")
+
     log.info("startup_complete")
     yield
+    if warmup is not None:
+        warmup.cancel()
     log.info("shutdown")
 
 

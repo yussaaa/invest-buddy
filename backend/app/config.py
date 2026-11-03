@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     vol_data_provider: Literal["realized_proxy", "marketdata"] = "realized_proxy"
     marketdata_api_key: str = ""
 
+    # ── Background warm-up (services/warmup.py) ────────────────────────────
+    # Backfills the bar store and refreshes the earnings calendar ahead of
+    # expiry, so the first visitor after a cold start or a TTL never waits.
+    warmup_enabled: bool = True
+
     # ── Chat agent ──────────────────────────────────────────────────────────
     chat_enabled: bool = True
     # The reasoning is deterministic (services/signals.py), so the model only

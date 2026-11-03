@@ -305,6 +305,26 @@ async def cached_async(
     return await _resolve(key, ttl, fn, should_cache, lock)
 
 
+async def age(key: str) -> float | None:
+    """Seconds since `key`'s value was produced, from L1 or L2; None if absent.
+
+    For refresh-ahead jobs, which want to replace a value *before* it expires
+    rather than let the next visitor pay for the fetch.
+    """
+    hit = _CACHE.get(key)
+    if hit:
+        return time.time() - hit[0]
+    envelope = await redis_client.cache_get(_redis_key(key))
+    if isinstance(envelope, dict) and isinstance(envelope.get("t"), (int, float)):
+        return time.time() - envelope["t"]
+    return None
+
+
+async def prime(key: str, value: Any, ttl: float) -> None:
+    """Write a freshly produced value to both tiers, stamped now."""
+    await _store(key, value, ttl, time.time())
+
+
 def peek(key: str) -> Any | None:
     """Current L1 value for `key` regardless of age — None if never cached."""
     hit = _CACHE.get(key)
