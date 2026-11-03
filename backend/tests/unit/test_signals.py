@@ -470,3 +470,38 @@ def test_no_signal_carries_an_action_verb():
     for signal in _every_possible_signal():
         assert signal.direction in ("bullish", "bearish", "neutral")
         assert not hasattr(signal, "action")
+
+
+# ── The lean in words ───────────────────────────────────────────────────────
+
+
+def test_a_directional_lean_with_conflicts_says_both():
+    """Chip and narration used to disagree here: "Leaning bullish" vs "mixed"."""
+    from app.services.signals import bias_phrase
+
+    assert bias_phrase("bullish", ["short-term signals lean bearish while ..."]) == (
+        "Leaning bullish, with the horizons disagreeing"
+    )
+    assert bias_phrase("bullish", []) == "Leaning bullish"
+    assert bias_phrase("mixed", ["x"]) == "Mixed"
+    assert bias_phrase("inconclusive", []) == "Inconclusive"
+
+
+def test_every_signal_set_carries_its_phrase():
+    result = derive_signals(technicals(
+        rsi=rsi_block(15),
+        macd=macd_block(histogram=0.5, bullish=True),
+        ladder=ladder_block(alignment="bullish", ma200_distance=8.0),
+        drawdown=drawdown_block(-0.5),
+    ))
+    assert result.bias_phrase == "Leaning bullish"
+    assert result.model_dump()["bias_phrase"] == "Leaning bullish"
+
+
+def test_the_bias_phrase_never_reads_as_advice():
+    from app.agents.base.guardrails import check_investment_advice
+    from app.services.signals import bias_phrase
+
+    for bias in ("bullish", "bearish", "mixed", "inconclusive"):
+        for conflicts in ([], ["x"]):
+            assert check_investment_advice(bias_phrase(bias, conflicts), mode="chat") == []

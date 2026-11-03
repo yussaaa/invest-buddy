@@ -561,6 +561,8 @@ export interface SignalSet {
   bias_score: number
   conflicts: string[]
   coverage: Record<string, boolean>
+  /** The overall lean in words, shared with the narration so the two agree. */
+  bias_phrase?: string
   disclaimer: string
 }
 

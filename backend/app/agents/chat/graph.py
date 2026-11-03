@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from typing import Any, AsyncIterator, Optional
@@ -416,6 +417,21 @@ def _split_citations(answer: str) -> tuple[str, list[str]]:
     return "\n".join(lines[:-1]).rstrip(), cited
 
 
+def _humanise_signal_ids(prose: str, signal_set: Optional[SignalSet]) -> str:
+    """Replace signal ids written in the prose with their labels.
+
+    The prompt asks for ids only in the trailing citation line, and the model
+    mostly complies — but "`rsi_oversold` suggests…" still turns up. Only ids
+    in the signal set are touched, so ordinary snake_case words are left alone.
+    """
+    if not signal_set or not signal_set.signals:
+        return prose
+    for signal in sorted(signal_set.signals, key=lambda s: -len(s.id)):
+        pattern = re.compile(rf"`?\b{re.escape(signal.id)}\b`?")
+        prose = pattern.sub(signal.label, prose)
+    return prose
+
+
 def _grounding_evidence(state: ChatState) -> dict:
     """Every number the model was legitimately shown.
 
@@ -449,6 +465,8 @@ def _hedged_reply(state: ChatState) -> str:
         return BLOCKED_REPLY_EMPTY.format(ticker=ticker)
 
     lines = [BLOCKED_REPLY_HEADER.format(ticker=ticker), ""]
+    if signal_set and signal_set.bias_phrase:
+        lines += [f"Overall: **{signal_set.bias_phrase}**.", ""]
     for signal in signals:
         lines.append(f"- **{signal.label}** ({signal.direction}, {signal.timeframe}-term) "
                      f"— {signal.rationale}")
@@ -525,7 +543,8 @@ def verify_node(state: ChatState) -> dict:
             pass
 
     return {
-        "answer": _hedged_reply(state) if blocked else prose,
+        "answer": _hedged_reply(state) if blocked
+        else _humanise_signal_ids(prose, state.get("signal_set")),
         "blocked": blocked,
         "signals_cited": [c for c in cited if c in known_ids],
         "flags": flags,

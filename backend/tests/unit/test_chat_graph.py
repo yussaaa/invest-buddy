@@ -576,3 +576,36 @@ async def test_history_is_replayed_into_the_turn(patched, monkeypatch):
 
     sent = json.dumps(provider.calls[0]["messages"])
     assert "is it oversold?" in sent
+
+
+# ── Prose hygiene ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_signal_ids_written_in_the_prose_are_replaced_by_labels(patched, monkeypatch):
+    use_provider(monkeypatch, FakeProvider([
+        reply("ENOUGH"),
+        reply("RSI is 22, so `rsi_oversold` holds; rsi_oversold_ish is not a signal."
+              "\nsignals: rsi_oversold"),
+    ]))
+
+    state = await run()
+    label = next(s.label for s in state["signal_set"].signals if s.id == "rsi_oversold")
+
+    assert "`rsi_oversold`" not in state["answer"]
+    assert label in state["answer"]
+    assert "rsi_oversold_ish" in state["answer"], "only real signal ids are rewritten"
+    assert state["signals_cited"] == ["rsi_oversold"], "the citation line still counts"
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_reply_opens_with_the_same_lean_the_chip_shows(patched, monkeypatch):
+    use_provider(monkeypatch, FakeProvider([
+        reply("ENOUGH"),
+        reply("You should buy it here.\nsignals: rsi_oversold"),
+    ]))
+
+    state = await run()
+
+    assert state["blocked"]
+    assert f"Overall: **{state['signal_set'].bias_phrase}**" in state["answer"]
