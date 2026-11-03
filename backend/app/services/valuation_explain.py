@@ -273,7 +273,7 @@ async def explain_valuation(
             "as_of": datetime.now(timezone.utc).isoformat(),
         }
 
-    key = "valuation_explain:" + valuation.override_key(symbol, **overrides)
+    key = f"valuation_explain:{settings.active_provider}:" + valuation.override_key(symbol, **overrides)
     try:
         return await cached_async(
             key, EXPLANATION_TTL, fetch, should_cache=lambda r: bool(r.get("explanation"))
