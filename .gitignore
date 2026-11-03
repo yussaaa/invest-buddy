@@ -9,7 +9,9 @@ __pycache__/
 dist/
 build/
 .eggs/
-.venv/
+# No trailing slash: worktrees symlink these (see CLAUDE.md), and a symlink
+# is a file, which a "dir/" pattern does not match.
+.venv
 venv/
 env/
 .env
@@ -27,7 +29,7 @@ htmlcov/
 .ruff_cache/
 
 # Node
-node_modules/
+node_modules
 .npm/
 frontend/dist/
 frontend/.vite/
