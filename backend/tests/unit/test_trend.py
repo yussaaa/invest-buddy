@@ -243,3 +243,28 @@ def test_a_series_shorter_than_the_slope_lookback_says_how_short():
 
 def test_mismatched_dates_and_closes_are_refused():
     assert "error" in trend_profile(dates_for(400), ramp(399))
+
+
+# ── one slope definition across the app ─────────────────────────────────────
+
+
+async def test_ma_ladder_slope_matches_the_trend_panel():
+    """MaRow's tooltip and the trend panel describe the same average with the
+    same number — they used to be a 5-session arithmetic and a 21-session
+    geometric figure, both labelled precisely and still disagreeing."""
+    import pandas as pd
+
+    from app.tools.calculation.technical_indicators import compute_ma_ladder
+
+    n = 400
+    closes = ramp(n)
+    profile = trend_profile(dates_for(n), closes)
+    ladder = await compute_ma_ladder(
+        "TEST", windows=(20, 50, 200), closes=pd.Series(closes, dtype=float)
+    )
+
+    for level in ladder["levels"]:
+        expected = profile["summary"]["slopes"][str(level["window"])]
+        assert level["slope_annualised_percent"] == expected["annualised_percent"]
+        assert level["slope_label"] == expected["label"]
+        assert "slope_percent_5d" not in level

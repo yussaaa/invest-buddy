@@ -181,7 +181,9 @@ export interface MaLevel {
   available: boolean
   above?: boolean
   distance_percent?: number
-  slope_percent_5d?: number
+  /** Same definition as the trend panel: geometric, 21 sessions, annualised. */
+  slope_annualised_percent?: number
+  slope_label?: SlopeLabel
   direction?: 'rising' | 'falling'
 }
 

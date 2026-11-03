@@ -144,8 +144,8 @@ function MaRow({ level, price }: { level: MaLevel; price?: number }) {
   }
 
   const slopeLabel =
-    level.slope_percent_5d != null
-      ? `${level.direction} ${signed(level.slope_percent_5d)}% over 5 sessions`
+    level.slope_annualised_percent != null
+      ? `${level.direction} ${signed(level.slope_annualised_percent, 1)}%/yr annualised (21 sessions)`
       : 'slope unavailable'
 
   // Arrow and colour both come from the distance itself, so they can never

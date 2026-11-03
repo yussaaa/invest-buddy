@@ -66,13 +66,13 @@ def ladder_block(
         levels.append({
             "window": 50, "sma": 100.0, "available": True,
             "above": ma50_distance > 0, "distance_percent": ma50_distance,
-            "slope_percent_5d": 0.1, "direction": "rising",
+            "slope_annualised_percent": 12.0, "direction": "rising",
         })
     if ma200_distance is not None:
         levels.append({
             "window": 200, "sma": 95.0, "available": True,
             "above": ma200_distance > 0, "distance_percent": ma200_distance,
-            "slope_percent_5d": 0.1, "direction": "rising",
+            "slope_annualised_percent": 12.0, "direction": "rising",
         })
     return {
         "ticker": "TEST",
