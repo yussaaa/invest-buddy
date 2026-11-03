@@ -53,6 +53,7 @@ from app.db.repositories_market import MARKET_TZ
 from app.models.factory import get_provider
 from app.services import cache, market_data, signals_page
 from app.tools.registry import ToolRegistry
+from app.tools.social.social_tool import rank_movement
 
 log = structlog.get_logger(__name__)
 
@@ -155,7 +156,11 @@ def context_block(run: Run) -> str:
     crowd = {
         "reddit": {k: (snap.get("reddit") or {}).get(k) for k in (
             "available", "caveat", "rank", "rank_24h_ago", "mentions", "mentions_24h_ago",
-            "mention_change_pct", "attention_z")} | {"window_hours": 24},
+            "mention_change_pct", "attention_z")} | {
+            "window_hours": 24,
+            "rank_movement": rank_movement((snap.get("reddit") or {}).get("rank"),
+                                           (snap.get("reddit") or {}).get("rank_24h_ago")),
+        },
         "stocktwits": {k: (snap.get("stocktwits") or {}).get(k) for k in (
             "available", "caveat", "bullish", "bearish", "bull_pct")},
         "conditions": _conditions(snap.get("social_signal_set")),

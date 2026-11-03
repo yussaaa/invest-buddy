@@ -11,6 +11,25 @@ from __future__ import annotations
 from app.services import screens, signals_page
 
 
+def rank_movement(rank: int | None, before: int | None) -> str | None:
+    """The rank change in words.
+
+    "rank 6, rank_24h_ago 14" was read back by a model as "fell from 6 to 14":
+    on a leaderboard a smaller number is more discussion, which is the
+    opposite of every other figure in the payload. Saying it removes the
+    inversion rather than hoping the model gets it right.
+    """
+    if rank is None:
+        return None
+    if before is None:
+        return f"new to the board at rank {rank} (rank 1 is the most discussed)"
+    if before == rank:
+        return f"unchanged at rank {rank} (rank 1 is the most discussed)"
+    verb = "climbed" if rank < before else "dropped"
+    return (f"{verb} from rank {before} to rank {rank} in 24 hours "
+            f"(rank 1 is the most discussed)")
+
+
 def _signals(signal_set: dict | None) -> list[dict]:
     return [
         {"id": s["id"], "label": s["label"], "direction": s["direction"],
@@ -34,7 +53,10 @@ async def get_social_sentiment(ticker: str) -> dict:
         "reddit": {k: reddit.get(k) for k in (
             "available", "rank", "rank_24h_ago", "rank_change", "mentions",
             "mentions_24h_ago", "mention_change_pct", "upvotes", "attention_z",
-            "history_days")} | {"window_hours": 24, "source": "ApeWisdom"},
+            "history_days")} | {
+            "window_hours": 24, "source": "ApeWisdom",
+            "rank_movement": rank_movement(reddit.get("rank"), reddit.get("rank_24h_ago")),
+        },
         "stocktwits": {k: crowd.get(k) for k in (
             "available", "sampled", "bullish", "bearish", "untagged", "bull_pct",
             "window_hours")} | {"source": "StockTwits"},

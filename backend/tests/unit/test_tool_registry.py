@@ -203,3 +203,15 @@ async def test_get_social_sentiment_condenses_the_snapshot(monkeypatch):
     assert "technical_signal_set" not in result
     assert result["caveats"] == ["blocked"]
     assert result["conditions"][0]["id"] == "rank_climb"
+
+
+@pytest.mark.parametrize("rank, before, expected", [
+    (6, 14, "climbed from rank 14 to rank 6"),
+    (14, 6, "dropped from rank 6 to rank 14"),
+    (3, None, "new to the board at rank 3"),
+    (5, 5, "unchanged at rank 5"),
+])
+def test_rank_movement_says_the_direction_in_words(rank, before, expected):
+    from app.tools.social.social_tool import rank_movement
+
+    assert rank_movement(rank, before).startswith(expected)
