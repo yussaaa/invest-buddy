@@ -112,6 +112,29 @@ def _dispersion(values: list[float]) -> float | None:
     return round((max(values) - min(values)) / abs(median), 3)
 
 
+def override_key(
+    symbol: str,
+    growth: float | None,
+    terminal_growth: float | None,
+    discount_rate: float | None,
+    years: int,
+    fcf_base: str,
+) -> str:
+    """The cache-key suffix for one set of overrides.
+
+    Overrides are quantised before they reach the key: unbounded floats in a
+    cache key are an unbounded key space. Shared with the explanation, which
+    must be keyed on exactly the valuation it describes.
+    """
+    def q(value: float | None) -> str:
+        return str(round(value, 3)) if value is not None else "-"
+
+    return (
+        f"{symbol.upper()}:{q(growth)}:{q(terminal_growth)}:{q(discount_rate)}"
+        f":{years}:{fcf_base}"
+    )
+
+
 async def get_valuation(
     symbol: str,
     *,
@@ -129,13 +152,8 @@ async def get_valuation(
     observes.
     """
     symbol = symbol.upper()
-    # Overrides are quantised before they reach the key: unbounded floats in a
-    # cache key are an unbounded key space.
-    key = (
-        f"valuation:{symbol}:{round(growth, 3) if growth is not None else '-'}"
-        f":{round(terminal_growth, 3) if terminal_growth is not None else '-'}"
-        f":{round(discount_rate, 3) if discount_rate is not None else '-'}"
-        f":{years}:{fcf_base}"
+    key = "valuation:" + override_key(
+        symbol, growth, terminal_growth, discount_rate, years, fcf_base
     )
 
     async def fetch() -> dict:

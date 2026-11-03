@@ -9,15 +9,17 @@
  */
 
 import { useState } from 'react'
-import { AlertCircle, Loader2, RotateCcw } from 'lucide-react'
+import { AlertCircle, Loader2, RotateCcw, ShieldCheck, Sparkles } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { K, TTL } from '@/lib/cacheKeys'
-import { useCachedResource } from '@/hooks/useCachedResource'
-import type { AssumptionSource, ScenarioCase } from '@/lib/types'
+import { cached, put } from '@/lib/clientCache'
+import { useCachedResource, useCachedValue } from '@/hooks/useCachedResource'
+import type { AssumptionSource, ScenarioCase, ValuationExplanation } from '@/lib/types'
 import SensitivityGrid from './SensitivityGrid'
 import { compact, money, percent, signedPercent } from './format'
 
@@ -86,6 +88,103 @@ function Knob({
         className="h-1 w-full cursor-pointer appearance-none rounded-full bg-muted accent-primary"
       />
     </div>
+  )
+}
+
+/**
+ * The model's description of the valuation above, for exactly these overrides.
+ *
+ * The server checks the reply for verdict vocabulary and for numbers the
+ * valuation does not contain, and swaps in a templated explanation when it
+ * fails. `guarded` says when that happened — the reader is told rather than
+ * shown a different voice without explanation.
+ */
+function ExplainCard({
+  symbol,
+  params,
+  ready,
+}: {
+  symbol: string
+  params: Record<string, number>
+  ready: boolean
+}) {
+  const explainKey = K.valuationExplain(symbol, params)
+  const explanation = useCachedValue<ValuationExplanation>(explainKey).value ?? null
+  const [explaining, setExplaining] = useState(false)
+
+  async function requestExplanation() {
+    setExplaining(true)
+    try {
+      await cached(explainKey, () => api.market.explainValuation(symbol, params), {
+        ttl: TTL.explanation,
+      })
+    } catch (e) {
+      put<ValuationExplanation>(explainKey, {
+        symbol,
+        available: false,
+        reason: e instanceof Error ? e.message : 'Request failed',
+      })
+    } finally {
+      setExplaining(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-3 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[13px] font-semibold text-foreground">What this valuation says</span>
+          <Button
+            size="sm"
+            variant={explanation ? 'outline' : 'default'}
+            className="h-7 text-xs"
+            onClick={requestExplanation}
+            disabled={explaining || !ready}
+          >
+            {explaining ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            {explaining ? 'Reading…' : explanation ? 'Regenerate' : 'Explain this valuation'}
+          </Button>
+        </div>
+
+        {!explanation && !explaining && (
+          <p className="text-xs text-muted-foreground/60">
+            Sends the valuation above, with your assumptions, to the model for a plain-English
+            description of what the price implies and how fragile the estimate is. Nothing is sent
+            until you ask.
+          </p>
+        )}
+
+        {explanation?.available === false && (
+          <div className="flex items-start gap-2 text-xs text-muted-foreground">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span>{explanation.reason}</span>
+          </div>
+        )}
+
+        {explanation?.explanation && (
+          <>
+            <Separator />
+            <div className="flex flex-col gap-2">
+              {explanation.explanation.split('\n\n').map((para, i) => (
+                <p key={i} className="text-sm leading-relaxed text-foreground/90">
+                  {para}
+                </p>
+              ))}
+            </div>
+            {explanation.guarded && (
+              <p className="flex items-center gap-1.5 text-[10px] text-amber-400/90">
+                <ShieldCheck size={12} />
+                The model's reply read as a verdict or quoted a figure not in the valuation, so
+                this summary was written from the numbers directly.
+              </p>
+            )}
+            <p className="text-[10px] text-muted-foreground/50">
+              {explanation.model} · {explanation.disclaimer}
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -382,6 +481,8 @@ export default function ValuationPanel({ symbol }: { symbol: string }) {
           </CardContent>
         </Card>
       )}
+
+      <ExplainCard symbol={symbol} params={params} ready={!!base?.value_per_share} />
 
       <p className="px-1 text-[10px] leading-relaxed text-muted-foreground/50">
         A discounted cash flow is an opinion with arithmetic attached, not a measurement. Inputs are

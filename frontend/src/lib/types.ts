@@ -404,6 +404,18 @@ export interface OptionsStrategies {
   error?: string
 }
 
+export interface ValuationExplanation {
+  symbol: string
+  available: boolean
+  explanation?: string
+  /** True when the model's reply was withheld and a templated one shown instead. */
+  guarded?: boolean
+  model?: string
+  disclaimer?: string
+  reason?: string
+  as_of?: string
+}
+
 export interface OptionsExplanation {
   symbol: string
   strategy?: string

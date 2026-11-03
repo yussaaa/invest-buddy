@@ -14,6 +14,7 @@ import type {
   MarketOverview,
   TrendPayload,
   Valuation,
+  ValuationExplanation,
   OptionsChain,
   OptionsExplanation,
   OptionsStrategies,
@@ -156,6 +157,17 @@ export const api = {
         Object.entries(params).map(([k, v]) => [k, String(v)])
       ) })
       return request<Valuation>(`/market/valuation?${query}`, { signal })
+    },
+
+    explainValuation: (
+      symbol: string,
+      params: Record<string, number | string> = {},
+      signal?: AbortSignal
+    ) => {
+      const query = new URLSearchParams({ symbol, ...Object.fromEntries(
+        Object.entries(params).map(([k, v]) => [k, String(v)])
+      ) })
+      return request<ValuationExplanation>(`/market/valuation/explain?${query}`, { signal })
     },
 
     technicals: (symbol: string, signal?: AbortSignal) =>

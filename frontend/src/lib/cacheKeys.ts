@@ -18,6 +18,9 @@ export const K = {
   /** Assumption overrides are part of the key — they change the answer. */
   valuation: (symbol: string, params: Record<string, number | string> = {}) =>
     `valuation:${symbol}:${JSON.stringify(params)}`,
+  /** Keyed on the same overrides as the valuation it describes. */
+  valuationExplain: (symbol: string, params: Record<string, number | string> = {}) =>
+    `valuation:explain:${symbol}:${JSON.stringify(params)}`,
   technicalsExplain: (symbol: string) => `technicals:explain:${symbol}`,
   optionStrategies: (symbol: string) => `options:strategies:${symbol}`,
   optionsExplain: (symbol: string, strategy: string) => `options:explain:${symbol}:${strategy}`,
