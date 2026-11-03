@@ -1,0 +1,399 @@
+{
+ "response": {
+  "status": 200
+ },
+ "symbol": {
+  "id": 1,
+  "symbol": "PLTR",
+  "title": "Palantir",
+  "watchlist_count": 325960
+ },
+ "cursor": {
+  "more": true,
+  "since": 1,
+  "max": 999
+ },
+ "messages": [
+  {
+   "id": 1000,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T15:00:00Z",
+   "user": {
+    "username": "u0"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1001,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T14:50:00Z",
+   "user": {
+    "username": "u1"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1002,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T14:40:00Z",
+   "user": {
+    "username": "u2"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1003,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T14:30:00Z",
+   "user": {
+    "username": "u3"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1004,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T14:20:00Z",
+   "user": {
+    "username": "u4"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1005,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T14:10:00Z",
+   "user": {
+    "username": "u5"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1006,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T14:00:00Z",
+   "user": {
+    "username": "u6"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1007,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T13:50:00Z",
+   "user": {
+    "username": "u7"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1008,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T13:40:00Z",
+   "user": {
+    "username": "u8"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1009,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T13:30:00Z",
+   "user": {
+    "username": "u9"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1010,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T13:20:00Z",
+   "user": {
+    "username": "u10"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1011,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T13:10:00Z",
+   "user": {
+    "username": "u11"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1012,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T13:00:00Z",
+   "user": {
+    "username": "u12"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1013,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T12:50:00Z",
+   "user": {
+    "username": "u13"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1014,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T12:40:00Z",
+   "user": {
+    "username": "u14"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1015,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T12:30:00Z",
+   "user": {
+    "username": "u15"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1016,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T12:20:00Z",
+   "user": {
+    "username": "u16"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1017,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T12:10:00Z",
+   "user": {
+    "username": "u17"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 1018,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T12:00:00Z",
+   "user": {
+    "username": "u18"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bearish"
+    }
+   }
+  },
+  {
+   "id": 1019,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T11:50:00Z",
+   "user": {
+    "username": "u19"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bearish"
+    }
+   }
+  },
+  {
+   "id": 1020,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T11:40:00Z",
+   "user": {
+    "username": "u20"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bearish"
+    }
+   }
+  },
+  {
+   "id": 1021,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T11:30:00Z",
+   "user": {
+    "username": "u21"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bearish"
+    }
+   }
+  },
+  {
+   "id": 1022,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T11:20:00Z",
+   "user": {
+    "username": "u22"
+   },
+   "entities": {
+    "sentiment": null
+   }
+  },
+  {
+   "id": 1023,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T11:10:00Z",
+   "user": {
+    "username": "u23"
+   },
+   "entities": {
+    "sentiment": null
+   }
+  },
+  {
+   "id": 1024,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T11:00:00Z",
+   "user": {
+    "username": "u24"
+   },
+   "entities": {
+    "sentiment": null
+   }
+  },
+  {
+   "id": 1025,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T10:50:00Z",
+   "user": {
+    "username": "u25"
+   },
+   "entities": {
+    "sentiment": null
+   }
+  },
+  {
+   "id": 1026,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T10:40:00Z",
+   "user": {
+    "username": "u26"
+   },
+   "entities": {
+    "sentiment": null
+   }
+  },
+  {
+   "id": 1027,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T10:30:00Z",
+   "user": {
+    "username": "u27"
+   },
+   "entities": {
+    "sentiment": null
+   }
+  },
+  {
+   "id": 1028,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T10:20:00Z",
+   "user": {
+    "username": "u28"
+   },
+   "entities": {
+    "sentiment": null
+   }
+  },
+  {
+   "id": 1000,
+   "body": "message body that must never be stored",
+   "created_at": "2026-11-03T15:00:00Z",
+   "user": {
+    "username": "u0"
+   },
+   "entities": {
+    "sentiment": {
+     "basic": "Bullish"
+    }
+   }
+  },
+  {
+   "id": 2000,
+   "created_at": null,
+   "entities": {}
+  }
+ ]
+}

@@ -35,7 +35,7 @@ from app.services.trend import SLOPE_LOOKBACK, SLOPE_STRONG, SLOPE_TREND, Z_EXTE
 Direction = Literal["bullish", "bearish", "neutral"]
 Timeframe = Literal["intraday", "short", "medium", "long"]
 Reliability = Literal["low", "medium", "high"]
-Category = Literal["momentum", "trend", "volatility", "level", "event"]
+Category = Literal["momentum", "trend", "volatility", "level", "event", "social"]
 NetBias = Literal["bullish", "bearish", "mixed", "inconclusive"]
 
 DISCLAIMER = (

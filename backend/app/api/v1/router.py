@@ -8,6 +8,7 @@ from app.api.v1 import (
     health,
     market,
     preferences,
+    signals,
     watchlist,
     feedback,
     upload,
@@ -23,3 +24,4 @@ api_router.include_router(feedback.router, prefix="/feedback", tags=["feedback"]
 api_router.include_router(upload.router, prefix="/upload", tags=["upload"])
 api_router.include_router(market.router, prefix="/market", tags=["market"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
+api_router.include_router(signals.router, prefix="/signals", tags=["signals"])

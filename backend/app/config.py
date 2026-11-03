@@ -111,6 +111,31 @@ class Settings(BaseSettings):
     vol_data_provider: Literal["realized_proxy", "marketdata"] = "realized_proxy"
     marketdata_api_key: str = ""
 
+    # ── Social sentiment (services/social/) ────────────────────────────────
+    # ApeWisdom (Reddit mention counts) and StockTwits (self-tagged bull/bear)
+    # need no key. StockTwits sits behind Cloudflare and routinely refuses
+    # server clients; a breaker turns that into a caveat rather than a delay.
+    social_enabled: bool = True
+    stocktwits_enabled: bool = True
+    social_http_timeout_seconds: float = 6.0
+    social_user_agent: str = "agent-invest/0.17 (+https://github.com/yussaaa/agent_invest)"
+    # Hourly ApeWisdom snapshot into Postgres — the history a mention z-score
+    # needs, since the API only reports "24 hours ago".
+    social_snapshot_enabled: bool = True
+    # Placeholder providers: declared so the UI can say what is missing.
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_user_agent: str = ""
+    x_bearer_token: str = ""
+
+    # ── Research agent (agents/research/) ──────────────────────────────────
+    research_enabled: bool = True
+    research_model: Literal["fast", "smart"] = "fast"
+    research_max_tool_iterations: int = 2
+    research_max_tool_calls: int = 4
+    research_max_web_searches: int = 3
+    research_timeout_seconds: float = 60.0
+
     # ── Background warm-up (services/warmup.py) ────────────────────────────
     # Backfills the bar store and refreshes the earnings calendar ahead of
     # expiry, so the first visitor after a cold start or a TTL never waits.
