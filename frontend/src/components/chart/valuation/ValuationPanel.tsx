@@ -22,11 +22,13 @@ import { useCachedResource, useCachedValue } from '@/hooks/useCachedResource'
 import type { AssumptionSource, ScenarioCase, ValuationExplanation } from '@/lib/types'
 import SensitivityGrid from './SensitivityGrid'
 import { compact, money, percent, signedPercent } from './format'
+import { ASYMMETRY_NOTE_RATIO, bandAsymmetry } from './band'
 
 export const VALUATION_SUBLABEL =
   'Levered FCF at the cost of equity · 10-year linear growth fade · Gordon terminal value'
 
 const CASE_LABEL: Record<ScenarioCase, string> = { bear: 'Bear', base: 'Base', bull: 'Bull' }
+
 
 interface Overrides {
   growth?: number
@@ -234,6 +236,7 @@ export default function ValuationPanel({ symbol }: { symbol: string }) {
   // Negative cash flow is refused upstream, but the inputs still render — the
   // reader should see *why* there is no valuation rather than an empty panel.
   const refused = data?.error && data.inputs
+  const asymmetry = bandAsymmetry(scenarios)
 
   return (
     <div className="flex flex-col gap-3">
@@ -397,6 +400,15 @@ export default function ValuationPanel({ symbol }: { symbol: string }) {
                 </div>
               ))}
             </div>
+
+            {asymmetry && asymmetry.ratio > ASYMMETRY_NOTE_RATIO && (
+              <p className="text-[10px] leading-relaxed text-muted-foreground/60">
+                Bull is {signedPercent(asymmetry.upside)} from base, bear{' '}
+                {signedPercent(-asymmetry.downside)}. The steps are symmetric, but a DCF is
+                convex in the discount rate, so the upside stretches further — the grid below
+                shows where.
+              </p>
+            )}
 
             {base?.terminal_value_share != null && (
               <p className="text-[10px] leading-relaxed text-muted-foreground/60">
