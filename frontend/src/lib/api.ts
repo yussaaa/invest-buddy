@@ -20,6 +20,12 @@ import type {
   OptionsStrategies,
   Quote,
   ScreenContextValue,
+  ScreenPayload,
+  ScreenPreset,
+  SignalSources,
+  SocialExplanation,
+  SocialSnapshot,
+  TrendingPayload,
   Technicals,
   TechnicalsExplanation,
   UserPreferences,
@@ -255,6 +261,43 @@ export const api = {
 
     clear: (conversationId: string) =>
       fetch(`${BASE_URL}/chat/${conversationId}`, { method: 'DELETE' }),
+  },
+
+  signals: {
+    sources: (signal?: AbortSignal) => request<SignalSources>('/signals/sources', { signal }),
+
+    trending: (source = 'apewisdom', filter = 'all-stocks', limit = 50, signal?: AbortSignal) =>
+      request<TrendingPayload>(
+        `/signals/trending?source=${encodeURIComponent(source)}&filter=${encodeURIComponent(filter)}&limit=${limit}`,
+        { signal }
+      ),
+
+    screeners: (signal?: AbortSignal) =>
+      request<{ presets: ScreenPreset[] }>('/signals/screeners', { signal }),
+
+    screen: (preset: string, limit = 25, signal?: AbortSignal) =>
+      request<ScreenPayload>(
+        `/signals/screen?preset=${encodeURIComponent(preset)}&limit=${limit}`,
+        { signal }
+      ),
+
+    ticker: (symbol: string, signal?: AbortSignal) =>
+      request<SocialSnapshot>(`/signals/ticker?symbol=${encodeURIComponent(symbol)}`, { signal }),
+
+    explain: (symbol: string, signal?: AbortSignal) =>
+      request<SocialExplanation>(
+        `/signals/ticker/explain?symbol=${encodeURIComponent(symbol)}`,
+        { signal }
+      ),
+
+    /** Raw Response, read with parseSSEStream — like api.chat.stream. */
+    researchStream: (body: { ticker: string; question?: string }, signal?: AbortSignal) =>
+      fetch(`${BASE_URL}/signals/research/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...llmProviderHeaders() },
+        body: JSON.stringify(body),
+        signal,
+      }),
   },
 
   health: {
