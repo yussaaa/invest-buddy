@@ -24,6 +24,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { ScreenContextProvider } from '@/context/ScreenContext'
 import { cn, readJSON, writeJSON } from '@/lib/utils'
+import { api } from './lib/api'
+import { setLlmProvider } from './lib/llmProvider'
 import ChatLauncher from './components/chat/ChatLauncher'
 import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
@@ -32,6 +34,7 @@ import MarketPage from './pages/MarketPage'
 import WatchlistPage from './pages/WatchlistPage'
 import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
+import { PageActiveContext } from '@/context/PageActive'
 
 const NAV_ITEMS = [
   { to: '/charting', label: 'Charting', icon: CandlestickChart },
@@ -185,6 +188,16 @@ function AppShell() {
   const selectedTicker = searchParams.get('ticker') ?? undefined
   const isMarketPage = location.pathname.startsWith('/market')
 
+  // The Market page stays mounted once visited, hidden while elsewhere: its
+  // TradingView heatmap is an iframe that blanks for 0.5–2s whenever it is
+  // rebuilt, and an iframe reloads if it is moved in the DOM — so the only
+  // way to keep it is to never unmount it. PageActiveContext stops its polls
+  // while it is off screen.
+  const [marketMounted, setMarketMounted] = useState(isMarketPage)
+  useEffect(() => {
+    if (isMarketPage) setMarketMounted(true)
+  }, [isMarketPage])
+
   // Nav layout is a global preference — unlike the watchlist rail there is no
   // reason for it to differ per page, so no scoping.
   const [sidebar, setSidebar] = useState(() =>
@@ -194,6 +207,15 @@ function AppShell() {
   useEffect(() => {
     writeJSON(SIDEBAR_KEY, sidebar)
   }, [sidebar])
+
+  // The saved model provider, so requests carry it without a Settings visit.
+  // localStorage covers the first requests; this corrects it if the choice
+  // was changed from another browser.
+  useEffect(() => {
+    api.preferences.get('anonymous')
+      .then(p => setLlmProvider(p.llm_provider))
+      .catch(() => { /* server default */ })
+  }, [])
 
   const setSidebarWidth = useCallback(
     (width: number) => setSidebar(prev => (prev.width === width ? prev : { ...prev, width })),
@@ -217,12 +239,20 @@ function AppShell() {
         <Routes>
           <Route path="/" element={<Navigate to="/charting" replace />} />
           <Route path="/charting" element={<ChartingPage />} />
-          <Route path="/market" element={<MarketPage />} />
+          {/* Rendered below, outside <Routes>, so leaving does not unmount it. */}
+          <Route path="/market" element={null} />
           <Route path="/analyze" element={<AnalyzePage />} />
           <Route path="/watchlist" element={<WatchlistPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
+        {(marketMounted || isMarketPage) && (
+          <PageActiveContext.Provider value={isMarketPage}>
+            <div hidden={!isMarketPage}>
+              <MarketPage />
+            </div>
+          </PageActiveContext.Provider>
+        )}
       </main>
       <MarketWatchlist
         selectedTicker={selectedTicker}

@@ -20,6 +20,7 @@ class FakeRedis:
     def __init__(self) -> None:
         self.store: dict[str, str] = {}
         self.locks: set[str] = set()
+        self.lock_ttls: dict[str, float] = {}
         self.get_calls = 0
         self.fail = False
 
@@ -50,6 +51,7 @@ class FakeRedis:
         self.store.pop(key, None)
 
     async def try_lock(self, key, ttl):
+        self.lock_ttls[key] = ttl
         if key in self.locks:
             return False
         self.locks.add(key)
@@ -118,6 +120,44 @@ async def test_l2_hit_preserves_original_timestamp(fake_redis, monkeypatch):
 
     assert await cache.cached_async("quote:AAPL", 10, produce_again) == {"price": 200}
     assert len(calls) == 1, "expired value was served past its TTL"
+
+
+async def test_a_producer_slower_than_its_ttl_is_still_served(fake_redis, monkeypatch):
+    """Values are stamped when the fetch finishes, not when it starts.
+
+    Stamped at the start, a 46s fetch under a 30s TTL wrote a value that was
+    already expired: it could never satisfy a lookup, and every request paid
+    for a full cold fetch. That is what happened to `overview` under load.
+    """
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(cache.time, "time", lambda: clock["t"])
+    calls = []
+
+    async def slow_produce():
+        calls.append(1)
+        clock["t"] += 46.0          # the fetch takes longer than the TTL
+        return {"indices": [1, 2, 3]}
+
+    await cache.cached_async("overview", 30, slow_produce, lock=True)
+
+    clock["t"] += 5.0               # a caller five seconds later
+    cache._CACHE.clear()            # ... on another replica, via L2
+    assert await cache.cached_async("overview", 30, slow_produce, lock=True) == {
+        "indices": [1, 2, 3]
+    }
+    assert len(calls) == 1, "a value slower than its TTL was written already expired"
+
+
+async def test_cross_replica_lock_outlives_a_short_ttl(fake_redis):
+    """The lock must not expire before a fetch longer than the value's TTL ends."""
+
+    async def produce():
+        return {"ok": True}
+
+    await cache.cached_async("overview", 30, produce, lock=True)
+    (ttl,) = fake_redis.lock_ttls.values()
+    assert ttl >= cache.LOCK_HOLD_SECONDS
+    assert fake_redis.locks == set(), "lock is released as soon as the fetch ends"
 
 
 async def test_should_cache_gates_both_tiers(fake_redis):

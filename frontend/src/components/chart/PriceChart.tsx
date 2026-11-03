@@ -19,6 +19,7 @@ import {
   type ISeriesApi,
   type Time,
 } from 'lightweight-charts'
+import { recallView, rememberView, type LogicalRange } from './chartView'
 import type { Candle } from '@/lib/types'
 
 export type ChartType = 'candles' | 'line' | 'area'
@@ -47,6 +48,11 @@ interface PriceChartProps {
   maPeriods?: number[]
   height?: number
   onHover?: (candle: Candle | null) => void
+  /**
+   * Identifies the series for remembering zoom and pan — `${symbol}:${range}`.
+   * Omit to always fit the content.
+   */
+  viewKey?: string
 }
 
 function sma(candles: Candle[], period: number) {
@@ -68,6 +74,7 @@ export default function PriceChart({
   maPeriods = [],
   height = 460,
   onHover,
+  viewKey,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -76,6 +83,9 @@ export default function PriceChart({
   const maRefs = useRef<Map<number, ISeriesApi<'Line'>>>(new Map())
   const hoverRef = useRef(onHover)
   hoverRef.current = onHover
+  const viewKeyRef = useRef(viewKey)
+  viewKeyRef.current = viewKey
+  const barCountRef = useRef(0)
 
   // Line/area series only carry a single value, so the legend reads OHLC from
   // the source candles keyed by time.
@@ -145,8 +155,17 @@ export default function PriceChart({
       hoverRef.current(byTime.current.get(String(param.time)) ?? null)
     })
 
+    // Every zoom and pan, the user's or our own restore, is remembered — the
+    // last one standing is what the next mount of this series comes back to.
+    const onRange = (range: LogicalRange | null) => {
+      const key = viewKeyRef.current
+      if (range && key) rememberView(key, range, barCountRef.current)
+    }
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange)
+
     return () => {
       void unsubscribe
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange)
       chart.remove()
       chartRef.current = null
       priceRef.current = null
@@ -161,6 +180,11 @@ export default function PriceChart({
     const volume = volumeRef.current
     const chart = chartRef.current
     if (!price || !volume || !chart) return
+
+    // Read the remembered view before setData, which moves the time scale and
+    // would otherwise overwrite it with the default range.
+    const restore = viewKey ? recallView(viewKey, candles.length) : null
+    barCountRef.current = candles.length
 
     if (chartType === 'candles') {
       price.setData(
@@ -184,8 +208,9 @@ export default function PriceChart({
       }))
     )
 
-    chart.timeScale().fitContent()
-  }, [candles, chartType])
+    if (restore) chart.timeScale().setVisibleLogicalRange(restore)
+    else chart.timeScale().fitContent()
+  }, [candles, chartType, viewKey])
 
   // Moving averages — added and removed as the selection changes
   useEffect(() => {

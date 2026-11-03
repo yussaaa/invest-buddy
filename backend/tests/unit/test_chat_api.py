@@ -204,7 +204,8 @@ async def test_missing_credentials_name_the_fix(client, monkeypatch):
     response = await client.post("/api/v1/chat", json=BODY)
 
     assert response.status_code == 503
-    assert "MODEL_PROVIDER" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "_API_KEY in .env" in detail and "Settings" in detail
 
 
 # ── POST /chat/stream ───────────────────────────────────────────────────────

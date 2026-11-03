@@ -378,6 +378,7 @@ export default function ChartingPage() {
               chartType={chartType}
               maPeriods={maPeriods}
               height={520}
+              viewKey={`${symbol}:${range}`}
               onHover={candle => {
                 setHovered(candle)
                 // The candle under the crosshair is the one piece of screen

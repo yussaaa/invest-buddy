@@ -10,7 +10,8 @@
 import type { CapTier } from './types'
 
 export const K = {
-  quotes: (symbols: string[]) => `quotes:${symbols.join(',')}`,
+  /** Per symbol, like the backend's `quote:{sym}` — see lib/quoteStore.ts. */
+  quote: (symbol: string) => `quote:${symbol.toUpperCase()}`,
   history: (symbol: string, range: string) => `hist:${symbol}:${range}`,
   profile: (symbol: string) => `profile:${symbol}`,
   technicals: (symbol: string) => `technicals:${symbol}`,

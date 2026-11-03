@@ -6,7 +6,7 @@ real.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -109,3 +109,94 @@ async def test_empty_provider_response_is_not_fatal(db_session, monkeypatch):
     )
 
     assert rows == []
+
+
+async def _age_coverage(db_session, symbol: str, days: int) -> None:
+    """Pretend the symbol was last refreshed `days` ago."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    from app.db.models import BarCoverage
+
+    await db_session.execute(
+        update(BarCoverage)
+        .where(BarCoverage.symbol == symbol)
+        .values(last_refresh_at=datetime.now(timezone.utc) - timedelta(days=days))
+    )
+    await db_session.flush()
+
+
+def _history_ending(last: "date", days: int = 30):
+    rows = [
+        BarRow(last - timedelta(days=i), 100.0, 101.0, 99.0, 100.0 + i, 100.0 + i, 1_000)
+        for i in range(days)
+    ]
+    return sorted(rows, key=lambda r: r.bar_date), False
+
+
+async def test_a_store_stale_as_a_whole_still_refreshes(db_session, monkeypatch):
+    """SPY and the symbol both months behind must not vouch for each other."""
+    months_ago = market_today() - timedelta(days=90)
+    monkeypatch.setattr(bar_store, "fetch_live", lambda s, span: _history_ending(months_ago))
+    start = market_today() - timedelta(days=200)
+    for sym in ("SPY", "FAKES"):
+        await bar_store.daily_bars_for(sym, start, session=db_session)
+        await _age_coverage(db_session, sym, days=90)
+
+    calls = []
+
+    def fresh(symbol, span):
+        calls.append(symbol)
+        return _fake_history(days=120)
+
+    monkeypatch.setattr(bar_store, "fetch_live", fresh)
+    rows = await bar_store.daily_bars_for("FAKES", start, session=db_session)
+
+    assert calls == ["FAKES"], "a months-old series was served as current"
+    assert rows[-1].bar_date == market_today() - timedelta(days=1)
+
+
+async def test_a_gap_already_refreshed_today_is_not_refetched(db_session, monkeypatch):
+    """The day after a holiday looks one session short; retry once, not every read."""
+    behind = market_today() - timedelta(days=10)
+    monkeypatch.setattr(bar_store, "fetch_live", lambda s, span: _history_ending(behind))
+    start = market_today() - timedelta(days=20)
+    await bar_store.daily_bars_for("FAKEH", start, session=db_session)  # refreshed now
+
+    monkeypatch.setattr(
+        bar_store, "fetch_live",
+        lambda s, span: (_ for _ in ()).throw(AssertionError("refetched twice in a day")),
+    )
+    await bar_store.daily_bars_for("FAKEH", start, session=db_session)
+
+
+async def test_a_refresh_never_narrows_the_stored_span(db_session, monkeypatch):
+    spans = []
+
+    def record(symbol, span):
+        spans.append(span)
+        return _fake_history()
+
+    monkeypatch.setattr(bar_store, "fetch_live", record)
+    await bar_store.daily_bars_for("FAKEW", market_today() - timedelta(days=30), session=db_session, span="max")
+    await _age_coverage(db_session, "FAKEW", days=7)
+    # Make it stale: drop the newest bars so it is behind the calendar.
+    from sqlalchemy import delete
+
+    from app.db.models import DailyBar
+
+    await db_session.execute(
+        delete(DailyBar).where(DailyBar.symbol == "FAKEW",
+                               DailyBar.bar_date >= market_today() - timedelta(days=6))
+    )
+    from app.db.repositories_market import upsert_coverage
+
+    await upsert_coverage(db_session, "FAKEW", requested_span="max")
+    await _age_coverage(db_session, "FAKEW", days=7)
+
+    await bar_store.daily_bars_for("FAKEW", market_today() - timedelta(days=30), session=db_session)
+
+    assert spans == ["max", "max"]
+    coverage = (await get_coverage(db_session, ["FAKEW"]))["FAKEW"]
+    assert coverage.requested_span == "max"

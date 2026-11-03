@@ -17,6 +17,7 @@ import {
   subscribe,
   type Snapshot,
 } from '@/lib/clientCache'
+import { usePageActive } from '@/context/PageActive'
 
 export interface UseCachedResourceOptions<T> {
   ttl: number
@@ -67,6 +68,12 @@ export function useCachedResource<T>(
     shouldCacheRef.current = shouldCache
   })
 
+  // A page kept mounted while hidden (see context/PageActive) stops polling,
+  // and catches up the moment it is shown again.
+  const active = usePageActive()
+  const activeRef = useRef(active)
+  activeRef.current = active
+
   const snapshot = useSyncExternalStore(
     useCallback((onChange: () => void) => (key ? subscribe(key, onChange) : () => {}), [key]),
     useCallback(() => (key ? peek<T>(key) : emptySnapshot<T>()), [key]),
@@ -82,14 +89,20 @@ export function useCachedResource<T>(
     })
   }, [key, enabled, ttl])
 
-  // Mount and key changes. `cached` is a no-op inside the TTL, so StrictMode's
-  // double-invoke in dev costs one function call, not one request.
-  useEffect(load, [load])
+  // Mount, key changes, and a hidden page being shown again. `cached` is a
+  // no-op inside the TTL, so StrictMode's double-invoke in dev — and returning
+  // to a page whose data is still fresh — costs one function call, not one
+  // request.
+  useEffect(() => {
+    if (active) load()
+  }, [load, active])
 
   useEffect(() => {
     if (!key || !enabled || !refreshIntervalMs) return
     const id = setInterval(() => {
-      if (document.hidden) return  // a backgrounded tab has nobody watching
+      // A backgrounded tab, or a page kept mounted off screen, has nobody
+      // watching.
+      if (document.hidden || !activeRef.current) return
       load()
     }, refreshIntervalMs)
     return () => clearInterval(id)

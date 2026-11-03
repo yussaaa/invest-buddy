@@ -23,15 +23,22 @@ import type {
   Technicals,
   TechnicalsExplanation,
   UserPreferences,
+  LlmConnectionTest,
+  LlmProviderList,
   Watchlist,
 } from './types'
+import { llmProviderHeaders } from './llmProvider'
 
 const BASE_URL = '/api/v1'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const resp = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...llmProviderHeaders(),
+      ...options?.headers,
+    },
   })
   if (!resp.ok) {
     const err = await resp.text()
@@ -122,6 +129,16 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(prefs),
       }),
+
+    /** Providers this deployment can use, and the models each would run. */
+    llmProviders: () => request<LlmProviderList>('/preferences/llm-providers'),
+
+    /** A real call: a key in .env may still be out of credits or revoked. */
+    testLlmProvider: (id: string, fresh = false) =>
+      request<LlmConnectionTest>(
+        `/preferences/llm-providers/${encodeURIComponent(id)}/test${fresh ? '?fresh=true' : ''}`,
+        { method: 'POST' },
+      ),
   },
 
   market: {
@@ -223,7 +240,7 @@ export const api = {
     stream: (body: ChatRequestBody, signal?: AbortSignal) =>
       fetch(`${BASE_URL}/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...llmProviderHeaders() },
         body: JSON.stringify(body),
         signal,
       }),

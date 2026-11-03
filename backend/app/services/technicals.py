@@ -276,7 +276,7 @@ async def explain_technicals(symbol: str) -> dict:
 
     try:
         return await cached_async(
-            f"technicals_explain:{symbol}",
+            f"technicals_explain:{settings.active_provider}:{symbol}",
             EXPLANATION_TTL,
             fetch,
             should_cache=lambda r: bool(r.get("explanation")),

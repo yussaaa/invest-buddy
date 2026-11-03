@@ -43,7 +43,6 @@ class TechnicalAnalysisAgent:
 
     def __init__(self) -> None:
         self._settings = get_settings()
-        self._provider = get_provider()
         self._registry = ToolRegistry.get()
 
     async def _call_tool(
@@ -143,7 +142,7 @@ class TechnicalAnalysisAgent:
         # ── 3. LLM call ────────────────────────────────────────────────────────
         model = self._settings.fast_model
         try:
-            response = await self._provider.complete(
+            response = await get_provider().complete(
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {

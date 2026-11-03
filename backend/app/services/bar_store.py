@@ -17,6 +17,7 @@ import yfinance as yf
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories_market import (
+    MARKET_TZ,
     DailyBarInput,
     get_coverage,
     get_daily_bars,
@@ -107,15 +108,66 @@ async def _store(session: AsyncSession, symbol: str, rows: list[BarRow], span: s
     await upsert_coverage(session, symbol, requested_span=span)
 
 
+# Spans ordered by how far back they reach, so a refresh never narrows what a
+# symbol was already backfilled to.
+_SPAN_ORDER = ["1y", "2y", "5y", "10y", "max"]
+
+
+def _wider(a: str | None, b: str) -> str:
+    def rank(span: str | None) -> int:
+        return _SPAN_ORDER.index(span) if span in _SPAN_ORDER else _SPAN_ORDER.index(DEFAULT_SPAN)
+
+    return a if a is not None and rank(a) > rank(b) else b
+
+
+def _previous_weekday(day: date) -> date:
+    """The most recent weekday strictly before `day` — the latest session that
+    could have settled, before accounting for holidays."""
+    d = day - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def _refreshed_today(coverage) -> bool:
+    at = coverage.last_refresh_at
+    if at is None:
+        return False
+    return at.astimezone(MARKET_TZ).date() >= market_today()
+
+
+def _is_stale(coverage, settled: date | None) -> bool:
+    """Has a session closed that this symbol's stored series does not include?
+
+    This used to ask only "is it behind SPY's stored bar?" — the store used as
+    its own calendar. That cannot see the store going stale as a whole: once
+    SPY stopped refreshing, every symbol level with it looked current, and
+    the charts and indicators were served months-old history with today's
+    price glued on the end.
+
+    The calendar check is a weekday rule with no holiday table, so on the day
+    after a holiday every symbol looks a session behind. `last_refresh_at`
+    bounds that to one refetch per symbol per day.
+    """
+    if settled is not None and coverage.last_bar_date < settled:
+        return True  # behind the reference symbol: a session has closed since
+    if coverage.last_bar_date >= _previous_weekday(market_today()):
+        return False
+    return not _refreshed_today(coverage)
+
+
+async def _coverage(session: AsyncSession, symbol: str):
+    return (await get_coverage(session, [symbol])).get(symbol.upper())
+
+
 async def _covered(session: AsyncSession, symbol: str, start: date) -> bool:
-    """Does the store hold a complete series back to `start`?"""
-    coverage = (await get_coverage(session, [symbol])).get(symbol.upper())
+    """Does the store hold a complete, current series back to `start`?"""
+    coverage = await _coverage(session, symbol)
     if coverage is None or coverage.last_bar_date is None:
         return False
 
-    settled = await last_settled_session(session)
-    if settled is not None and coverage.last_bar_date < settled:
-        return False  # stale — a session has closed since we last refreshed
+    if _is_stale(coverage, await last_settled_session(session)):
+        return False
 
     if coverage.requested_span in FULL_SPANS:
         return True
@@ -187,6 +239,11 @@ async def _load(
 
     # Miss: fetch what we don't have, keep it, then answer from what we fetched.
     needed = "max" if span in FULL_SPANS or start < _span_start(span) else span
+    # A stale refresh re-downloads at least what the symbol already held, so a
+    # daily refresh driven by a 1Y chart does not shrink a MAX backfill to 2y.
+    existing = await _coverage(session, symbol)
+    if existing is not None:
+        needed = _wider(existing.requested_span, needed)
     rows, saw_split = await asyncio.to_thread(lambda: fetch_live(symbol, needed))
     if not rows:
         return []

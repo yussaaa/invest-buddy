@@ -2,7 +2,7 @@
 
 What is built, what is not, and what is documented as built but is not — each
 line checked against the code on **2026-08-18**, not copied forward from the
-previous plan.
+previous plan. The open items in shipped work were revisited on **2026-11-03**.
 
 Status here supersedes the phase list anywhere else. `CLAUDE.md`'s phase table
 had drifted badly enough to be actively misleading (it described Phase 3 as
@@ -71,17 +71,34 @@ The three written documents exist. Not done:
       cash flow statement, turning a ~1.9% yield into 0.46%. It was the single
       custom calculation in the fundamentals stack, and it had been wrong since
       it was written. Now reads the statement, with `info` as fallback.
-- [ ] **`get_options_chain` is registered under category `sentiment`** in
-      `tools/registry.py`, not `options`. Harmless — nothing dispatches on
-      category — but it misleads anyone reading the registry.
-- [ ] **Frontend test coverage is one file.** `clientCache.test.ts` (18 tests,
-      vitest) covers the cache; the hook and the pages are unverified except by
-      `tsc` and the manual checklist. Testing them needs jsdom +
-      testing-library + msw, which is a real dependency jump — deliberate for
-      now, revisit if the pages start regressing.
-- [ ] **`tests/unit/test_tools.py` makes live network calls.** It is in the
-      unit suite and is why CI needs `-m "not network"`. Should be mocked or
-      moved to integration.
+- [x] ~~**`get_options_chain` is registered under category `sentiment`**~~ —
+      fixed 2026-11-03. Filed under `options`; its data source deliberately unchanged.
+- [ ] **Frontend tests cover pure modules only.** Now three files —
+      `clientCache`, `chartView` (zoom memory) and `quoteStore` (per-symbol
+      quotes), 32 tests — because the logic behind the 2026-11-03 UI fixes was pulled
+      into DOM-free modules on purpose. Hooks and pages are still unverified
+      except by `tsc` and the manual checklist; testing them needs jsdom +
+      testing-library + msw, a real dependency jump that the shared
+      `node_modules` symlink would push onto every worktree. Deliberate for now.
+- [x] ~~**`tests/unit/test_tools.py` makes live network calls.**~~ — fixed 2026-11-03.
+      The live checks moved to `tests/integration/test_tools_live.py` (still
+      `network`); `tests/unit/test_tool_registry.py` pins the same contracts
+      against a fake `yfinance.Ticker`. `make test` now selects
+      `-m "not network"` like CI, and the unit suite passes with the network
+      blocked.
+- [x] ~~**The bar store could go stale as a whole and never notice**~~ — found
+      and fixed 2026-11-03, while wiring history to it. Staleness was judged only
+      against SPY's *stored* bar; once SPY stopped refreshing, every symbol
+      level with it looked current. The store had been frozen at 2026-08-05,
+      so technicals ran on three-month-old bars with today's price appended.
+      Now also stale when behind the previous weekday, at most one refetch per
+      symbol per day (`last_refresh_at`), and a refresh never narrows the span
+      a symbol was backfilled to.
+- [x] ~~**NewsAPI errors were retried even when permanent**~~ — found and fixed
+      2026-11-03. `apiKeyInvalid` carries no "401" in its text, so a dead key cost
+      4.4 s of retries on every news tool call; now 0.78 s. **The configured
+      `NEWSAPI_KEY` is itself invalid** — news is unavailable until it is
+      replaced.
 - [x] ~~Stale docstring in `orchestrator/graph.py` calling `rag_prefetch_node`
       a "stub for Phase 1"~~ — fixed 2026-08-18. It was what misled the phase
       list; the graph diagram there now matches the code.
@@ -91,14 +108,21 @@ The three written documents exist. Not done:
 
 ### Performance
 
-- [ ] `get_history` / `get_overview` / `get_breadth` still fetch live rather
-      than reading `daily_bars`. The store is only wired into technicals.
-- [ ] **No backfill job** — the bar store warms lazily, so the first request
-      for a cold ticker pays full provider latency.
-- [ ] **The movers earnings calendar costs ~36s cold**, once per 6h globally
-      (Redis L2 + single-flight). Week navigation is free after that, but the
-      first visitor after expiry waits. A warm-up job would remove it; there is
-      no scheduler in the stack yet.
+- [x] ~~`get_history` / `get_overview` / `get_breadth` still fetch live~~ —
+      fixed 2026-11-03. Daily-and-coarser history is stored bars plus a 5-session
+      download for today (identical to Yahoo for AAPL 1Y/5Y/3M; MAX now goes
+      back to 1980 where Yahoo's monthly series starts in 1985). Overview prices
+      warm symbols over 5 sessions instead of a month. Breadth must price today
+      live, so its download stays; the stored previous close rescues symbols
+      that come back with only today's row.
+- [x] ~~**No backfill job**~~ — fixed 2026-11-03. `services/warmup.py`, started from
+      the lifespan: at startup and after 16:30 ET daily, SPY, indices, sectors,
+      macro, the earnings universe and watchlists at 5y, breadth constituents at
+      1y. 63 core symbols in 8.3 s cold, 0.5 s warm. One replica does it (Redis
+      lock); `WARMUP_ENABLED=false` turns it off.
+- [x] ~~**The movers earnings calendar costs ~36s cold**~~ — fixed 2026-11-03. The
+      warm-up loop re-fetches it at 85% of its TTL and primes the endpoint's
+      own key, so no visitor waits.
 - [x] ~~`/market/breadth` never served warm~~ — fixed 2026-08-18. `cached`
       stamps a value with the time its fetch *started*, so `BREADTH_TTL = 60`
       against a 120 s+ scan produced values that were **born expired** and could
@@ -107,31 +131,46 @@ The three written documents exist. Not done:
       browser's per-origin connection budget. TTL raised to 900 s, client poll
       to 600 s. `cache.py` now logs `cache_ttl_shorter_than_fetch` so the next
       instance of this is loud rather than invisible.
-- [ ] **`overview` hits the same trap under load** — that new warning has
-      already caught it once at `seconds=46.7 ttl=30.0`, when yfinance was rate
-      limiting. Unlike breadth it is normally far inside its TTL, so this is
-      load-dependent rather than permanent. Either raise the TTL or stamp slow
-      producers at completion.
-- [ ] **The TradingView heatmap rebuilds on every mount** — a re-injected
-      `<script>`, ~0.5–2 s of blank rectangle. It cannot be mutated in place, so
-      only keep-alive fixes it. Now the *only* remaining loading artefact on
-      `/market`, so it reads more prominently than it used to.
-- [ ] **Chart zoom and pan are lost on navigation** even though the data is
-      instant — a new canvas per mount. Cheap fix: stash
-      `timeScale().getVisibleLogicalRange()` in the client cache on unmount.
-- [ ] **Quote polling is not shared between overlapping symbol sets.**
-      `useQuotes(['AAPL'])` and the watchlist rail are different cache keys, so
-      they poll separately for the same symbol. Mirroring the backend's
-      `get_fresh_many`/`put_many` per-symbol keying would unify them.
-- [ ] A chat turn is ~8–9s cold, most of it the two model calls.
+- [x] ~~**`overview` hits the same trap under load**~~ — fixed 2026-11-03 for every
+      key: `cache.py` stamps values when the fetch *finishes*, so none can be
+      born expired, and the cross-replica lock no longer expires mid-fetch.
+- [x] ~~**The TradingView heatmap rebuilds on every mount**~~ — fixed 2026-11-03. The
+      Market page stays mounted once visited, hidden elsewhere;
+      `PageActiveContext` pauses its polls while it is off screen.
+- [x] ~~**Chart zoom and pan are lost on navigation**~~ — fixed 2026-11-03, and on
+      every 30 s history refresh too, which also called `fitContent`. Kept per
+      symbol:range, anchored to the latest bar so a new session slides the
+      window rather than clipping it.
+- [x] ~~**Quote polling is not shared between overlapping symbol sets.**~~ —
+      fixed 2026-11-03. `lib/quoteStore.ts` caches per symbol and batches only the
+      stale ones, as the backend does.
+- [ ] **A chat turn takes ~4–5 s, most of it the answer streaming.** The
+      8–9 s figure was OpenAI with a cold context. 2026-11-03: the answer now starts
+      alongside gather and is kept when no tool is needed, which on the
+      Anthropic fast tier took time-to-first-token from 0.7–1.0 s to 0.4–0.7 s
+      and totals from 4.5–5.0 s to 3.8–4.6 s. What remains is generation
+      length (~250 words). The OpenAI key in `.env` currently has no credits,
+      so OpenAI was not re-measured.
 
 ### Cosmetic
 
-- [ ] Chat model sometimes writes signal ids inline as well as in the trailing
-      citation line.
-- [ ] The `net_bias` chip can read "Leaning bullish" while the prose says
-      "mixed" — both correct when a weak short-term signal opposes a strong
-      long-term one, but the wording should agree.
+- [x] ~~Chat model sometimes writes signal ids inline~~ — fixed 2026-11-03. The
+      prompt says not to, and `verify_node` rewrites any id from the signal set
+      to its label.
+- [x] ~~The `net_bias` chip can read "Leaning bullish" while the prose says
+      "mixed"~~ — fixed 2026-11-03. `SignalSet.bias_phrase` ("Leaning bullish, with the
+      horizons disagreeing") is the one phrase the chip, the prompt and the
+      blocked-reply summary all use.
+
+### Guardrails
+
+- [x] ~~**Numeric grounding accepted ~31% of random prices**~~ — fixed 2026-11-03.
+      The ±2% tolerance plus a round-to-integer clause let "$199" ground 200.2.
+      A figure now grounds only if a reading rounds or truncates to it at the
+      precision it was written with; `tests/unit/test_grounding_rate.py`
+      measures 0.09% at two decimals, 0.9% at one, 8% for whole dollars.
+      Magnitude suffixes ("63.8M") are scaled first — a live reply was being
+      blocked for one — and window labels ("the 200-day") are not claims.
 
 ---
 
@@ -146,7 +185,7 @@ Not bugs, and not worth relitigating without new information:
 | **No bid/ask** | Not available from the data source | A paid feed |
 | **No verdict badge in chat** | "Should I buy?" is answered as a conditional setup — more defensible, and it makes the guardrail coherent | Nothing; this is the design |
 | **No LangGraph checkpointer** | Only `InMemorySaver` ships with the installed version; survives neither restart nor a second worker | A durable checkpointer landing upstream |
-| **Chat gather is a separate model call** | Buys a streaming path where no tool request arrives mid-sentence | Nothing; the cheap call is worth it |
+| **Chat gather is a separate model call** | Buys a streaming path where no tool request arrives mid-sentence. Its latency is now hidden on no-tool turns by speculating the answer alongside it | Nothing; the cheap call is worth it |
 | **pgvector over Qdrant** | One datastore instead of two | Scale that Postgres cannot serve |
 
 ---
@@ -160,12 +199,10 @@ Ranked by value against effort:
    result.
 2. **Demo video + README screenshots** — cheapest possible improvement to how
    this reads as a portfolio project, and the only outstanding Phase 7 item.
-3. **Fix `test_tools.py`** — small, removes the CI network dependency, and
-   makes `make test` honest about being offline.
-4. **Serve `get_history`/`get_overview` from the bar store** — the store and
-   the fallback already exist; this is wiring plus tests.
-5. **Long-term memory** — the largest remaining piece, and the one that most
+3. **Long-term memory** — the largest remaining piece, and the one that most
    changes what the product can claim.
+4. **Replace the NewsAPI key and top up OpenAI** — both configured credentials
+   are dead, so news is unavailable and the default provider fails every call.
 
 ---
 
@@ -189,13 +226,12 @@ Ranked by value against effort:
       and `stretched_from_ma200` (volatility, low reliability) read
       `technicals["trend"]`; `"volatility"` now has a rule and a `coverage` key.
       Both run through the advice and action-verb invariant tests.
-- [ ] **The trend summary widened the grounding evidence set** from 54 numbers
-      to 67, and the coincidental-grounding rate on $100–400 prices from 26.6%
-      to 32.3%. Deliberate and small — the series would have made it 1,258 and
-      47.3% — but the tolerance in `_is_grounded` is worth revisiting on its own
-      merits; 26.6% was already high before this branch touched it. *Being
-      addressed on `fix/open-items` (off `dev`), since `_is_grounded` is
-      identical on both branches.*
+- [x] ~~**The trend summary widened the grounding evidence set**~~ from 54
+      numbers to 67, and the coincidental-grounding rate on $100–400 prices from
+      26.6% to 32.3%. The series stays out (it would have made it 1,258 and
+      47.3%); the tolerance itself was fixed on `fix/open-items` (#10) — see
+      *Guardrails* above: 0.09% at two decimals, so the extra 13 numbers no
+      longer move it materially.
 - [x] ~~The scenario band is asymmetric in output~~ — explained 2026-11-03.
       Still real DCF behaviour (JNJ: $126 / $246 / $799), but the scenario card
       now says so in one line when the bull case's distance above base exceeds

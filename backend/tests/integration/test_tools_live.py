@@ -1,9 +1,11 @@
-"""Unit tests for tool implementations — uses real yfinance data (no mocks).
+"""Live checks of the tool implementations against real Yahoo data.
 
 Marked `network` because every test here calls Yahoo for real. That makes them
 worth keeping — they catch provider shape changes nothing else would — and
 unsuitable as a merge gate, where a rate limit or a changed endpoint would fail
-a pull request that touched none of this. CI runs `-m "not network"`.
+a pull request that touched none of this. They used to live in tests/unit,
+which made `make test` quietly depend on the network; the offline versions of
+the same contracts are tests/unit/test_tool_registry.py.
 """
 
 import pytest
@@ -82,14 +84,6 @@ async def test_tool_registry_execute():
     assert result.success
     assert result.data["ticker"] == "MSFT"
 
-
-@pytest.mark.asyncio
-async def test_tool_registry_unknown_tool():
-    from app.tools.registry import ToolRegistry
-    registry = ToolRegistry.get()
-    result = await registry.execute("nonexistent_tool", {})
-    assert not result.success
-    assert "Unknown tool" in result.error
 
 
 @pytest.mark.asyncio

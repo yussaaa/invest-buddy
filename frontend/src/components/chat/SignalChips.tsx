@@ -21,6 +21,7 @@ const DIRECTION_STYLE: Record<string, string> = {
   neutral: 'border-border bg-muted/40 text-muted-foreground',
 }
 
+/** Fallback for payloads cached before the backend sent `bias_phrase`. */
 const BIAS_LABEL: Record<NetBias, string> = {
   bullish: 'Leaning bullish',
   bearish: 'Leaning bearish',
@@ -113,7 +114,7 @@ export default function SignalChips({ signalSet }: { signalSet: SignalSet | null
           {signalSet.ticker}
         </span>
         <span className={cn('text-[11px] font-medium', BIAS_STYLE[net_bias])}>
-          {BIAS_LABEL[net_bias]}
+          {signalSet.bias_phrase || BIAS_LABEL[net_bias]}
         </span>
         <span className="ml-auto text-[10px] tabular-nums text-muted-foreground/50">
           {signals.length} condition{signals.length === 1 ? '' : 's'}

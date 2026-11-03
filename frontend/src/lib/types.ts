@@ -103,6 +103,34 @@ export interface UserPreferences {
   analysis_depth: 'quick' | 'standard' | 'deep'
   preferred_metrics: string[]
   recent_tickers: string[]
+  /** Chosen model provider; null means the server default (MODEL_PROVIDER). */
+  llm_provider?: string | null
+}
+
+export interface LlmProviderInfo {
+  id: string
+  label: string
+  /** Credentials are configured (in .env, for now). */
+  available: boolean
+  fast_model: string
+  smart_model: string
+  /** Why it cannot be chosen, when it cannot. */
+  reason?: string
+}
+
+/** One tiny completion against the provider's fast tier. */
+export interface LlmConnectionTest {
+  id: string
+  ok: boolean
+  model?: string
+  error: string | null
+  latency_ms: number | null
+}
+
+export interface LlmProviderList {
+  /** The server's MODEL_PROVIDER, used when the user has not chosen. */
+  default: string
+  providers: LlmProviderInfo[]
 }
 
 export interface Quote {
@@ -725,6 +753,8 @@ export interface SignalSet {
   bias_score: number
   conflicts: string[]
   coverage: Record<string, boolean>
+  /** The overall lean in words, shared with the narration so the two agree. */
+  bias_phrase?: string
   disclaimer: string
 }
 

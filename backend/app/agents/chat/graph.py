@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from typing import Any, AsyncIterator, Optional
@@ -416,6 +417,21 @@ def _split_citations(answer: str) -> tuple[str, list[str]]:
     return "\n".join(lines[:-1]).rstrip(), cited
 
 
+def _humanise_signal_ids(prose: str, signal_set: Optional[SignalSet]) -> str:
+    """Replace signal ids written in the prose with their labels.
+
+    The prompt asks for ids only in the trailing citation line, and the model
+    mostly complies — but "`rsi_oversold` suggests…" still turns up. Only ids
+    in the signal set are touched, so ordinary snake_case words are left alone.
+    """
+    if not signal_set or not signal_set.signals:
+        return prose
+    for signal in sorted(signal_set.signals, key=lambda s: -len(s.id)):
+        pattern = re.compile(rf"`?\b{re.escape(signal.id)}\b`?")
+        prose = pattern.sub(signal.label, prose)
+    return prose
+
+
 def _grounding_evidence(state: ChatState) -> dict:
     """Every number the model was legitimately shown.
 
@@ -449,6 +465,8 @@ def _hedged_reply(state: ChatState) -> str:
         return BLOCKED_REPLY_EMPTY.format(ticker=ticker)
 
     lines = [BLOCKED_REPLY_HEADER.format(ticker=ticker), ""]
+    if signal_set and signal_set.bias_phrase:
+        lines += [f"Overall: **{signal_set.bias_phrase}**.", ""]
     for signal in signals:
         lines.append(f"- **{signal.label}** ({signal.direction}, {signal.timeframe}-term) "
                      f"— {signal.rationale}")
@@ -525,7 +543,8 @@ def verify_node(state: ChatState) -> dict:
             pass
 
     return {
-        "answer": _hedged_reply(state) if blocked else prose,
+        "answer": _hedged_reply(state) if blocked
+        else _humanise_signal_ids(prose, state.get("signal_set")),
         "blocked": blocked,
         "signals_cited": [c for c in cited if c in known_ids],
         "flags": flags,
@@ -599,6 +618,79 @@ async def run_chat_turn(
     return final
 
 
+def _add_usage(state: ChatState, prompt: int, completion: int) -> None:
+    # Accumulate: the gather call already contributed, and replacing here would
+    # report a turn as cheaper than it was.
+    prior = state.get("usage") or {}
+    state["usage"] = {
+        "prompt_tokens": prior.get("prompt_tokens", 0) + prompt,
+        "completion_tokens": prior.get("completion_tokens", 0) + completion,
+    }
+
+
+def _answer_stream(state: ChatState, settings) -> AsyncIterator[str]:
+    return get_provider().stream(
+        messages=_answer_messages(state),
+        model=_model_name(settings),
+        temperature=0.3,
+        max_tokens=ANSWER_MAX_TOKENS,
+        on_usage=lambda p, c: _add_usage(state, p, c),
+    )
+
+
+def _gather_will_run(state: ChatState, settings) -> bool:
+    """Mirror of gather_node's early exit: no tools, or no iterations left."""
+    return bool(_tool_schemas(get_provider())) and (
+        state.get("tool_iterations", 0) < settings.chat_max_tool_iterations
+    )
+
+
+_STREAM_END = object()
+
+
+class _SpeculativeAnswer:
+    """The answer stream, started before gather has decided it needs nothing.
+
+    Tokens are buffered, not shown, until the caller commits to them by
+    iterating `chunks()`. If gather asks for a tool instead, `discard()` cancels
+    the request; the tokens already generated are the price of the bet, paid
+    only on tool turns. Their usage is never reported by a cancelled stream,
+    so a discarded speculation is logged rather than silently lost.
+    """
+
+    def __init__(self, state: ChatState, settings) -> None:
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._task = asyncio.create_task(self._run(_answer_stream(state, settings)))
+
+    async def _run(self, stream: AsyncIterator[str]) -> None:
+        try:
+            async for chunk in stream:
+                await self._queue.put(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # surfaced to the consumer, not swallowed
+            await self._queue.put(exc)
+        await self._queue.put(_STREAM_END)
+
+    async def chunks(self) -> AsyncIterator[str]:
+        while True:
+            item = await self._queue.get()
+            if item is _STREAM_END:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
+    async def discard(self) -> None:
+        buffered = self._queue.qsize()
+        self._task.cancel()
+        try:
+            await self._task
+        except (asyncio.CancelledError, Exception):
+            pass
+        log.info("chat_speculative_answer_discarded", buffered_chunks=buffered)
+
+
 async def stream_chat_turn(
     *,
     message: str,
@@ -633,12 +725,26 @@ async def stream_chat_turn(
             "disclaimer": DISCLAIMER,
         }
 
+        # Most turns need no tool, and then the answer request is exactly what
+        # it would be before gather ran — gather adds no message when it asks
+        # for nothing. So the answer starts streaming alongside the first
+        # gather call and is kept if gather comes back empty-handed, which
+        # takes gather's whole round trip off the time to first token.
+        speculative = (
+            _SpeculativeAnswer(state, settings)
+            if settings.chat_speculative_answer and _gather_will_run(state, settings)
+            else None
+        )
+
         for _ in range(settings.chat_max_tool_iterations):
             update = await gather_node(state)
             _merge(state, update)
             calls = _pending_calls(state)
             if not calls:
                 break
+            if speculative is not None:
+                await speculative.discard()
+                speculative = None
             for call in calls:
                 yield "tool_call", {"name": call.name, "arguments": call.arguments}
 
@@ -652,19 +758,15 @@ async def stream_chat_turn(
                 }
 
         chunks: list[str] = []
-        async for chunk in get_provider().stream(
-            messages=_answer_messages(state),
-            model=_model_name(settings),
-            temperature=0.3,
-            max_tokens=ANSWER_MAX_TOKENS,
-            # Accumulate: the gather call already contributed, and replacing
-            # here would report a turn as cheaper than it was.
-            on_usage=lambda p, c: state.update(usage={
-                "prompt_tokens": (state.get("usage") or {}).get("prompt_tokens", 0) + p,
-                "completion_tokens":
-                    (state.get("usage") or {}).get("completion_tokens", 0) + c,
-            }),
-        ):
+        stream = (
+            speculative.chunks() if speculative is not None
+            else _answer_stream(state, settings)
+        )
+        state["latency_breakdown"] = {
+            **(state.get("latency_breakdown") or {}),
+            "speculative_answer": speculative is not None,
+        }
+        async for chunk in stream:
             chunks.append(chunk)
             yield "token", {"text": chunk}
 
