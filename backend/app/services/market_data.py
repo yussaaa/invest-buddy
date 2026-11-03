@@ -24,7 +24,7 @@ import structlog
 import yfinance as yf
 
 from app.config import get_settings
-from app.services.cache import cached as _cached, get_fresh_many, put_many
+from app.services.cache import cached as _cached, cached_async, get_fresh_many, put_many
 
 log = structlog.get_logger(__name__)
 
@@ -269,15 +269,130 @@ async def get_quotes(symbols: list[str]) -> list[dict]:
     return [out.get(s, {"symbol": s, "error": "not found"}) for s in symbols]
 
 
+# ── settled closes from the local bar store ─────────────────────────────────
+
+
+async def _stored(read: Callable[[Any], Any]) -> Any | None:
+    """Run one read against the bar store in its own session; None if it's down.
+
+    The store is an optimisation, never a dependency — same contract as
+    bar_store.daily_bars_for. Callers treat None as "price it all live".
+    """
+    try:
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            return await read(session)
+    except Exception as e:
+        log.warning("bar_store_read_failed", error=str(e))
+        return None
+
+
+async def _stored_closes(symbols: list[str], days: int) -> dict[str, list[tuple[date, float]]]:
+    from app.db.repositories_market import get_daily_closes, market_today
+
+    today = market_today()
+    out = await _stored(
+        lambda s: get_daily_closes(s, symbols, today - timedelta(days=days), today)
+    )
+    return out or {}
+
+
 # ── chart history ─────────────────────────────────────────────────────────────
 
 HISTORY_TTL = 30.0
+
+# Daily-and-coarser ranges are served from the local bar store: settled
+# sessions never change, so only today's partial bar has to come from the
+# provider. Intraday ranges stay live — the store holds daily bars only.
+# range -> (bar-store span to request, months back; None = everything stored)
+STORE_RANGES: dict[str, tuple[str, int | None]] = {
+    "3M": ("2y", 3),
+    "6M": ("2y", 6),
+    "YTD": ("2y", None),
+    "1Y": ("2y", 12),
+    "5Y": ("5y", 60),
+    "MAX": ("max", None),
+}
+
+
+def _range_start(range_key: str, today: date) -> date:
+    if range_key == "YTD":
+        return date(today.year, 1, 1)
+    if range_key == "MAX":
+        return date(1900, 1, 1)
+    months = STORE_RANGES[range_key][1] or 12
+    return (pd.Timestamp(today) - pd.DateOffset(months=months)).date()
+
+
+def _todays_rows(symbol: str, after: date | None) -> list:
+    """Bars newer than the store's last one, from a small live download.
+
+    Usually just today's partial session. If the store is a day or two behind
+    (it warms lazily, and refreshes on the first read after a close), the five
+    sessions here cover that gap too.
+    """
+    from app.services.bar_store import _to_rows
+
+    frame = _frame_for(_download([symbol], period="5d", interval="1d"), symbol)
+    if frame is None or frame.empty:
+        return []
+    rows, _ = _to_rows(frame, symbol)
+    return [r for r in rows if after is None or r.bar_date > after]
+
+
+def _period_change(candles: list[dict]) -> tuple[Any, Any]:
+    first = candles[0]["close"] if candles else None
+    last = candles[-1]["close"] if candles else None
+    change = (last - first) if (first and last) else None
+    pct = change / first * 100.0 if change is not None and first else None
+    return _round(change), _round(pct)
+
+
+async def _history_from_store(symbol: str, range_key: str, interval: str) -> dict | None:
+    """The chart payload built from stored bars, or None to use the live path."""
+    from app.db.repositories_market import market_today
+    from app.services import bar_store
+    from app.services.bar_derive import bucket_bars, to_candles
+
+    span, _ = STORE_RANGES[range_key]
+    start = _range_start(range_key, market_today())
+    try:
+        settled = await bar_store.daily_bars_for(symbol, start, span=span)
+    except Exception as e:
+        log.warning("history_store_failed", symbol=symbol, error=str(e))
+        return None
+    if not settled:
+        return None
+
+    try:
+        recent = await asyncio.to_thread(_todays_rows, symbol, settled[-1].bar_date)
+    except Exception as e:
+        # Settled history without today beats no chart; the quote poll still
+        # shows the live price above it.
+        log.warning("history_today_failed", symbol=symbol, error=str(e))
+        recent = []
+
+    rows = bucket_bars([*settled, *recent], interval)  # type: ignore[arg-type]
+    candles = to_candles(rows)
+    change, change_pct = _period_change(candles)
+    return {
+        "symbol": symbol,
+        "range": range_key,
+        "interval": interval,
+        "intraday": False,
+        "candles": candles,
+        "period_change": change,
+        "period_change_percent": change_pct,
+    }
 
 
 async def get_history(symbol: str, range_key: str = "1Y") -> dict:
     """OHLCV candles for the charting view."""
     range_key = range_key.upper()
-    period, interval = RANGE_PRESETS.get(range_key, RANGE_PRESETS["1Y"])
+    if range_key not in RANGE_PRESETS:
+        range_key = "1Y"
+    period, interval = RANGE_PRESETS[range_key]
     symbol = symbol.upper()
 
     def fetch() -> dict:
@@ -311,24 +426,26 @@ async def get_history(symbol: str, range_key: str = "1Y") -> dict:
                 "volume": int(row["Volume"]) if _safe(row.get("Volume")) else 0,
             })
 
-        first_close = candles[0]["close"] if candles else None
-        last_close = candles[-1]["close"] if candles else None
-        change = (last_close - first_close) if (first_close and last_close) else None
-
+        change, change_pct = _period_change(candles)
         return {
             "symbol": symbol,
             "range": range_key,
             "interval": interval,
             "intraday": intraday,
             "candles": candles,
-            "period_change": _round(change),
-            "period_change_percent": _round(
-                change / first_close * 100.0 if change is not None and first_close else None
-            ),
+            "period_change": change,
+            "period_change_percent": change_pct,
         }
 
+    async def produce() -> dict:
+        if range_key in STORE_RANGES:
+            stored = await _history_from_store(symbol, range_key, interval)
+            if stored is not None:
+                return stored
+        return await asyncio.to_thread(fetch)
+
     try:
-        return await _cached(f"hist:{symbol}:{range_key}", HISTORY_TTL, fetch)
+        return await cached_async(f"hist:{symbol}:{range_key}", HISTORY_TTL, produce)
     except Exception as e:
         log.error("history_fetch_failed", symbol=symbol, range=range_key, error=str(e))
         return {"symbol": symbol, "range": range_key, "candles": [], "error": str(e)}
@@ -378,16 +495,36 @@ OVERVIEW_TTL = 30.0
 SPARKLINE_POINTS = 30
 
 
-def _group_snapshot(raw: pd.DataFrame, group: list[dict]) -> list[dict]:
+# A stored month counts as usable once it holds this many sessions; a symbol
+# below it (never backfilled, or newly added) is priced with the full live
+# month as before.
+OVERVIEW_MIN_STORED = 15
+
+
+def _closes_from(raw: pd.DataFrame, symbol: str) -> pd.Series:
+    frame = _frame_for(raw, symbol)
+    if frame is None or "Close" not in frame:
+        return pd.Series(dtype=float)
+    closes = frame["Close"].dropna()
+    closes.index = [ts.date() for ts in closes.index]
+    return closes
+
+
+def _splice(stored: list[tuple[date, float]], live: pd.Series) -> pd.Series:
+    """Stored settled closes, then whatever the live frame has that is newer."""
+    if not stored:
+        return live
+    last = stored[-1][0]
+    newer = live[[d > last for d in live.index]] if not live.empty else live
+    base = pd.Series([c for _, c in stored], index=[d for d, _ in stored], dtype=float)
+    return pd.concat([base, newer]) if not newer.empty else base
+
+
+def _group_snapshot(closes_by_symbol: dict[str, pd.Series], group: list[dict]) -> list[dict]:
     rows = []
     for entry in group:
         sym = entry["symbol"]
-        frame = _frame_for(raw, sym)
-        closes = (
-            frame["Close"].dropna()
-            if frame is not None and "Close" in frame
-            else pd.Series(dtype=float)
-        )
+        closes = closes_by_symbol.get(sym, pd.Series(dtype=float))
         if closes.empty:
             rows.append({**entry, "error": "no data"})
             continue
@@ -416,11 +553,25 @@ async def get_overview() -> dict:
     groups = INDICES + SECTORS + MACRO
     symbols = [g["symbol"] for g in groups]
 
-    def fetch() -> dict:
-        raw = _download(symbols, period="1mo", interval="1d")
-        indices = _group_snapshot(raw, INDICES)
-        sectors = _group_snapshot(raw, SECTORS)
-        macro = _group_snapshot(raw, MACRO)
+    def fetch(stored: dict[str, list[tuple[date, float]]]) -> dict:
+        # Symbols with a settled month in the store only need today from the
+        # provider; the rest are priced over the whole month, as they always
+        # were. With the store down or cold this is exactly the old request.
+        warm = [s for s in symbols if len(stored.get(s, [])) >= OVERVIEW_MIN_STORED]
+        cold = [s for s in symbols if s not in warm]
+        closes: dict[str, pd.Series] = {}
+        if warm:
+            raw = _download(warm, period="5d", interval="1d")
+            for sym in warm:
+                closes[sym] = _splice(stored[sym], _closes_from(raw, sym))
+        if cold:
+            raw = _download(cold, period="1mo", interval="1d")
+            for sym in cold:
+                closes[sym] = _closes_from(raw, sym)
+
+        indices = _group_snapshot(closes, INDICES)
+        sectors = _group_snapshot(closes, SECTORS)
+        macro = _group_snapshot(closes, MACRO)
 
         scored = [s for s in sectors if s.get("change_percent") is not None]
         advancing = sum(1 for s in scored if s["change_percent"] > 0)
@@ -444,9 +595,21 @@ async def get_overview() -> dict:
     def complete(result: dict) -> bool:
         return all(row.get("last") is not None for row in result["indices"])
 
+    async def produce() -> dict:
+        from app.db.repositories_market import market_today
+
+        # One calendar month, matching the provider's "1mo" period, so the
+        # period change and sparkline mean what they did before.
+        month = (pd.Timestamp(market_today()) - pd.DateOffset(months=1)).date()
+        stored = {
+            sym: [(d, c) for d, c in rows if d >= month]
+            for sym, rows in (await _stored_closes(symbols, days=35)).items()
+        }
+        return await asyncio.to_thread(fetch, stored)
+
     try:
-        return await _cached(
-            "overview", OVERVIEW_TTL, fetch, should_cache=complete, lock=True
+        return await cached_async(
+            "overview", OVERVIEW_TTL, produce, should_cache=complete, lock=True
         )
     except Exception as e:
         log.error("overview_fetch_failed", error=str(e))
@@ -667,15 +830,38 @@ BREADTH_TTL = 900.0
 BREADTH_INDICES = ["sp500", "nasdaq100", "dow30"]
 
 
-def _day_change(raw: pd.DataFrame, symbol: str) -> float | None:
-    """Percent change vs the previous session's close."""
+def _is_previous_session(stored: date, live_ts: Any) -> bool:
+    live = live_ts.date() if hasattr(live_ts, "date") else live_ts
+    return stored < live and (live - stored).days <= PREV_CLOSE_MAX_GAP_DAYS
+
+
+# A stored close further back than this from the live row is not "the previous
+# session" — it means the store is behind, and the change would span days.
+PREV_CLOSE_MAX_GAP_DAYS = 4
+
+
+def _day_change(
+    raw: pd.DataFrame, symbol: str, stored_prev: tuple[date, float] | None = None
+) -> float | None:
+    """Percent change vs the previous session's close.
+
+    A batch this size regularly comes back with a symbol holding only today's
+    row. The previous close is a settled fact the bar store already has, so it
+    fills that gap instead of dropping the symbol from the count. Today's price
+    still has to come from the provider — the store never holds today.
+    """
     frame = _frame_for(raw, symbol)
     if frame is None or "Close" not in frame:
         return None
     closes = frame["Close"].dropna()
-    if len(closes) < 2:
+    if closes.empty:
         return None
-    prev = float(closes.iloc[-2])
+    if len(closes) >= 2:
+        prev = float(closes.iloc[-2])
+    elif stored_prev is not None and _is_previous_session(stored_prev[0], closes.index[-1]):
+        prev = float(stored_prev[1])
+    else:
+        return None
     if not prev:
         return None
     return (float(closes.iloc[-1]) - prev) / prev * 100.0
@@ -696,9 +882,9 @@ async def get_breadth() -> dict:
     if not universe:
         return {"indices": [], "error": "constituent lists unavailable"}
 
-    def fetch() -> list[dict]:
+    def fetch(prev: dict[str, tuple[date, float]]) -> list[dict]:
         raw = _download(universe, period="5d", interval="1d")
-        changes = {s: _day_change(raw, s) for s in universe}
+        changes = {s: _day_change(raw, s, prev.get(s)) for s in universe}
 
         # A batch this size usually drops a handful of symbols; one retry over
         # just those recovers them and keeps the percentages honest.
@@ -707,7 +893,7 @@ async def get_breadth() -> dict:
             try:
                 retry = _download(missing, period="5d", interval="1d")
                 for sym in missing:
-                    changes[sym] = _day_change(retry, sym)
+                    changes[sym] = _day_change(retry, sym, prev.get(sym))
             except Exception as e:
                 # A failed retry must not discard the symbols we did price.
                 log.warning("breadth_retry_failed", count=len(missing), error=str(e))
@@ -759,9 +945,14 @@ async def get_breadth() -> dict:
         expected = sum(row.get("constituents", 0) for row in rows) or 1
         return counted / expected >= 0.95
 
+    async def produce() -> list[dict]:
+        stored = await _stored_closes(universe, days=7)
+        prev = {sym: rows[-1] for sym, rows in stored.items() if rows}
+        return await asyncio.to_thread(fetch, prev)
+
     try:
-        rows = await _cached(
-            "breadth", BREADTH_TTL, fetch, should_cache=well_covered, lock=True
+        rows = await cached_async(
+            "breadth", BREADTH_TTL, produce, should_cache=well_covered, lock=True
         )
     except Exception as e:
         log.error("breadth_fetch_failed", error=str(e))
