@@ -44,6 +44,7 @@ def _is_retryable(exc: BaseException) -> bool:
     - Bad request: Tavily BadRequestError (400)
     - NewsAPI 401/403 errors
     - ValueError from yfinance for unknown tickers
+    - httpx HTTPStatusError with a 4xx status other than 429
 
     Transient failures (ARE retried):
     - Network errors: ConnectionError, OSError, TimeoutError
@@ -76,6 +77,18 @@ def _is_retryable(exc: BaseException) -> bool:
             msg = str(exc).lower()
             if "401" in msg or "403" in msg or "apikey" in msg:
                 return False
+    except ImportError:
+        pass
+
+    # An HTTP 4xx from httpx is the server's answer about the request as
+    # made, so repeating it changes nothing — except 429, which says "later".
+    # Without this, a Cloudflare 403 (StockTwits blocks server clients) was
+    # retried three times with backoff before the caller saw it.
+    try:
+        import httpx
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
+            return status == 429 or status >= 500
     except ImportError:
         pass
 

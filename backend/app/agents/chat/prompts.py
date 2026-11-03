@@ -4,7 +4,7 @@ from __future__ import annotations
 
 PROMPT_VERSION = "chat-v1"
 
-# Seven of the twenty-two registered tools. The agent is handed indicators,
+# Seven of the twenty-four registered tools. The agent is handed indicators,
 # quote and profile before it is asked anything, so tools exist for the
 # follow-up rather than the first answer.
 #
