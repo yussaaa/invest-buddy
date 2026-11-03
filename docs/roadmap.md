@@ -171,25 +171,32 @@ Ranked by value against effort:
 
 ## Opened by Phase 16
 
-- [ ] **Two slope numbers describe the same average.** `MaRow`'s tooltip shows
-      `slope_percent_5d` (arithmetic, 5 sessions) while the trend panel shows a
-      21-session geometric annualised figure. Both are labelled precisely, but
-      consolidating on the new definition is a clean follow-up — `MaRow` is
-      `slope_percent_5d`'s only consumer in the repo.
-- [ ] **No `explain_valuation` endpoint**, though both sibling panels have one.
-      Deliberate: it is the riskiest prose surface in the app, and the guard has
-      a hole — `\b(clearly|obviously|definitely) (under|over)valued\b` does not
-      catch *"appears undervalued"*. Widen the pattern before building it.
-- [ ] **`signals.py` still reads neither slope nor z-score**, so the chat agent
-      cannot cite them. Its `Category` literal declares `"volatility"` with no
-      rule emitting it — a slope rule and a `stretched_from_ma200` rule would
-      fill both gaps. Must keep the no-action-verb invariant.
+- [x] ~~Two slope numbers describe the same average~~ — fixed 2026-11-03.
+      `compute_ma_ladder` now computes its slope with `trend.slope_per_day` /
+      `annualise` / `classify_slope` (`slope_annualised_percent`,
+      `slope_label`), so `MaRow`'s tooltip and the trend panel show the same
+      number; `test_trend.py` pins that they match. `slope_percent_5d` is gone.
+- [x] ~~No `explain_valuation` endpoint~~ — built 2026-11-03, guard first. The
+      strict pattern now catches hedged forms (*"appears undervalued"*,
+      *"looks significantly overvalued"*), and a `mode="valuation"` bans the
+      verdict vocabulary in any wording. `GET /market/valuation/explain` is the
+      first explainer whose output is checked before it is shown — advice in
+      valuation mode plus numeric grounding against the brief the model was
+      given — and on failure it returns a templated explanation flagged
+      `guarded: true`, the `_hedged_reply` mechanism lifted from chat.
+- [x] ~~`signals.py` still reads neither slope nor z-score~~ — fixed
+      2026-11-03. `ma200_slope_rising` / `ma200_slope_falling` (trend, long)
+      and `stretched_from_ma200` (volatility, low reliability) read
+      `technicals["trend"]`; `"volatility"` now has a rule and a `coverage` key.
+      Both run through the advice and action-verb invariant tests.
 - [ ] **The trend summary widened the grounding evidence set** from 54 numbers
       to 67, and the coincidental-grounding rate on $100–400 prices from 26.6%
       to 32.3%. Deliberate and small — the series would have made it 1,258 and
       47.3% — but the tolerance in `_is_grounded` is worth revisiting on its own
-      merits; 26.6% was already high before this branch touched it.
-- [ ] **The scenario band is asymmetric in output** even though its inputs are
-      symmetric, because value is convex in the discount rate: JNJ comes out
-      $126 / $246 / $799. That is real DCF behaviour rather than a bug, but a
-      reader may not expect it. The sensitivity grid is the mitigation.
+      merits; 26.6% was already high before this branch touched it. *Being
+      addressed on `fix/open-items` (off `dev`), since `_is_grounded` is
+      identical on both branches.*
+- [x] ~~The scenario band is asymmetric in output~~ — explained 2026-11-03.
+      Still real DCF behaviour (JNJ: $126 / $246 / $799), but the scenario card
+      now says so in one line when the bull case's distance above base exceeds
+      1.5× the bear case's distance below, and points at the grid.
