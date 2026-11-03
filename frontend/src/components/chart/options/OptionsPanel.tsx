@@ -62,6 +62,10 @@ function isStrategy(value: unknown): value is OptionStrategyKey {
   return STRATEGIES.some(s => s.key === value)
 }
 
+/** The header moved up into <Section>; this is what it renders. */
+export const OPTIONS_SUBLABEL =
+  'Chain via yfinance (delayed) · greeks computed Black-Scholes · probabilities risk-neutral'
+
 interface OptionsPanelProps {
   symbol: string
 }
@@ -129,16 +133,6 @@ export default function OptionsPanel({ symbol }: OptionsPanelProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Options screener
-        </h2>
-        <span className="text-[11px] text-muted-foreground/60">
-          Chain via yfinance (delayed) · greeks computed Black-Scholes · probabilities
-          risk-neutral
-        </span>
-      </div>
-
       {loading && !data ? (
         <Card>
           <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">

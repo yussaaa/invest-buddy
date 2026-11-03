@@ -238,6 +238,58 @@ The largest single subsystem — ~2,000 lines across four services, ~2,500 count
 
 Screens: cash-secured puts, covered calls, LEAPS calls, put credit spreads.
 
+### Trend and z-score (Phase 16)
+
+`services/trend.py` — pure, over a close series `get_technicals` has already
+loaded, so the summary costs no I/O at all.
+
+Two definitions carry it. The **slope** is geometric over 21 sessions,
+annualised by compounding, and the headline scalar is literally the last point
+of the charted series — computing it from a different lookback is how a number
+ends up disagreeing with the line beside it. 0.05%/day is 13.4%/yr, not 12.6%.
+
+**Sigma is the dispersion of price over the same 200-day window the average is
+taken over**, which makes price touching the +1.5σ band and the z-score reading
++1.5 the same event rather than two numbers that nearly agree. The band chart
+and the z chart are two views of one quantity, and a test pins it.
+
+> **The series never enters `get_technicals`.** `chat/graph.py:_grounding_evidence`
+> hands that whole dict to `check_numeric_grounding`, which flattens every
+> number into the set the model's figures are checked against. Measured on
+> AAPL: 54 numbers today, of which 26.6% of arbitrary $100–400 prices already
+> ground by coincidence. Two years of daily series would make it 1,258 numbers
+> and 47.3% — the guard would not fail, it would stop guarding. `trend_profile`
+> has two modes for this reason: summary (13 numbers) inline, series only
+> through `GET /market/trend`.
+
+### Valuation (Phase 16)
+
+`valuation_math.py` (pure) + `valuation.py` (I/O), mirroring the
+`options_math` / `options` split.
+
+**The headline is a reverse DCF** — the FCF growth today's price requires —
+rather than a fair value. A forward DCF on this data produces systematically
+absurd output (every mega-cap 73–78% "overvalued"), because most of the answer
+is a terminal value resting on a growth rate estimated from four noisy years.
+Inverting it is robust: JNJ implies 7.9%/yr against its own 6.6%.
+
+Three things that would otherwise be silently wrong:
+
+- **`info["freeCashflow"]` is unreliable** — MSFT reports $16.5 B against $67 B
+  on its own statement. The statement is the source; `info` is the fallback.
+  This bug was live in `financial_ratios.fcf_yield` and is fixed there too.
+- **The cash flow is levered** (after interest paid), so it is discounted at the
+  cost of equity and net debt is *not* subtracted. "Discount at WACC, subtract
+  net debt" belongs to unlevered flow and would double-count the debt.
+- **Beta is clamped** to [0.5, 2.5] and the rate to [6%, 15%] — a 0.23-beta name
+  otherwise gets a 5.2% rate and looks worth triple — **and every clamp is
+  reported**, never applied silently.
+
+Negative FCF is refused rather than valued, with the inputs still returned so
+the panel can say why. `terminal_value_share` and `implied_exit_fcf_multiple`
+ship with every result, because a reader told 69% of the figure is terminal
+value calibrates faster than a disclaimer.
+
 ---
 
 ## 5. Cross-cutting subsystems
@@ -424,6 +476,30 @@ the toolbar does not offer would render a selection nothing can clear.
 `<script>` on every mount and cannot be mutated in place, and the chart canvas
 is re-created so zoom and pan are lost even though the data is instant. Both
 need the page to stay mounted, not the data to be cached.
+
+#### Charting page sections
+
+Four collapsible panels — Technical, Trend, Valuation, Options — via
+`chart/Section.tsx`, with open state persisted through `sectionPrefs` and
+validated on read.
+
+Deliberately **not** `ui/collapsible.tsx`: that animates height, so it must
+render children to measure `scrollHeight`, and a closed panel would still mount
+its charts and pull their code. `Section` mounts on first open and hides
+thereafter, so collapsing does not discard a loaded chart or a paid-for model
+explanation. The trade is the height animation.
+
+This is only viable because of the client cache above — a remount inside the
+TTL is a synchronous read with no request, so a panel can be thrown away and
+rebuilt for free. With all four closed the page is ~2.4k px against ~8.6k open,
+and neither the data nor the chart chunks are fetched.
+
+Charts use **recharts** (`components/charts/`, the library layer, versus
+`components/chart/`, the feature). The σ band decides it: filling between two
+series is that chart's whole purpose and lightweight-charts cannot do it.
+recharts costs ~112 KB gzipped, which is why `TrendPanel` and `ValuationPanel`
+are `React.lazy` — each lands in its own chunk that a reader who leaves the
+section closed never downloads.
 
 **Future options, deliberately not taken:**
 

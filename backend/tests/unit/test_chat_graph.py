@@ -81,7 +81,7 @@ TECHNICALS = {
         "ticker": "AAPL", "current_price": 180.0,
         "levels": [{"window": 200, "sma": 195.0, "available": True,
                     "above": False, "distance_percent": -7.7,
-                    "slope_percent_5d": -0.2, "direction": "falling"}],
+                    "slope_annualised_percent": -9.5, "direction": "falling"}],
         "crosses": [], "alignment": "mixed", "above_count": 0, "total_count": 1,
     },
     "drawdown": {"error": "x"},

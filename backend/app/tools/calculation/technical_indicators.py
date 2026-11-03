@@ -16,6 +16,13 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from app.services.trend import (
+    SLOPE_LOOKBACK,
+    annualise,
+    classify_slope,
+    slope_per_day,
+)
+
 
 def _get_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
     """Fetch OHLCV as a DataFrame (sync helper).
@@ -257,13 +264,13 @@ async def compute_ma_ladder(
 
             series = close.rolling(w).mean()
             sma = _safe(series.iloc[-1])
-            # Slope over the last week of trading, as a percent of the level.
-            prior = _safe(series.iloc[-6]) if len(series) > 6 else None
-            slope = (
-                round((sma - prior) / prior * 100, 3)
-                if sma is not None and prior not in (None, 0)
-                else None
-            )
+            # Slope on the trend panel's definition — geometric, over
+            # SLOPE_LOOKBACK sessions, compounded to a year — so the ladder row
+            # and the trend panel cannot show two different numbers for the
+            # same average.
+            averages = [None if pd.isna(v) else float(v) for v in series]
+            per_day = slope_per_day(averages, SLOPE_LOOKBACK)[-1] if averages else None
+            slope = round(annualise(per_day), 1) if per_day is not None else None
 
             levels.append({
                 "window": w,
@@ -274,7 +281,8 @@ async def compute_ma_ladder(
                     round((current - sma) / sma * 100, 2)
                     if current and sma else None
                 ),
-                "slope_percent_5d": slope,
+                "slope_annualised_percent": slope,
+                "slope_label": classify_slope(slope) if slope is not None else None,
                 "direction": (
                     None if slope is None else "rising" if slope > 0 else "falling"
                 ),

@@ -28,6 +28,7 @@ had drifted badly enough to be actively misleading (it described Phase 3 as
 | **13** Chat agent | Bounded ReAct cycle, deterministic signals, chat guardrails | `agents/chat/` |
 | **14** Movers + week nav | Cap-tier movers with sectors, navigable events week | `services/market_data.py` |
 | **15** Client cache | TTL cache above the router; instant tab switches, persisted toolbars | `frontend/src/lib/clientCache.ts` |
+| **16** Trend + valuation | SMA slope, z-score and σ band; reverse-DCF valuation panel; collapsible charting sections | `services/trend.py`, `services/valuation*.py` |
 
 Phases 10–12 and 14 were never written into the phase list. They are recorded
 here and summarised in `CLAUDE.md`.
@@ -65,6 +66,11 @@ The three written documents exist. Not done:
 
 ### Correctness / hygiene
 
+- [x] ~~`financial_ratios.fcf_yield` read `info["freeCashflow"]`~~ — fixed
+      2026-08-18. That field reports MSFT at $16.5bn against $67bn on its own
+      cash flow statement, turning a ~1.9% yield into 0.46%. It was the single
+      custom calculation in the fundamentals stack, and it had been wrong since
+      it was written. Now reads the statement, with `info` as fallback.
 - [x] ~~**`get_options_chain` is registered under category `sentiment`**~~ —
       fixed 2026-11-03. Filed under `options`; its data source deliberately unchanged.
 - [ ] **Frontend tests cover pure modules only.** Now three files —
@@ -197,3 +203,36 @@ Ranked by value against effort:
    changes what the product can claim.
 4. **Replace the NewsAPI key and top up OpenAI** — both configured credentials
    are dead, so news is unavailable and the default provider fails every call.
+
+---
+
+## Opened by Phase 16
+
+- [x] ~~Two slope numbers describe the same average~~ — fixed 2026-11-03.
+      `compute_ma_ladder` now computes its slope with `trend.slope_per_day` /
+      `annualise` / `classify_slope` (`slope_annualised_percent`,
+      `slope_label`), so `MaRow`'s tooltip and the trend panel show the same
+      number; `test_trend.py` pins that they match. `slope_percent_5d` is gone.
+- [x] ~~No `explain_valuation` endpoint~~ — built 2026-11-03, guard first. The
+      strict pattern now catches hedged forms (*"appears undervalued"*,
+      *"looks significantly overvalued"*), and a `mode="valuation"` bans the
+      verdict vocabulary in any wording. `GET /market/valuation/explain` is the
+      first explainer whose output is checked before it is shown — advice in
+      valuation mode plus numeric grounding against the brief the model was
+      given — and on failure it returns a templated explanation flagged
+      `guarded: true`, the `_hedged_reply` mechanism lifted from chat.
+- [x] ~~`signals.py` still reads neither slope nor z-score~~ — fixed
+      2026-11-03. `ma200_slope_rising` / `ma200_slope_falling` (trend, long)
+      and `stretched_from_ma200` (volatility, low reliability) read
+      `technicals["trend"]`; `"volatility"` now has a rule and a `coverage` key.
+      Both run through the advice and action-verb invariant tests.
+- [x] ~~**The trend summary widened the grounding evidence set**~~ from 54
+      numbers to 67, and the coincidental-grounding rate on $100–400 prices from
+      26.6% to 32.3%. The series stays out (it would have made it 1,258 and
+      47.3%); the tolerance itself was fixed on `fix/open-items` (#10) — see
+      *Guardrails* above: 0.09% at two decimals, so the extra 13 numbers no
+      longer move it materially.
+- [x] ~~The scenario band is asymmetric in output~~ — explained 2026-11-03.
+      Still real DCF behaviour (JNJ: $126 / $246 / $799), but the scenario card
+      now says so in one line when the bull case's distance above base exceeds
+      1.5× the bear case's distance below, and points at the grid.

@@ -55,7 +55,13 @@ _INVESTMENT_ADVICE_PATTERNS: list[str] = [
     r"\byou (must|need to|ought to) (buy|sell|exit|enter)\b",
     r"\btime to (buy|sell|exit|enter)\b",
     r"\bexcellent (buying|selling) opportunity\b",
-    r"\b(clearly|obviously|definitely) (undervalued|overvalued)\b",
+    # A hedge is still a verdict: "appears undervalued" says the same thing as
+    # "clearly undervalued", only more politely. The earlier pattern caught the
+    # confident form alone, which is exactly backwards for a model trained to
+    # soften its claims.
+    r"\b(?:clearly|obviously|definitely|appears?|looks?|seems?|is|are)"
+    r"(?: to be)?(?: (?:significantly|deeply|materially|meaningfully|somewhat))?"
+    r" (?:undervalued|overvalued)\b",
     r"\bwill (rise|fall|drop|surge|collapse|skyrocket) to \$[\d,]+",
 ]
 
@@ -90,6 +96,24 @@ _CHAT_CAPITULATION_PATTERNS: list[str] = [
     r"\bin your (?:shoes|position)\b",
 ]
 
+# Additionally blocked when the text explains a valuation.
+#
+# The valuation panel is the riskiest prose surface in the app: its whole
+# subject is the gap between a price and a number a model produced, and the
+# shortest sentence about that gap is a verdict. The explanation may say what
+# the price implies and how the DCF value moves with its assumptions; it may not
+# say what the stock *is* — cheap, expensive, a bargain, fairly valued — in any
+# wording, hedged or not. Strict mode stays narrower because analyst reports
+# legitimately discuss valuation multiples relative to peers.
+_VALUATION_VERDICT_PATTERNS: list[str] = [
+    r"\b(?:under|over)[- ]?valued\b",
+    r"\b(?:under|over)[- ]?valuation\b",
+    r"\b(?:cheap|cheaply|expensive|a bargain|bargain price|fairly valued|fully valued|richly valued)\b",
+    r"\b(?:fair|intrinsic|true) value (?:is|of|at|sits at) \$?[\d,]",
+    r"\b(?:margin of safety|upside to fair value)\b",
+    r"\bmispriced\b",
+]
+
 _COMPILED_ADVICE_PATTERNS = [
     re.compile(p, re.IGNORECASE) for p in _INVESTMENT_ADVICE_PATTERNS
 ]
@@ -97,6 +121,16 @@ _COMPILED_ADVICE_PATTERNS = [
 _COMPILED_CHAT_PATTERNS = _COMPILED_ADVICE_PATTERNS + [
     re.compile(p, re.IGNORECASE) for p in _CHAT_CAPITULATION_PATTERNS
 ]
+
+_COMPILED_VALUATION_PATTERNS = _COMPILED_CHAT_PATTERNS + [
+    re.compile(p, re.IGNORECASE) for p in _VALUATION_VERDICT_PATTERNS
+]
+
+_PATTERNS_BY_MODE = {
+    "strict": _COMPILED_ADVICE_PATTERNS,
+    "chat": _COMPILED_CHAT_PATTERNS,
+    "valuation": _COMPILED_VALUATION_PATTERNS,
+}
 
 # ── Numeric grounding ──────────────────────────────────────────────────────
 
@@ -236,20 +270,24 @@ async def check_hallucination(
         return 0.3, [f"Hallucination check failed: {exc}"]
 
 
-def check_investment_advice(text: str, mode: Literal["strict", "chat"] = "strict") -> list[str]:
+def check_investment_advice(
+    text: str, mode: Literal["strict", "chat", "valuation"] = "strict"
+) -> list[str]:
     """Regex-based scan for phrases that constitute direct investment advice.
 
     Args:
         text: Any free-form text to scan (findings, summaries, reports).
         mode: "strict" is the analyst-report policy and the default, so every
             existing caller is unaffected. "chat" adds the capitulation
-            patterns — it is a superset, never a relaxation.
+            patterns — it is a superset, never a relaxation. "valuation" adds
+            the verdict vocabulary on top of chat, for the valuation
+            explanation only.
 
     Returns:
         List of matched phrases that violate the no-direct-advice policy.
         Empty list means the text is clean.
     """
-    patterns = _COMPILED_CHAT_PATTERNS if mode == "chat" else _COMPILED_ADVICE_PATTERNS
+    patterns = _PATTERNS_BY_MODE.get(mode, _COMPILED_ADVICE_PATTERNS)
 
     flagged: list[str] = []
     for pattern in patterns:

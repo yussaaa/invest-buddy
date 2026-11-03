@@ -66,13 +66,13 @@ def ladder_block(
         levels.append({
             "window": 50, "sma": 100.0, "available": True,
             "above": ma50_distance > 0, "distance_percent": ma50_distance,
-            "slope_percent_5d": 0.1, "direction": "rising",
+            "slope_annualised_percent": 12.0, "direction": "rising",
         })
     if ma200_distance is not None:
         levels.append({
             "window": 200, "sma": 95.0, "available": True,
             "above": ma200_distance > 0, "distance_percent": ma200_distance,
-            "slope_percent_5d": 0.1, "direction": "rising",
+            "slope_annualised_percent": 12.0, "direction": "rising",
         })
     return {
         "ticker": "TEST",
@@ -101,7 +101,21 @@ def drawdown_block(from_high: float) -> dict:
     }
 
 
-def technicals(rsi=None, macd=None, ladder=None, drawdown=None) -> dict:
+def trend_block(annualised: float | None = 3.0, z: float | None = 0.4,
+                distance: float | None = 2.0) -> dict:
+    """A trend_profile summary, as get_technicals embeds it."""
+    return {
+        "price": 100.0, "reference_window": 200, "sma": 98.0,
+        "distance_percent": distance, "sigma": 4.0, "z_score": z,
+        "z_label": "neutral", "z_band": "inside", "band_sigma": 1.5,
+        "band_upper": 104.0, "band_lower": 92.0,
+        "slopes": {"200": {"per_day_percent": 0.01, "annualised_percent": annualised,
+                           "label": "weak_uptrend"}},
+        "sessions": 500,
+    }
+
+
+def technicals(rsi=None, macd=None, ladder=None, drawdown=None, trend=None) -> dict:
     """A get_technicals-shaped payload. Omitted blocks report as errors."""
     err = {"error": "unavailable"}
     return {
@@ -110,6 +124,7 @@ def technicals(rsi=None, macd=None, ladder=None, drawdown=None) -> dict:
         "macd": macd if macd is not None else err,
         "moving_averages": ladder if ladder is not None else err,
         "drawdown": drawdown if drawdown is not None else err,
+        "trend": trend if trend is not None else err,
         "as_of": "2026-08-06T12:00:00+00:00",
     }
 
@@ -348,7 +363,8 @@ def test_every_indicator_failing_yields_an_empty_but_valid_set():
     assert result.net_bias == "inconclusive"
     assert result.bias_score == 0.0
     assert result.coverage == {
-        "momentum": False, "trend": False, "level": False, "event": False
+        "momentum": False, "trend": False, "volatility": False,
+        "level": False, "event": False,
     }
 
 
@@ -392,6 +408,63 @@ def test_identical_input_yields_identical_output():
     assert derive_signals(payload).model_dump() == derive_signals(payload).model_dump()
 
 
+# ── Trend: the 200-day slope and the z-score ────────────────────────────────
+
+
+def test_a_rising_200_day_average_emits_a_long_horizon_trend_signal():
+    result = derive_signals(technicals(trend=trend_block(annualised=14.0)))
+
+    signal = by_id(result, "ma200_slope_rising")
+    assert signal.direction == "bullish"
+    assert signal.timeframe == "long"
+    assert signal.category == "trend"
+    assert signal.evidence["annualised_percent"] == 14.0
+
+
+def test_a_falling_200_day_average_leans_bearish():
+    signal = by_id(derive_signals(technicals(trend=trend_block(annualised=-9.0))),
+                   "ma200_slope_falling")
+    assert signal.direction == "bearish"
+
+
+def test_a_slope_inside_the_trend_threshold_is_not_a_signal():
+    result = derive_signals(technicals(trend=trend_block(annualised=7.9)))
+    assert not ids(result) & {"ma200_slope_rising", "ma200_slope_falling"}
+
+
+def test_stretched_above_the_200_day_band_leans_the_other_way():
+    """Mean reversion, like extended_from_ma50 — and graded low for the same reason."""
+    signal = by_id(derive_signals(technicals(trend=trend_block(z=2.1, distance=18.0))),
+                   "stretched_from_ma200")
+
+    assert signal.direction == "bearish"
+    assert signal.category == "volatility"
+    assert signal.reliability == "low"
+    assert signal.evidence == {"z_score": 2.1, "distance_percent": 18.0,
+                               "threshold_sigma": 1.5}
+
+
+def test_stretched_below_leans_bullish():
+    signal = by_id(derive_signals(technicals(trend=trend_block(z=-1.5, distance=-12.0))),
+                   "stretched_from_ma200")
+    assert signal.direction == "bullish"
+
+
+def test_a_z_score_inside_the_band_is_not_a_signal():
+    result = derive_signals(technicals(trend=trend_block(z=1.49)))
+    assert "stretched_from_ma200" not in ids(result)
+
+
+def test_volatility_coverage_follows_the_trend_block():
+    assert derive_signals(technicals(trend=trend_block())).coverage["volatility"] is True
+    assert derive_signals(technicals()).coverage["volatility"] is False
+
+
+def test_a_trend_block_with_missing_readings_degrades_quietly():
+    result = derive_signals(technicals(trend=trend_block(annualised=None, z=None)))
+    assert result.signals == []
+
+
 # ── The posture test ────────────────────────────────────────────────────────
 
 
@@ -418,6 +491,10 @@ def _every_possible_signal():
         (technicals(drawdown=drawdown_block(-0.5)), None),
         (technicals(drawdown=drawdown_block(-14.0)), None),
         (technicals(drawdown=drawdown_block(-32.0)), None),
+        (technicals(trend=trend_block(annualised=14.0)), None),
+        (technicals(trend=trend_block(annualised=-14.0)), None),
+        (technicals(trend=trend_block(z=2.1, distance=18.0)), None),
+        (technicals(trend=trend_block(z=-2.1, distance=-18.0)), None),
         (technicals(), events),
     ]
     for payload, events_arg in payloads:
@@ -437,6 +514,7 @@ def test_the_engine_covers_every_rule_it_declares():
         "extended_from_ma50", "golden_cross", "death_cross",
         "near_52w_high", "in_correction", "deep_drawdown",
         "earnings_upcoming",
+        "ma200_slope_rising", "ma200_slope_falling", "stretched_from_ma200",
     }
 
 
