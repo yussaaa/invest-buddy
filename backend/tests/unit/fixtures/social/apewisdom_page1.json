@@ -1,0 +1,148 @@
+{
+ "count": 651,
+ "pages": 7,
+ "current_page": 1,
+ "results": [
+  {
+   "rank": 1,
+   "ticker": "AMD",
+   "name": "AMD",
+   "mentions": 189,
+   "upvotes": 2007,
+   "rank_24h_ago": 6,
+   "mentions_24h_ago": 72
+  },
+  {
+   "rank": 2,
+   "ticker": "AAPL",
+   "name": "Apple",
+   "mentions": 109,
+   "upvotes": 403,
+   "rank_24h_ago": 2,
+   "mentions_24h_ago": 103
+  },
+  {
+   "rank": 3,
+   "ticker": "QQQ",
+   "name": "Invesco QQQ ETF",
+   "mentions": 88,
+   "upvotes": 202,
+   "rank_24h_ago": 3,
+   "mentions_24h_ago": 84
+  },
+  {
+   "rank": 4,
+   "ticker": "MU",
+   "name": "Micron Technology",
+   "mentions": 83,
+   "upvotes": 254,
+   "rank_24h_ago": 4,
+   "mentions_24h_ago": 92
+  },
+  {
+   "rank": 5,
+   "ticker": "SPY",
+   "name": "SPDR S&amp;P 500 ETF Trust",
+   "mentions": 81,
+   "upvotes": 242,
+   "rank_24h_ago": 1,
+   "mentions_24h_ago": 125
+  },
+  {
+   "rank": 6,
+   "ticker": "PLTR",
+   "name": "Palantir",
+   "mentions": 60,
+   "upvotes": 219,
+   "rank_24h_ago": 14,
+   "mentions_24h_ago": 45
+  },
+  {
+   "rank": 7,
+   "ticker": "INTC",
+   "name": "Intel",
+   "mentions": 46,
+   "upvotes": 132,
+   "rank_24h_ago": 15,
+   "mentions_24h_ago": 48
+  },
+  {
+   "rank": 8,
+   "ticker": "GOOGL",
+   "name": "Alphabet (Google)",
+   "mentions": 46,
+   "upvotes": 1420,
+   "rank_24h_ago": 12,
+   "mentions_24h_ago": 35
+  },
+  {
+   "rank": 9,
+   "ticker": "RDDT",
+   "name": "Reddit",
+   "mentions": 46,
+   "upvotes": 347,
+   "rank_24h_ago": 10,
+   "mentions_24h_ago": 47
+  },
+  {
+   "rank": 10,
+   "ticker": "TSLA",
+   "name": "Tesla",
+   "mentions": 40,
+   "upvotes": 168,
+   "rank_24h_ago": 7,
+   "mentions_24h_ago": 51
+  },
+  {
+   "rank": 11,
+   "ticker": "GOOG",
+   "name": "Alphabet (Google)",
+   "mentions": 38,
+   "upvotes": 272,
+   "rank_24h_ago": 5,
+   "mentions_24h_ago": 61
+  },
+  {
+   "rank": 12,
+   "ticker": "DTE",
+   "name": "DTE Energy",
+   "mentions": 37,
+   "upvotes": 133,
+   "rank_24h_ago": 27,
+   "mentions_24h_ago": 15
+  },
+  {
+   "rank": "13",
+   "ticker": "GME",
+   "name": "GameStop",
+   "mentions": "40",
+   "upvotes": "512",
+   "rank_24h_ago": "60",
+   "mentions_24h_ago": "9"
+  },
+  {
+   "rank": 14,
+   "ticker": "NEWCO",
+   "name": "New Co &amp; Sons",
+   "mentions": 38,
+   "upvotes": 77,
+   "rank_24h_ago": null,
+   "mentions_24h_ago": null
+  },
+  {
+   "rank": 15,
+   "ticker": "IT",
+   "name": "Gartner",
+   "mentions": 35,
+   "upvotes": 10,
+   "rank_24h_ago": 16,
+   "mentions_24h_ago": 30
+  },
+  {
+   "rank": null,
+   "ticker": "BAD",
+   "name": "Broken",
+   "mentions": 3
+  }
+ ]
+}

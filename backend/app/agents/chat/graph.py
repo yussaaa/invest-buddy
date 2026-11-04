@@ -38,6 +38,13 @@ from app.agents.base.guardrails import (
     check_numeric_grounding,
 )
 from app.agents.base.schemas import GuardrailFlag
+from app.agents.base.tool_loop import (
+    assistant_message,
+    loads as _loads,
+    pending_calls,
+    run_tool_calls,
+    signature as _signature,
+)
 from app.agents.chat.prompts import (
     BLOCKED_REPLY_EMPTY,
     BLOCKED_REPLY_HEADER,
@@ -93,7 +100,7 @@ async def prepare_context_node(state: ChatState) -> dict:
         technicals_service.get_technicals(ticker),
         market_data.get_quotes([ticker]),
         market_data.get_profile(ticker),
-        market_data.get_events(days=14, extra_symbols=ticker),
+        market_data.get_events(days=14, extra_symbols=[ticker]),
         return_exceptions=True,
     )
 
@@ -246,52 +253,16 @@ async def gather_node(state: ChatState) -> dict:
 
     calls = fresh[: settings.chat_max_tool_calls]
     return {
-        "messages": [{
-            "role": "assistant",
-            "content": response.content or None,
-            "tool_calls": [{
-                "id": call.id,
-                "type": "function",
-                "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
-            } for call in calls],
-        }],
+        "messages": [assistant_message(response.content, calls)],
         "tool_iterations": state.get("tool_iterations", 0) + 1,
         "usage": _usage(state, response),
         "latency_breakdown": {"gather": round(time.monotonic() - t0, 3)},
     }
 
 
-def _signature(name: str, arguments: dict) -> str:
-    """Identity of a tool call, stable across argument ordering."""
-    return f"{name}:{json.dumps(arguments, sort_keys=True, default=str)}"
-
-
 def _pending_calls(state: ChatState) -> list[ToolCall]:
     """Tool calls on the last assistant message that have no result yet."""
-    messages = state.get("messages", [])
-    if not messages:
-        return []
-    last = messages[-1]
-    if last.get("role") != "assistant" or not last.get("tool_calls"):
-        return []
-    return [
-        ToolCall(
-            id=raw["id"],
-            name=raw["function"]["name"],
-            arguments=_loads(raw["function"]["arguments"]),
-        )
-        for raw in last["tool_calls"]
-    ]
-
-
-def _loads(raw: Any) -> dict:
-    if isinstance(raw, dict):
-        return raw
-    try:
-        parsed = json.loads(raw or "{}")
-    except (json.JSONDecodeError, TypeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return pending_calls(state.get("messages", []))
 
 
 async def tools_node(state: ChatState) -> dict:
@@ -300,42 +271,14 @@ async def tools_node(state: ChatState) -> dict:
     if not calls:
         return {"messages": []}
 
-    registry = ToolRegistry.get()
-    t0 = time.monotonic()
-    results = await asyncio.gather(
-        *(registry.execute(call.name, call.arguments) for call in calls),
-        return_exceptions=True,
-    )
-
-    messages: list[dict[str, Any]] = []
-    records: list[dict] = []
-
-    for call, result in zip(calls, results):
-        if isinstance(result, Exception):
-            payload, record = (
-                {"error": str(result)},
-                {"name": call.name, "arguments": call.arguments, "success": False,
-                 "error": str(result), "latency_ms": 0, "cache_hit": False},
-            )
-        else:
-            payload = result.data if result.success else {"error": result.error}
-            record = {
-                "name": call.name, "arguments": call.arguments,
-                "success": result.success, "error": result.error,
-                "latency_ms": result.latency_ms, "cache_hit": result.cache_hit,
-            }
-
-        messages.append({
-            "role": "tool",
-            "tool_call_id": call.id,
-            "content": json.dumps(payload, default=str)[:6000],
-        })
-        records.append(record)
-
+    run = await run_tool_calls(calls)
     return {
-        "messages": messages,
-        "tool_records": records,
-        "latency_breakdown": {"tools": round(time.monotonic() - t0, 3)},
+        "messages": run.messages,
+        "tool_records": run.records,
+        # Kept for verify: a figure quoted from a tool result must ground
+        # against the result, which the records above do not carry.
+        "tool_payloads": run.payloads,
+        "latency_breakdown": {"tools": run.seconds},
     }
 
 
@@ -445,7 +388,7 @@ def _grounding_evidence(state: ChatState) -> dict:
         "technicals": state.get("technicals") or {},
         "quote": state.get("quote") or {},
         "profile": state.get("profile") or {},
-        "tools": [record for record in state.get("tool_records", [])],
+        "tools": [p.get("data") for p in state.get("tool_payloads", [])],
         "screen": (state.get("screen") or ScreenContext()).model_dump(mode="json"),
     }
 
@@ -804,7 +747,7 @@ def _merge(state: ChatState, update: dict) -> None:
     plain overwrite.
     """
     for key, value in update.items():
-        if key in ("messages", "tool_records", "flags"):
+        if key in ("messages", "tool_records", "tool_payloads", "flags"):
             state[key] = list(state.get(key) or []) + list(value)
         elif key in ("latency_breakdown", "usage"):
             state[key] = {**(state.get(key) or {}), **value}

@@ -738,3 +738,56 @@ async def test_tokens_buffered_by_a_discarded_speculation_are_never_shown(patche
     assert "early" not in tokens
     assert tokens.strip() == "Final."
     assert provider.cancelled_streams == 1
+
+
+@pytest.mark.asyncio
+async def test_the_on_screen_ticker_joins_the_earnings_universe_as_one_symbol(patched, monkeypatch):
+    """A bare string iterates into letters, so AAPL became ['A','A','P','L']."""
+    seen: list = []
+
+    async def fake_events(days=7, extra_symbols=None):
+        seen.append(extra_symbols)
+        return {"earnings": [], "economic": {"events": [], "available": False}}
+
+    monkeypatch.setattr(chat_graph.market_data, "get_events", fake_events)
+    use_provider(monkeypatch, FakeProvider([reply("ENOUGH"), reply("ok")]))
+
+    await run()
+
+    assert seen == [["AAPL"]]
+
+
+@pytest.mark.asyncio
+async def test_a_figure_quoted_from_a_tool_result_is_grounded(patched, monkeypatch):
+    """Records carry no numbers, so verify used to read tool figures as invented."""
+    async def execute(name, arguments):
+        patched.executed.append((name, arguments))
+        return ToolResult(success=True, latency_ms=3,
+                          data={"stocktwits": {"bull_pct": 72.4, "tagged": 29}})
+
+    monkeypatch.setattr(patched, "execute", execute)
+    use_provider(monkeypatch, FakeProvider([
+        reply(tool_calls=[ToolCall(id="c1", name="get_social_sentiment",
+                                   arguments={"ticker": "AAPL"})]),
+        reply("ENOUGH"),
+        reply("Of 29 tagged messages, 72.4% are tagged bullish."),
+    ]))
+
+    state = await run()
+
+    assert not state["blocked"], state["flags"]
+    assert state["tool_payloads"][0]["data"]["stocktwits"]["bull_pct"] == 72.4
+
+
+@pytest.mark.asyncio
+async def test_a_figure_in_no_tool_result_is_still_caught(patched, monkeypatch):
+    use_provider(monkeypatch, FakeProvider([
+        reply(tool_calls=[ToolCall(id="c1", name="get_social_sentiment",
+                                   arguments={"ticker": "AAPL"})]),
+        reply("ENOUGH"),
+        reply("Of 29 tagged messages, 93.7% are tagged bullish."),
+    ]))
+
+    state = await run()
+
+    assert state["blocked"]

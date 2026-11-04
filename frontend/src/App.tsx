@@ -17,7 +17,7 @@ import {
   Clock,
   Globe2,
   List,
-  Settings,
+  Radar,
   TrendingUp,
 } from 'lucide-react'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -26,11 +26,13 @@ import { ScreenContextProvider } from '@/context/ScreenContext'
 import { cn, readJSON, writeJSON } from '@/lib/utils'
 import { api } from './lib/api'
 import { setLlmProvider } from './lib/llmProvider'
+import SidebarAccount from './components/SidebarAccount'
 import ChatLauncher from './components/chat/ChatLauncher'
 import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
 import ChartingPage from './pages/ChartingPage'
 import MarketPage from './pages/MarketPage'
+import SignalsPage from './pages/SignalsPage'
 import WatchlistPage from './pages/WatchlistPage'
 import HistoryPage from './pages/HistoryPage'
 import SettingsPage from './pages/SettingsPage'
@@ -39,11 +41,13 @@ import { PageActiveContext } from '@/context/PageActive'
 const NAV_ITEMS = [
   { to: '/charting', label: 'Charting', icon: CandlestickChart },
   { to: '/market', label: 'Market', icon: Globe2 },
+  { to: '/signals', label: 'Signals', icon: Radar },
   { to: '/analyze', label: 'Analyze', icon: TrendingUp },
   { to: '/watchlist', label: 'Watchlist', icon: List },
   { to: '/history', label: 'History', icon: Clock },
-  { to: '/settings', label: 'Settings', icon: Settings },
 ]
+// Settings is not a feature, so it isn't here: it is the gear at the foot of
+// the sidebar (components/SidebarAccount.tsx).
 
 const SIDEBAR_KEY = 'agent-invest-sidebar'
 
@@ -95,6 +99,28 @@ function Sidebar({ collapsed, width, onToggle, onResize }: SidebarProps) {
     </button>
   )
 
+  // Icons stay clickable when collapsed, so navigation never costs more than
+  // one click regardless of the panel's state.
+  const navLink = ({ to, label, icon: Icon }: (typeof NAV_ITEMS)[number]) => (
+    <NavLink
+      key={to}
+      to={to}
+      title={collapsed ? label : undefined}
+      className={({ isActive }) =>
+        cn(
+          'flex items-center rounded-lg text-sm font-medium transition-colors',
+          collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5',
+          isActive
+            ? 'bg-primary/20 text-primary'
+            : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+        )
+      }
+    >
+      <Icon size={17} className="shrink-0" />
+      {!collapsed && <span className="truncate">{label}</span>}
+    </NavLink>
+  )
+
   return (
     // Pinned to the viewport like the watchlist rail. Without this the panel
     // stretches to the full page height on a long page, pushing anything below
@@ -130,37 +156,13 @@ function Sidebar({ collapsed, width, onToggle, onResize }: SidebarProps) {
           collapsed ? 'px-2' : 'px-3'
         )}
       >
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            title={collapsed ? label : undefined}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center rounded-lg text-sm font-medium transition-colors',
-                collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2.5',
-                isActive
-                  ? 'bg-primary/20 text-primary'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-              )
-            }
-          >
-            <Icon size={17} className="shrink-0" />
-            {!collapsed && <span className="truncate">{label}</span>}
-          </NavLink>
-        ))}
+        {NAV_ITEMS.map(navLink)}
       </nav>
 
       <Separator />
 
-      {/* Footer — hidden when collapsed, where there is no room for prose */}
-      {!collapsed && (
-        <div className="px-5 py-4">
-          <p className="truncate text-xs text-muted-foreground/50">
-            v0.1.0 · Not financial advice
-          </p>
-        </div>
-      )}
+      {/* Who you are, and the always-visible Settings gear. */}
+      <SidebarAccount collapsed={collapsed} />
 
       {/* Drag handle — hidden while collapsed, where the width is fixed */}
       {!collapsed && (
@@ -179,7 +181,7 @@ function Sidebar({ collapsed, width, onToggle, onResize }: SidebarProps) {
 
 // Pages that take a ?ticker= — a watchlist click stays on the current one
 // instead of yanking the user over to Analyze.
-const TICKER_AWARE_PATHS = ['/charting', '/analyze']
+const TICKER_AWARE_PATHS = ['/charting', '/analyze', '/signals']
 
 function AppShell() {
   const navigate = useNavigate()
@@ -235,12 +237,17 @@ function AppShell() {
         onToggle={() => setSidebar(prev => ({ ...prev, collapsed: !prev.collapsed }))}
         onResize={setSidebarWidth}
       />
-      <main className="flex-1 min-w-0 overflow-y-auto">
+      {/* The window scrolls, not <main> — it grows with its content. Clip,
+          not overflow-auto: an auto/scroll value makes <main> a scroll
+          container that never scrolls, and every `sticky` inside a page then
+          sticks to it and silently does nothing. */}
+      <main className="flex-1 min-w-0 overflow-x-clip">
         <Routes>
           <Route path="/" element={<Navigate to="/charting" replace />} />
           <Route path="/charting" element={<ChartingPage />} />
           {/* Rendered below, outside <Routes>, so leaving does not unmount it. */}
           <Route path="/market" element={null} />
+          <Route path="/signals" element={<SignalsPage />} />
           <Route path="/analyze" element={<AnalyzePage />} />
           <Route path="/watchlist" element={<WatchlistPage />} />
           <Route path="/history" element={<HistoryPage />} />

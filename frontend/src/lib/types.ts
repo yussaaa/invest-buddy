@@ -729,7 +729,7 @@ export interface Watchlist {
 export type SignalDirection = 'bullish' | 'bearish' | 'neutral'
 export type SignalTimeframe = 'intraday' | 'short' | 'medium' | 'long'
 export type SignalReliability = 'low' | 'medium' | 'high'
-export type SignalCategory = 'momentum' | 'trend' | 'volatility' | 'level' | 'event'
+export type SignalCategory = 'momentum' | 'trend' | 'volatility' | 'level' | 'event' | 'social'
 export type NetBias = 'bullish' | 'bearish' | 'mixed' | 'inconclusive'
 
 export interface Signal {
@@ -823,4 +823,201 @@ export interface ChatResponse {
   model: string
   usage: Record<string, number>
   latency_ms: number
+}
+
+// ── Signals page ──────────────────────────────────────────────────────────────
+
+export type SocialSourceState = 'live' | 'blocked' | 'disabled' | 'not_configured'
+
+export interface SocialSourceStatus {
+  id: string
+  label: string
+  kind: 'live' | 'placeholder'
+  capabilities: string[]
+  enabled: boolean
+  state: SocialSourceState
+  reason: string | null
+}
+
+export interface SignalSources {
+  sources: SocialSourceStatus[]
+  filters: { id: string; label: string }[]
+  disclaimer: string
+}
+
+export interface TrendingRow {
+  symbol: string
+  name: string
+  rank: number
+  rank_24h_ago: number | null
+  /** Positive means it climbed. */
+  rank_change: number | null
+  mentions: number
+  mentions_24h_ago: number | null
+  mention_change_pct: number | null
+  upvotes: number | null
+  attention_z: number | null
+  history_days: number
+  signal_ids: string[]
+}
+
+export interface TrendingPayload {
+  source: string
+  filter: string
+  as_of: string
+  available: boolean
+  caveat: string | null
+  stale: boolean
+  total: number | null
+  rows: TrendingRow[]
+  error?: string
+}
+
+export interface ScreenPreset {
+  id: string
+  label: string
+  hint: string
+}
+
+export interface ScreenRow {
+  symbol: string
+  name: string
+  sector: string | null
+  last: number | null
+  change_percent: number | null
+  volume: number | null
+  avg_volume: number | null
+  rel_volume: number | null
+  market_cap: number | null
+  week52_change_percent: number | null
+  social: { rank: number; mention_change_pct: number | null } | null
+}
+
+export interface ScreenPayload {
+  preset: string
+  label?: string
+  hint?: string
+  rows: ScreenRow[]
+  stale?: boolean
+  as_of?: string
+  error?: string
+}
+
+export interface RedditAttention {
+  source: string
+  available: boolean
+  caveat: string | null
+  stale: boolean
+  symbol: string
+  rank: number | null
+  rank_24h_ago: number | null
+  rank_change: number | null
+  mentions: number | null
+  mentions_24h_ago: number | null
+  mention_change_pct: number | null
+  upvotes: number | null
+  attention_z: number | null
+  history_days: number
+  history: { date: string; mentions: number; rank: number | null }[]
+  url: string | null
+}
+
+export interface CrowdTags {
+  source: string
+  available: boolean
+  caveat: string | null
+  stale: boolean
+  symbol: string
+  sampled: number
+  bullish: number
+  bearish: number
+  untagged: number
+  bull_pct: number | null
+  window_hours: number | null
+  watchlist_count: number | null
+  url: string | null
+}
+
+export interface SocialPositioning {
+  short_percent_float: number | null
+  short_ratio: number | null
+  shares_short: number | null
+  shares_short_prior_month: number | null
+  short_change_pct: number | null
+}
+
+export interface SocialSnapshot {
+  symbol: string
+  name: string
+  sector: string | null
+  as_of: string
+  reddit: RedditAttention | null
+  stocktwits: CrowdTags | null
+  positioning: SocialPositioning
+  /** Slow-moving stats; price and today's volume come from the live quote store. */
+  market?: { market_cap: number | null; avg_volume: number | null; currency: string | null }
+  social_signal_set: SignalSet
+  technical_signal_set: SignalSet | null
+  disclaimer: string
+  error?: string
+}
+
+/** GET /signals/ticker/vol — 30-day ATM IV against realized. Decimals, not percents. */
+export interface TickerVol {
+  symbol: string
+  available: boolean
+  reason: string | null
+  atm_iv_30d?: number | null
+  hv_20?: number | null
+  iv_hv_ratio?: number | null
+  iv_rank?: number | null
+  iv_rank_available?: boolean
+  iv_percentile_vs_realized?: number | null
+  method?: string | null
+  note?: string | null
+}
+
+export interface SocialExplanation {
+  symbol: string
+  available: boolean
+  explanation?: string
+  guarded?: boolean
+  model?: string
+  disclaimer?: string
+  reason?: string
+}
+
+export type ResearchSourceKind = 'news' | 'web' | 'filing' | 'social' | 'market_data'
+
+export interface ResearchSource {
+  id: string
+  kind: ResearchSourceKind
+  title: string
+  url: string | null
+  publisher: string | null
+  published_at: string | null
+  tool: string
+}
+
+export interface ResearchFinding {
+  text: string
+  source_ids: string[]
+}
+
+export interface ResearchBrief {
+  ticker: string
+  question: string
+  as_of: string
+  headline: string
+  drivers: ResearchFinding[]
+  crowd_read: string
+  what_would_change: string[]
+  unknowns: string[]
+  sources: ResearchSource[]
+  social_signal_set: SignalSet | null
+  markdown: string
+  flags: ChatFlag[]
+  guarded: boolean
+  model: string
+  disclaimer: string
 }

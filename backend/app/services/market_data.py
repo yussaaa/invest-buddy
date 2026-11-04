@@ -479,6 +479,15 @@ async def get_profile(symbol: str) -> dict:
             "week52_low": _round(info.get("fiftyTwoWeekLow"), 2),
             "week52_high": _round(info.get("fiftyTwoWeekHigh"), 2),
             "avg_volume": _safe(info.get("averageVolume")),
+            # Short interest, reported twice a month. Yahoo gives the float
+            # share as a fraction; stored as a percent so prose quoting
+            # "22.4%" grounds against it (see agents/base/guardrails.py).
+            "short_percent_float": _round(
+                info["shortPercentOfFloat"] * 100 if _safe(info.get("shortPercentOfFloat")) is not None else None, 2
+            ),
+            "short_ratio": _round(info.get("shortRatio"), 2),
+            "shares_short": _safe(info.get("sharesShort")),
+            "shares_short_prior_month": _safe(info.get("sharesShortPriorMonth")),
             "next_earnings": None,
         }
 

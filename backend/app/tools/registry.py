@@ -179,6 +179,12 @@ class ToolRegistry:
         from app.tools.news.newsapi_tool import get_recent_news
         from app.tools.news.sec_edgar_tool import get_sec_filings
         from app.tools.web.search_tool import search_web
+        from app.services.screens import PRESETS as SCREEN_PRESETS
+        from app.tools.social.social_tool import (
+            get_social_sentiment,
+            get_stock_screen,
+            get_trending_tickers,
+        )
 
         self.register(ToolDefinition(
             name="get_company_overview",
@@ -438,6 +444,46 @@ class ToolRegistry:
             fn=search_web,
             category="web",
             cache_ttl_seconds=900,
+        ))
+        self.register(ToolDefinition(
+            name="get_social_sentiment",
+            description=(
+                "Retail discussion of one ticker: Reddit mention rank and 24h change "
+                "(ApeWisdom), the StockTwits self-tagged bullish/bearish split, short "
+                "interest, and the crowd conditions computed from them. Attention has "
+                "no direction; only the self-tags lean, and they skew bullish by habit."
+            ),
+            parameters={"type": "object", "properties": {"ticker": {"type": "string"}},
+                        "required": ["ticker"]},
+            fn=get_social_sentiment,
+            category="sentiment",
+            cache_ttl_seconds=300,
+        ))
+        self.register(ToolDefinition(
+            name="get_trending_tickers",
+            description="The most-discussed tickers on Reddit over the last 24 hours, "
+                        "with rank and mention changes.",
+            parameters={"type": "object", "properties": {
+                "filter": {"type": "string", "default": "all-stocks",
+                           "enum": ["all-stocks", "wallstreetbets", "stocks", "investing", "options"]},
+                "limit": {"type": "integer", "default": 20},
+            }},
+            fn=get_trending_tickers,
+            category="sentiment",
+            cache_ttl_seconds=300,
+        ))
+        self.register(ToolDefinition(
+            name="get_stock_screen",
+            description="Run one of Yahoo's predefined stock screens (most active, day "
+                        "gainers/losers, most shorted, small-cap gainers, growth tech …).",
+            parameters={"type": "object", "properties": {
+                "preset": {"type": "string", "default": "most_actives",
+                           "enum": list(SCREEN_PRESETS)},
+                "limit": {"type": "integer", "default": 15},
+            }},
+            fn=get_stock_screen,
+            category="market_data",
+            cache_ttl_seconds=120,
         ))
         self.register(ToolDefinition(
             name="get_earnings_calendar",

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 class Citation(BaseModel):
     """A traceable source reference attached to a specific claim."""
 
-    source_type: Literal["sec_filing", "news", "market_data", "web", "rag", "calculation"]
+    source_type: Literal["sec_filing", "news", "market_data", "web", "rag", "calculation", "social"]
     title: str
     url: Optional[str] = None
     published_date: Optional[datetime] = None

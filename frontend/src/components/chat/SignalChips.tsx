@@ -93,7 +93,14 @@ function SignalRow({ signal }: { signal: Signal }) {
   )
 }
 
-export default function SignalChips({ signalSet }: { signalSet: SignalSet | null }) {
+export default function SignalChips({
+  signalSet,
+  emptyText,
+}: {
+  signalSet: SignalSet | null
+  /** Said when no condition holds. Defaults to the technical wording. */
+  emptyText?: string
+}) {
   if (!signalSet) return null
 
   const { signals, net_bias, conflicts } = signalSet
@@ -101,8 +108,8 @@ export default function SignalChips({ signalSet }: { signalSet: SignalSet | null
   if (!signals.length) {
     return (
       <div className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground/60">
-        No technical condition on {signalSet.ticker} stands out right now — the
-        readings are in their ordinary ranges.
+        {emptyText ??
+          `No technical condition on ${signalSet.ticker} stands out right now — the readings are in their ordinary ranges.`}
       </div>
     )
   }

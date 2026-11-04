@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { api } from '../lib/api'
 import { setLlmProvider } from '../lib/llmProvider'
 import type { LlmConnectionTest, LlmProviderList, UserPreferences } from '../lib/types'
+import { version as APP_VERSION } from '../../package.json'
 
 const USER_ID = 'anonymous'
 
@@ -375,6 +376,11 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      {/* About — read from package.json so there is one place to bump it. */}
+      <p className="border-t border-border pt-4 text-xs text-muted-foreground/60">
+        Agent Invest · version {APP_VERSION}
+      </p>
     </div>
   )
 }

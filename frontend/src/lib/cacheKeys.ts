@@ -29,6 +29,14 @@ export const K = {
   breadth: () => 'breadth',
   movers: (cap: CapTier, limit = 10) => `movers:${cap}:${limit}`,
   weekEvents: (offset: number) => `events:week:${offset}`,
+  signalSources: () => 'signals:sources',
+  socialTrending: (source: string, filter: string, limit: number) =>
+    `social:trending:${source}:${filter}:${limit}`,
+  screenPresets: () => 'screen:presets',
+  screen: (preset: string, limit: number) => `screen:${preset}:${limit}`,
+  socialTicker: (symbol: string) => `social:snap:${symbol.toUpperCase()}`,
+  socialExplain: (symbol: string) => `social:explain:${symbol.toUpperCase()}`,
+  socialVol: (symbol: string) => `social:vol:${symbol.toUpperCase()}`,
 } as const
 
 /** Milliseconds. Server constants are in seconds — the names line up. */
@@ -44,6 +52,15 @@ export const TTL = {
   explanation: 900_000,       // technicals/options EXPLANATION_TTL
   optionStrategies: 300_000,  // options.OPTIONS_CHAIN_TTL
   weekEvents: 1_800_000,      // market_data.EVENTS_TTL
+  socialTrending: 300_000,    // social/apewisdom.PAGE_TTL
+  screen: 120_000,            // screens.SCREEN_TTL
+  socialTicker: 120_000,      // signals_page.SNAPSHOT_TTL
+  socialExplain: 900_000,     // signals_page.EXPLANATION_TTL
+  socialVol: 300_000,         // options.OPTIONS_CHAIN_TTL
+  // The source list changes when a breaker trips or a key is added — rarely,
+  // but a stale "blocked" chip for an hour would mislead.
+  signalSources: 60_000,
+  screenPresets: 86_400_000,  // a code constant on the server
 
   // Deliberately NOT the server's 60s. The breadth scan prices ~700 symbols
   // and takes minutes, so a short client TTL buys nothing but another one of

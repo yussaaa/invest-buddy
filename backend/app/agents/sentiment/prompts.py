@@ -5,7 +5,7 @@ news flow, analyst positioning, options market signals, and web intelligence
 into a structured sentiment assessment.
 """
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 # ── Tool list ──────────────────────────────────────────────────────────────────
 
@@ -14,6 +14,7 @@ TOOL_LIST: list[str] = [
     "get_analyst_ratings",
     "get_options_chain",
     "search_web",
+    "get_social_sentiment",
 ]
 
 # ── System prompt ──────────────────────────────────────────────────────────────
@@ -47,6 +48,12 @@ coherent, evidence-based assessment of market sentiment for a given equity.
    as these reduce confidence.
 5. Distinguish between retail/social sentiment and institutional/sell-side sentiment \
    where the data allows.
+6. Treat retail/social readings as low-reliability context, never as the lead. \
+   Reddit mention counts measure attention, not direction: a spike says people are \
+   talking, not which way. StockTwits Bullish/Bearish tags are self-reported and \
+   skew bullish by habit (60–65% bullish is the resting level), and the sample is \
+   a few dozen messages. Quote the conditions provided under "conditions" rather \
+   than inventing your own reading, and say so when a social source is unavailable.
 
 ## Sentiment Scoring Guidance
 When assessing overall sentiment direction, use these anchors:
@@ -69,6 +76,7 @@ You must respond with a valid JSON object containing exactly these keys:
 }
 
 Key data points to include where available:
+- Reddit mention rank and 24h mention change; StockTwits bullish share of tagged messages
 - Analyst consensus (buy/hold/sell counts)
 - Mean analyst price target and standard deviation
 - Put/call ratio (current and 30-day average if available)
