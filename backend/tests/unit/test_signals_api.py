@@ -85,7 +85,8 @@ async def test_ticker_snapshot_shape(client, monkeypatch):
 
     async def profile(symbol):
         return {"symbol": symbol, "name": "Palantir", "short_percent_float": 2.6,
-                "shares_short": 90, "shares_short_prior_month": 100}
+                "shares_short": 90, "shares_short_prior_month": 100,
+                "market_cap": 400_000_000_000, "avg_volume": 60_000_000, "currency": "USD"}
 
     async def technicals(symbol):
         return {"symbol": symbol, "rsi": {"error": "x"}, "macd": {"error": "x"},
@@ -105,10 +106,51 @@ async def test_ticker_snapshot_shape(client, monkeypatch):
     assert {"rank_climb", "mention_surge_24h"} <= social
     assert body["social_signal_set"]["coverage"]["stocktwits"] is False
     assert body["technical_signal_set"]["ticker"] == "PLTR"
+    assert body["market"] == {"market_cap": 400_000_000_000, "avg_volume": 60_000_000, "currency": "USD"}
 
 
 async def test_ticker_rejects_nonsense(client):
     assert "error" in (await client.get("/signals/ticker?symbol=" + "X" * 40)).json()
+
+
+async def test_ticker_vol_reads_the_shared_option_chain(client, monkeypatch):
+    from app.services import options
+
+    seen = []
+
+    async def chain(symbol, horizon="both"):
+        seen.append((symbol, horizon))
+        return {"symbol": symbol, "expiries": [{}], "volatility": {
+            "atm_iv_30d": 0.52, "hv_20": 0.40, "iv_hv_ratio": 1.3, "iv_rank": None,
+            "iv_rank_available": False, "method": "realized_proxy", "note": "proxy"}}
+
+    monkeypatch.setattr(options, "get_options_chain", chain)
+    body = (await client.get("/signals/ticker/vol?symbol=pltr")).json()
+
+    # Same cache key as the options panel and the options specialist.
+    assert seen == [("PLTR", "both")]
+    assert body["available"] is True and body["reason"] is None
+    assert body["atm_iv_30d"] == 0.52 and body["iv_hv_ratio"] == 1.3
+
+
+async def test_ticker_vol_without_options_says_why(client, monkeypatch):
+    from app.services import options
+
+    async def no_iv(symbol, horizon="both"):
+        return {"symbol": symbol, "expiries": [], "volatility": {"atm_iv_30d": None, "note": "No listed options."}}
+
+    async def failed(symbol, horizon="both"):
+        return {"symbol": symbol, "expiries": [], "contracts": [], "error": "boom"}
+
+    monkeypatch.setattr(options, "get_options_chain", no_iv)
+    body = (await client.get("/signals/ticker/vol?symbol=XYZ")).json()
+    assert body["available"] is False and body["reason"] == "No listed options."
+
+    monkeypatch.setattr(options, "get_options_chain", failed)
+    body = (await client.get("/signals/ticker/vol?symbol=XYZ")).json()
+    assert body["available"] is False and "boom" not in body["reason"]
+
+    assert (await client.get("/signals/ticker/vol?symbol=" + "X" * 40)).json()["available"] is False
 
 
 async def test_explain_without_credentials_says_why(client, monkeypatch):

@@ -36,6 +36,7 @@ export const K = {
   screen: (preset: string, limit: number) => `screen:${preset}:${limit}`,
   socialTicker: (symbol: string) => `social:snap:${symbol.toUpperCase()}`,
   socialExplain: (symbol: string) => `social:explain:${symbol.toUpperCase()}`,
+  socialVol: (symbol: string) => `social:vol:${symbol.toUpperCase()}`,
 } as const
 
 /** Milliseconds. Server constants are in seconds — the names line up. */
@@ -55,6 +56,7 @@ export const TTL = {
   screen: 120_000,            // screens.SCREEN_TTL
   socialTicker: 120_000,      // signals_page.SNAPSHOT_TTL
   socialExplain: 900_000,     // signals_page.EXPLANATION_TTL
+  socialVol: 300_000,         // options.OPTIONS_CHAIN_TTL
   // The source list changes when a breaker trips or a key is added — rarely,
   // but a stale "blocked" chip for an hour would mislead.
   signalSources: 60_000,

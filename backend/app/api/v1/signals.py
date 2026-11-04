@@ -62,6 +62,12 @@ async def get_ticker(symbol: str = Query(..., description="Ticker, e.g. PLTR")) 
     return await signals_page.get_ticker_snapshot(symbol)
 
 
+@router.get("/ticker/vol")
+async def get_ticker_vol(symbol: str = Query(..., description="Ticker, e.g. PLTR")) -> dict:
+    """30-day ATM implied volatility against realized; apart so the snapshot never waits on a chain."""
+    return await signals_page.get_ticker_vol(symbol)
+
+
 @router.get("/ticker/explain")
 async def explain_ticker(symbol: str = Query(..., description="Ticker, e.g. PLTR")) -> dict:
     """A guarded plain-English read of the crowd snapshot."""

@@ -954,10 +954,27 @@ export interface SocialSnapshot {
   reddit: RedditAttention | null
   stocktwits: CrowdTags | null
   positioning: SocialPositioning
+  /** Slow-moving stats; price and today's volume come from the live quote store. */
+  market?: { market_cap: number | null; avg_volume: number | null; currency: string | null }
   social_signal_set: SignalSet
   technical_signal_set: SignalSet | null
   disclaimer: string
   error?: string
+}
+
+/** GET /signals/ticker/vol — 30-day ATM IV against realized. Decimals, not percents. */
+export interface TickerVol {
+  symbol: string
+  available: boolean
+  reason: string | null
+  atm_iv_30d?: number | null
+  hv_20?: number | null
+  iv_hv_ratio?: number | null
+  iv_rank?: number | null
+  iv_rank_available?: boolean
+  iv_percentile_vs_realized?: number | null
+  method?: string | null
+  note?: string | null
 }
 
 export interface SocialExplanation {

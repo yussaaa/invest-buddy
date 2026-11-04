@@ -19,6 +19,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useScreenContext } from '@/context/ScreenContext'
 import { useCachedResource } from '@/hooks/useCachedResource'
+import { useQuotes } from '@/hooks/useQuotes'
 import { api } from '@/lib/api'
 import { K, TTL } from '@/lib/cacheKeys'
 import { readJSON, writeJSON } from '@/lib/utils'
@@ -96,6 +97,9 @@ export default function SignalsPage() {
     { ttl: TTL.socialTrending, refreshIntervalMs: TTL.socialTrending, shouldCache: p => p.rows.length > 0 },
   )
   const trending = trendingRes.data
+  // One batched request for the board's symbols, shared with the watchlist
+  // rail's store. Slower than the rail's poll: this is context, not a ticker tape.
+  const { quotes } = useQuotes(trending?.rows.map(r => r.symbol) ?? [], 30_000)
 
   const presetsRes = useCachedResource(K.screenPresets(), () => api.signals.screeners(), {
     ttl: TTL.screenPresets,
@@ -173,6 +177,7 @@ export default function SignalsPage() {
               <CardContent className="py-2">
                 <SocialTrendingTable
                   rows={trending?.rows ?? []}
+                  quotes={quotes}
                   loading={trendingRes.isLoading}
                   selected={selected}
                   onSelect={select}
@@ -219,9 +224,17 @@ export default function SignalsPage() {
 
         <div className="xl:sticky xl:top-6">
           {selected ? (
-            <TickerSignalPanel key={selected} symbol={selected} onClose={() => select(null)} />
+            // Exactly the window's height (top-6 above, the same gap below):
+            // never taller, so its end stays reachable; never shorter, so the
+            // column isn't left mostly empty. The body scrolls inside it.
+            <TickerSignalPanel
+              key={selected}
+              symbol={selected}
+              onClose={() => select(null)}
+              className="xl:h-[calc(100vh-3rem)]"
+            />
           ) : (
-            <Card>
+            <Card className="xl:flex xl:h-[calc(100vh-3rem)] xl:items-center">
               <CardContent className="py-10 text-center text-[12px] text-muted-foreground/70">
                 Select a row — or a watchlist ticker — to see its crowd read, its chart conditions,
                 and a cited brief on why it is in focus.

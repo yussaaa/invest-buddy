@@ -25,6 +25,7 @@ import type {
   SignalSources,
   SocialExplanation,
   SocialSnapshot,
+  TickerVol,
   TrendingPayload,
   Technicals,
   TechnicalsExplanation,
@@ -283,6 +284,9 @@ export const api = {
 
     ticker: (symbol: string, signal?: AbortSignal) =>
       request<SocialSnapshot>(`/signals/ticker?symbol=${encodeURIComponent(symbol)}`, { signal }),
+
+    vol: (symbol: string, signal?: AbortSignal) =>
+      request<TickerVol>(`/signals/ticker/vol?symbol=${encodeURIComponent(symbol)}`, { signal }),
 
     explain: (symbol: string, signal?: AbortSignal) =>
       request<SocialExplanation>(

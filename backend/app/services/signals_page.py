@@ -186,6 +186,14 @@ async def build_ticker_snapshot(symbol: str) -> dict:
         "reddit": reddit.model_dump(mode="json") if reddit else None,
         "stocktwits": crowd.model_dump(mode="json") if crowd else None,
         "positioning": positioning.model_dump(),
+        # The slow-moving half of the stats strip. Price and today's volume
+        # are read live on the client from the shared quote store, so a
+        # two-minute snapshot never shows a stale last price.
+        "market": {
+            "market_cap": profile.get("market_cap"),
+            "avg_volume": profile.get("avg_volume"),
+            "currency": profile.get("currency"),
+        },
         "social_signal_set": social_set.model_dump(mode="json"),
         "technical_signal_set": technical_set.model_dump(mode="json") if technical_set else None,
         "disclaimer": SOCIAL_DISCLAIMER,
@@ -202,6 +210,39 @@ async def get_ticker_snapshot(symbol: str) -> dict:
     except Exception as e:
         log.error("signals_snapshot_failed", symbol=symbol, error=str(e))
         return {"symbol": symbol, "error": str(e)}
+
+
+# ── volatility ──────────────────────────────────────────────────────────────
+
+VOL_KEYS = ("atm_iv_30d", "hv_20", "iv_hv_ratio", "iv_rank", "iv_rank_available",
+            "iv_percentile_vs_realized", "method", "note")
+
+
+async def get_ticker_vol(symbol: str) -> dict:
+    """30-day at-the-money IV and how it compares with realized volatility.
+
+    Kept out of the snapshot because a cold option chain takes seconds and
+    the crowd read should not wait for it. Reads the same cached chain
+    (horizon "both") as the options panel and the options specialist, so a
+    ticker already opened elsewhere costs nothing here.
+    """
+    from app.services import options
+
+    symbol = symbol.upper().strip()
+    if not symbol or len(symbol) > 16:
+        return {"symbol": symbol, "available": False, "reason": "invalid symbol"}
+    chain = await options.get_options_chain(symbol, horizon="both")
+    if chain.get("error"):
+        return {"symbol": symbol, "available": False, "reason": "Option chain unavailable."}
+
+    vol = chain.get("volatility") or {}
+    available = vol.get("atm_iv_30d") is not None
+    return {
+        "symbol": symbol,
+        "available": available,
+        "reason": None if available else (vol.get("note") or "No listed options for this ticker."),
+        **{k: vol.get(k) for k in VOL_KEYS},
+    }
 
 
 # ── explanation ─────────────────────────────────────────────────────────────

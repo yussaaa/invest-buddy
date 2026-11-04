@@ -183,6 +183,12 @@ deterministic half and an agentic half, kept apart the same way chat keeps
      → answer (streamed)  → verify (citations, advice, grounding)
 ```
 
+**The ticker panel reads three cadences.** Price and today's volume come from
+the client's shared quote store (live); market cap and average volume ride on
+the 120s snapshot; 30-day ATM IV comes from `/signals/ticker/vol`, which reads
+the same cached option chain as the options panel and is fetched apart, so a
+cold chain (seconds) never holds up the crowd read.
+
 **Providers never raise.** Every reading carries `available` and `caveat`; a
 dead source becomes a sentence on the page. Reddit API and X are placeholder
 providers on the same interface (`placeholders.py`) and say what is missing.
@@ -752,6 +758,10 @@ Things that have cost time before, in rough order of how much:
 13. **Every number a model may quote must be in its evidence** — including
     properties of a source, like the 24-hour window of a mention count, and the
     date (without `TODAY` the research agent searched last year's quarter).
+14. **The window scrolls, not `<main>`.** `<main>` grows with its content, so
+    it must not be `overflow-auto`: that makes it a scroll container that never
+    scrolls, and every `sticky` inside a page sticks to it and does nothing.
+    It is `overflow-x-clip` (clips without becoming a scroll container).
 
 ---
 

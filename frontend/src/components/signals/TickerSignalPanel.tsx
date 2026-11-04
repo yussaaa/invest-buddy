@@ -3,18 +3,26 @@
  *
  * Order is deliberate: attention and crowd (what people are doing) before
  * the chart's conditions (what price is doing), and the language model last,
- * behind buttons — the numbers above it are deterministic and load first.
+ * behind buttons — the numbers before it are deterministic and load first.
+ *
+ * The column is sticky beside two long tables, so it is sized to the window
+ * rather than to its content: a sticky element taller than the viewport pins
+ * its top and leaves its bottom unreachable, and one shorter than it leaves
+ * the column mostly empty. The card fills the window height (the page sets
+ * that through `className`), the header and key stats stay put, and the body
+ * scrolls — everything in one place, no tabs to choose between.
  */
 
 import { lazy, Suspense, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CandlestickChart, ExternalLink, Loader2, Search, ShieldAlert, Sparkles, X } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import SignalChips from '@/components/chat/SignalChips'
 import { api } from '@/lib/api'
 import { K, TTL } from '@/lib/cacheKeys'
 import { useCachedResource } from '@/hooks/useCachedResource'
+import { useQuotes } from '@/hooks/useQuotes'
 import { useResearchStream } from '@/hooks/useResearchStream'
 import { cn } from '@/lib/utils'
 import type { SocialSnapshot } from '@/lib/types'
@@ -164,7 +172,84 @@ function Research({ symbol }: { symbol: string }) {
   )
 }
 
-export default function TickerSignalPanel({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+/**
+ * Price, size, activity and option-implied volatility — the context a crowd
+ * read needs ("1,200 mentions" means one thing for a $3B name and another for
+ * a $3T one). Pinned above the scrolling body so it never leaves view.
+ *
+ * Three sources, three cadences: the price and today's volume poll the shared
+ * quote store; market cap and average volume ride on the snapshot; IV comes
+ * from the option chain, fetched separately so a cold chain never holds up
+ * the rest of the panel.
+ */
+function KeyStats({ symbol, snapshot }: { symbol: string; snapshot: SocialSnapshot | null }) {
+  const { quotes } = useQuotes([symbol])
+  const quote = quotes[symbol]
+  const vol = useCachedResource(K.socialVol(symbol), () => api.signals.vol(symbol), {
+    ttl: TTL.socialVol,
+    shouldCache: v => v.available,
+  })
+
+  const last = quote && !quote.error ? quote.last : undefined
+  const change = quote && !quote.error ? quote.change_percent : undefined
+  const avgVolume = snapshot?.market?.avg_volume ?? null
+  const relVolume = quote?.volume && avgVolume ? quote.volume / avgVolume : null
+  const iv = vol.data?.available ? vol.data.atm_iv_30d ?? null : null
+  const ivRatio = vol.data?.iv_hv_ratio ?? null
+
+  return (
+    <div className="mt-3 grid grid-cols-4 gap-2 rounded-md bg-muted/30 px-3 py-2">
+      <div>
+        <p className="text-[10px] text-muted-foreground/60">Price</p>
+        <p className="text-[13px] font-medium tabular-nums text-foreground">
+          {last !== undefined ? last.toFixed(2) : '—'}
+        </p>
+        <p className={cn(
+          'text-[10px] tabular-nums',
+          (change ?? 0) > 0 ? 'text-emerald-400' : (change ?? 0) < 0 ? 'text-rose-400' : 'text-muted-foreground/60',
+        )}>
+          {signedPct(change, 2)}
+        </p>
+      </div>
+      <div>
+        <p className="text-[10px] text-muted-foreground/60">Mkt cap</p>
+        <p className="text-[13px] font-medium tabular-nums text-foreground">{compact(snapshot?.market?.market_cap)}</p>
+      </div>
+      <div title={relVolume !== null
+        ? `${compact(quote?.volume)} today against a ${compact(avgVolume)} daily average. Intraday this counts the session so far, so it understates early in the day.`
+        : undefined}>
+        <p className="text-[10px] text-muted-foreground/60">Vol vs avg</p>
+        <p className={cn('text-[13px] font-medium tabular-nums', (relVolume ?? 0) >= 2 ? 'text-sky-300' : 'text-foreground')}>
+          {relVolume !== null ? `${relVolume.toFixed(1)}×` : '—'}
+        </p>
+        {quote?.volume ? <p className="text-[10px] tabular-nums text-muted-foreground/60">{compact(quote.volume)}</p> : null}
+      </div>
+      <div title={vol.data?.available
+        ? '30-day at-the-money implied volatility, annualised. The second line compares it with 20-day realized volatility.'
+        : vol.data?.reason ?? undefined}>
+        <p className="text-[10px] text-muted-foreground/60">IV 30d</p>
+        <p className="text-[13px] font-medium tabular-nums text-foreground">
+          {vol.isLoading && !vol.data
+            ? <Loader2 size={12} className="mt-1 animate-spin text-muted-foreground" />
+            : iv !== null ? `${(iv * 100).toFixed(0)}%` : '—'}
+        </p>
+        {iv !== null && ivRatio !== null && (
+          <p className="text-[10px] tabular-nums text-muted-foreground/60">{ivRatio.toFixed(1)}× realized</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default function TickerSignalPanel({
+  symbol,
+  onClose,
+  className,
+}: {
+  symbol: string
+  onClose: () => void
+  className?: string
+}) {
   const navigate = useNavigate()
   const res = useCachedResource(
     K.socialTicker(symbol),
@@ -174,8 +259,8 @@ export default function TickerSignalPanel({ symbol, onClose }: { symbol: string;
   const snapshot = res.data && !res.data.error ? res.data : null
 
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-4 py-4">
+    <Card className={cn('flex flex-col overflow-hidden', className)}>
+      <div className="shrink-0 px-6 pt-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-mono text-lg font-semibold text-foreground">{symbol}</p>
@@ -198,6 +283,10 @@ export default function TickerSignalPanel({ symbol, onClose }: { symbol: string;
           </div>
         </div>
 
+        <KeyStats symbol={symbol} snapshot={snapshot} />
+      </div>
+
+      <div className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-border px-6 py-4">
         {res.isLoading && !snapshot ? (
           <div className="flex items-center gap-2 py-8 text-xs text-muted-foreground">
             <Loader2 size={14} className="animate-spin" /> Reading the crowd…
@@ -205,65 +294,73 @@ export default function TickerSignalPanel({ symbol, onClose }: { symbol: string;
         ) : !snapshot ? (
           <p className="text-xs text-rose-400">{res.data?.error ?? res.error?.message ?? 'Could not load this ticker.'}</p>
         ) : (
-          <>
-            <section className="space-y-2">
-              <Heading aside={snapshot.reddit?.url && (
-                <a href={snapshot.reddit.url} target="_blank" rel="noopener noreferrer"
-                   className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60 hover:text-foreground">
-                  ApeWisdom <ExternalLink size={9} />
-                </a>
-              )}>Reddit attention</Heading>
-              <Attention snapshot={snapshot} />
-            </section>
-
-            <section className="space-y-2">
-              <Heading aside={snapshot.stocktwits?.url && (
-                <a href={snapshot.stocktwits.url} target="_blank" rel="noopener noreferrer"
-                   className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60 hover:text-foreground">
-                  StockTwits <ExternalLink size={9} />
-                </a>
-              )}>Crowd tags</Heading>
-              <CrowdSentimentBar crowd={snapshot.stocktwits} />
-            </section>
-
-            <section className="space-y-2">
-              <Heading>Positioning</Heading>
-              <Positioning snapshot={snapshot} />
-            </section>
-
-            <Separator />
-
-            <section className="-mx-3 space-y-1">
-              <div className="px-3"><Heading>Crowd conditions</Heading></div>
-              <SignalChips
-                signalSet={snapshot.social_signal_set}
-                emptyText={`Nothing unusual in the discussion of ${symbol} right now.`}
-              />
-            </section>
-
-            {snapshot.technical_signal_set && (
-              <section className="-mx-3 space-y-1">
-                <div className="px-3"><Heading>Chart conditions</Heading></div>
-                <SignalChips signalSet={snapshot.technical_signal_set} />
+          <div className="flex flex-col gap-4">
+            <div className="space-y-4">
+              <section className="space-y-2">
+                <Heading aside={snapshot.reddit?.url && (
+                  <a href={snapshot.reddit.url} target="_blank" rel="noopener noreferrer"
+                     className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60 hover:text-foreground">
+                    ApeWisdom <ExternalLink size={9} />
+                  </a>
+                )}>Reddit attention</Heading>
+                <Attention snapshot={snapshot} />
               </section>
-            )}
 
-            <section className="space-y-2">
-              <Heading>In words</Heading>
-              <Explanation symbol={symbol} />
-            </section>
+              <section className="space-y-2">
+                <Heading aside={snapshot.stocktwits?.url && (
+                  <a href={snapshot.stocktwits.url} target="_blank" rel="noopener noreferrer"
+                     className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60 hover:text-foreground">
+                    StockTwits <ExternalLink size={9} />
+                  </a>
+                )}>Crowd tags</Heading>
+                <CrowdSentimentBar crowd={snapshot.stocktwits} />
+              </section>
+
+              <section className="space-y-2">
+                <Heading>Positioning</Heading>
+                <Positioning snapshot={snapshot} />
+              </section>
+            </div>
 
             <Separator />
 
-            <section className="space-y-2">
-              <Heading>Research</Heading>
-              <Research symbol={symbol} />
-            </section>
+            <div className="space-y-4">
+              <section className="-mx-3 space-y-1">
+                <div className="px-3"><Heading>Crowd conditions</Heading></div>
+                <SignalChips
+                  signalSet={snapshot.social_signal_set}
+                  emptyText={`Nothing unusual in the discussion of ${symbol} right now.`}
+                />
+              </section>
+
+              {snapshot.technical_signal_set && (
+                <section className="-mx-3 space-y-1">
+                  <div className="px-3"><Heading>Chart conditions</Heading></div>
+                  <SignalChips signalSet={snapshot.technical_signal_set} />
+                </section>
+              )}
+            </div>
+
+            <Separator />
+
+            <div className="space-y-4">
+              <section className="space-y-2">
+                <Heading>In words</Heading>
+                <Explanation symbol={symbol} />
+              </section>
+
+              <Separator />
+
+              <section className="space-y-2">
+                <Heading>Research</Heading>
+                <Research symbol={symbol} />
+              </section>
+            </div>
 
             <p className="text-[10px] leading-snug text-muted-foreground/50">{snapshot.disclaimer}</p>
-          </>
+          </div>
         )}
-      </CardContent>
+      </div>
     </Card>
   )
 }
