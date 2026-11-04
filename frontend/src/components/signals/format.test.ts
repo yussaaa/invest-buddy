@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { attentionLabel, compact, crowdSplit, rankDelta, relVolume, signedPct, splitCitations } from './format'
+import {
+  attentionLabel, capTier, compact, crowdSplit, rankDelta, relVolume, signedPct, splitCitations, yearChangeBand,
+} from './format'
+
+describe('capTier', () => {
+  it('buckets on the Market page boundaries, inclusive at the floor', () => {
+    expect(capTier(4.99e12)?.id).toBe('mega')
+    expect(capTier(200e9)?.id).toBe('mega')
+    expect(capTier(199e9)?.id).toBe('large')
+    expect(capTier(10e9)?.id).toBe('large')
+    expect(capTier(3.7e9)?.id).toBe('mid')
+    expect(capTier(300e6)?.id).toBe('small')
+    expect(capTier(120e6)?.id).toBe('micro')
+  })
+  it('has no tier for a missing cap', () => {
+    expect(capTier(null)).toBeNull()
+    expect(capTier(0)).toBeNull()
+  })
+})
+
+describe('yearChangeBand', () => {
+  it('tints harder the bigger the move, either way', () => {
+    expect(yearChangeBand(150)?.label).toBe('+100% or more')
+    expect(yearChangeBand(62)?.label).toBe('+25% to +100%')
+    expect(yearChangeBand(2)?.label).toBe('0 to +25%')
+    expect(yearChangeBand(-7)?.label).toBe('0 to −25%')
+    expect(yearChangeBand(-27)?.label).toBe('−25% to −50%')
+    expect(yearChangeBand(-70)?.label).toBe('−50% or worse')
+  })
+  it('has no band for a missing value', () => {
+    expect(yearChangeBand(null)).toBeNull()
+  })
+})
 
 describe('rankDelta', () => {
   it('reads positive as a climb', () => {
@@ -18,7 +50,7 @@ describe('attentionLabel', () => {
     expect(attentionLabel(1.9, 14).emphasis).toBe(false)
   })
   it('shows progress toward a baseline before then', () => {
-    expect(attentionLabel(null, 3).text).toBe('3/7d')
+    expect(attentionLabel(null, 3).text).toBe('day 3 of 7')
     expect(attentionLabel(null, 0).text).toBe('—')
   })
 })

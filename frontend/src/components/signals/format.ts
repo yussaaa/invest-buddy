@@ -44,12 +44,53 @@ export function attentionLabel(z: number | null | undefined, historyDays: number
     }
   }
   return {
-    text: historyDays > 0 ? `${historyDays}/${minDays}d` : '—',
+    text: historyDays > 0 ? `day ${Math.min(historyDays, minDays)} of ${minDays}` : '—',
     emphasis: false,
     title: historyDays < minDays
       ? `${historyDays} of ${minDays} days of stored history — compared with yesterday until then`
       : 'History too flat to measure a spread',
   }
+}
+
+/**
+ * Market-cap tiers. Large/mid/small match the Market page's movers tiers
+ * (market_data.CAP_TIERS); mega and micro are the conventional ends.
+ * Cool hues for the big, liquid names and warm ones for the small, so size —
+ * and with it how violently a name can move — reads at a glance.
+ */
+export const CAP_TIERS = [
+  { id: 'mega', label: 'Mega', range: '$200B+', min: 200e9, className: 'bg-violet-500/15 text-violet-300' },
+  { id: 'large', label: 'Large', range: '$10–200B', min: 10e9, className: 'bg-sky-500/15 text-sky-300' },
+  { id: 'mid', label: 'Mid', range: '$2–10B', min: 2e9, className: 'bg-teal-500/15 text-teal-300' },
+  { id: 'small', label: 'Small', range: '$300M–2B', min: 300e6, className: 'bg-amber-500/15 text-amber-300' },
+  { id: 'micro', label: 'Micro', range: 'under $300M', min: 0, className: 'bg-rose-500/15 text-rose-300' },
+] as const
+
+export type CapTier = (typeof CAP_TIERS)[number]
+
+export function capTier(marketCap: number | null | undefined): CapTier | null {
+  if (marketCap === null || marketCap === undefined || !Number.isFinite(marketCap) || marketCap <= 0) return null
+  return CAP_TIERS.find(t => marketCap >= t.min) ?? null
+}
+
+/**
+ * The trailing one-year price change, as a diverging heat cell: green for
+ * up, red for down, and a stronger tint the bigger the move. It describes
+ * where the stock has been — a halving can be a setup or a falling knife,
+ * and the colour does not say which.
+ */
+export const YEAR_BANDS = [
+  { min: 100, className: 'bg-emerald-500/25 text-emerald-200 font-semibold', label: '+100% or more' },
+  { min: 25, className: 'bg-emerald-500/15 text-emerald-300', label: '+25% to +100%' },
+  { min: 0, className: 'text-emerald-400/80', label: '0 to +25%' },
+  { min: -25, className: 'text-rose-400/80', label: '0 to −25%' },
+  { min: -50, className: 'bg-rose-500/15 text-rose-300', label: '−25% to −50%' },
+  { min: -Infinity, className: 'bg-rose-500/25 text-rose-200 font-semibold', label: '−50% or worse' },
+] as const
+
+export function yearChangeBand(pct: number | null | undefined) {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return null
+  return YEAR_BANDS.find(b => pct >= b.min) ?? null
 }
 
 /** Relative volume, which is only interesting when it is not ~1. */
