@@ -53,6 +53,115 @@ function RsiGauge({ value }: { value: number }) {
   )
 }
 
+/**
+ * The recent RSI path on the same fixed 0–100 scale as the gauge, with the 30
+ * and 70 bands drawn in. Fixed rather than auto-scaled on purpose: a series
+ * hovering between 45 and 55 should look flat, not like a swing to the bands.
+ */
+function RsiSparkline({ values, className }: { values: number[]; className?: string }) {
+  if (values.length < 2) return null
+
+  const W = 100
+  const H = 40
+  const y = (v: number) => H - (Math.max(0, Math.min(100, v)) / 100) * H
+  const x = (i: number) => (i / (values.length - 1)) * W
+  const points = values.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(' ')
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        className="h-10 w-full"
+        role="img"
+        aria-label={`RSI over the last ${values.length} sessions`}
+      >
+        <rect x={0} y={0} width={W} height={y(70)} className="fill-rose-500/10" />
+        <rect x={0} y={y(30)} width={W} height={H - y(30)} className="fill-emerald-500/10" />
+        <line
+          x1={0}
+          x2={W}
+          y1={y(50)}
+          y2={y(50)}
+          className="stroke-border"
+          strokeDasharray="2 2"
+          vectorEffect="non-scaling-stroke"
+        />
+        <polyline
+          points={points}
+          fill="none"
+          className={cn('stroke-current', className)}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <div className="flex justify-between text-[9px] text-muted-foreground/50">
+        <span>{values.length} sessions</span>
+        <span>today</span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The recent MACD histogram as bars either side of zero. Unlike RSI there is
+ * no fixed scale — the histogram is in price units — so the bars are scaled to
+ * the largest one shown, symmetrically, which keeps zero in the middle and
+ * makes shrinking bars read as fading momentum.
+ */
+function MacdHistogramBars({ values }: { values: number[] }) {
+  if (values.length < 2) return null
+
+  const W = 100
+  const H = 40
+  const mid = H / 2
+  const peak = Math.max(...values.map(Math.abs)) || 1
+  const slot = W / values.length
+  const barW = slot * 0.7
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        className="h-10 w-full"
+        role="img"
+        aria-label={`MACD histogram over the last ${values.length} sessions`}
+      >
+        <line
+          x1={0}
+          x2={W}
+          y1={mid}
+          y2={mid}
+          className="stroke-border"
+          vectorEffect="non-scaling-stroke"
+        />
+        {values.map((v, i) => {
+          const h = (Math.abs(v) / peak) * (mid - 1)
+          return (
+            <rect
+              key={i}
+              x={i * slot + (slot - barW) / 2}
+              y={v >= 0 ? mid - h : mid}
+              width={barW}
+              height={Math.max(h, 0.5)}
+              className={v >= 0 ? 'fill-emerald-500/70' : 'fill-rose-500/70'}
+            >
+              <title>{signed(v, 3)}</title>
+            </rect>
+          )
+        })}
+      </svg>
+      <div className="flex justify-between text-[9px] text-muted-foreground/50">
+        <span>{values.length} sessions</span>
+        <span>today</span>
+      </div>
+    </div>
+  )
+}
+
 const DRAWDOWN_LABELS: Record<DrawdownStatus, string> = {
   at_high: 'At high',
   pullback: 'Pullback',
@@ -237,7 +346,11 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
         : 'text-foreground'
 
   return (
-    <div className="flex flex-col gap-3">
+    // The panel is its own size container: the columns follow the width this
+    // panel actually gets, not the viewport's. With the sidebar and watchlist
+    // both open, a 1300px window leaves it ~680px — a viewport `xl:` breakpoint
+    // fires there and crushes four cards into ~160px each.
+    <div className="flex flex-col gap-3 [container-type:inline-size]">
       {loading && !data ? (
         <Card>
           <CardContent className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
@@ -253,10 +366,13 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+        // Four across once each card gets ~225px (what the MA ladder's three
+        // columns need), 2×2 below that, one column on a phone — never 3 + 1,
+        // which left one card stranded on a row of its own.
+        <div className="grid gap-3 [@container(min-width:480px)]:grid-cols-2 [@container(min-width:940px)]:grid-cols-4">
           {/* RSI */}
           <Card>
-            <CardContent className="flex flex-col gap-2.5 py-4">
+            <CardContent className="flex h-full flex-col gap-2.5 py-4">
               <div className="flex items-baseline justify-between">
                 <span className="text-[13px] font-semibold text-foreground">RSI</span>
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
@@ -287,6 +403,18 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                     <span>70 overbought</span>
                     <span>100</span>
                   </div>
+
+                  {/* The gauge says where RSI is; this says how it got there.
+                      mt-auto pins it to the foot of the card, whose height the
+                      taller MA ladder sets. */}
+                  <div className="mt-auto pt-1">
+                    <RsiSparkline
+                      values={(rsi?.historical ?? []).filter(
+                        (v): v is number => typeof v === 'number' && Number.isFinite(v)
+                      )}
+                      className={zoneColor === 'text-foreground' ? 'text-sky-400' : zoneColor}
+                    />
+                  </div>
                 </>
               )}
             </CardContent>
@@ -294,7 +422,7 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
 
           {/* MACD */}
           <Card>
-            <CardContent className="flex flex-col gap-2.5 py-4">
+            <CardContent className="flex h-full flex-col gap-2.5 py-4">
               <div className="flex items-baseline justify-between">
                 <span className="text-[13px] font-semibold text-foreground">MACD</span>
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
@@ -340,6 +468,16 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                         bearish crossover
                       </Badge>
                     )}
+                  </div>
+
+                  {/* Same footing as the RSI sparkline: pinned to the foot of
+                      the card, filling the height the MA ladder sets. */}
+                  <div className="mt-auto pt-1">
+                    <MacdHistogramBars
+                      values={(macd?.history ?? []).filter(
+                        (v): v is number => typeof v === 'number' && Number.isFinite(v)
+                      )}
+                    />
                   </div>
                 </>
               )}

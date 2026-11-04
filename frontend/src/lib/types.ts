@@ -196,6 +196,9 @@ export interface MacdReading {
   macd?: number
   signal?: number
   histogram?: number
+  /** Last 20 histogram values, oldest first. For the panel only — the chat
+   *  agent never sees it (technicals.without_series). */
+  history?: (number | null)[]
   bullish_crossover?: boolean
   bearish_crossover?: boolean
   trend?: 'bullish' | 'bearish'
