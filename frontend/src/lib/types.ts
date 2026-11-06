@@ -158,6 +158,9 @@ export interface History {
   interval: string
   intraday: boolean
   candles: Candle[]
+  /** Up to 199 closes before the first candle, oldest first, in the same
+   *  interval — moving-average warm-up only. Absent on intraday ranges. */
+  ma_lead?: number[]
   period_change?: number
   period_change_percent?: number
   error?: string
