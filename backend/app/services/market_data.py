@@ -455,6 +455,23 @@ async def get_history(symbol: str, range_key: str = "1Y") -> dict:
 
 PROFILE_TTL = 600.0
 
+# yfinance builds `.info` from two requests: quoteSummary (beta, sector,
+# industry, short interest, dayLow, averageVolume) and the v7 quote (price,
+# market cap, P/E, 52w range). When quoteSummary fails — Yahoo throttling, a
+# bad crumb — it carries on with the v7 half alone and raises nothing. These
+# keys exist only in quoteSummary, and every listed instrument, ETFs included,
+# has at least one of them, so all absent means that request was lost.
+_SUMMARY_ONLY_KEYS = ("dayLow", "averageVolume", "sector", "beta")
+
+
+def _first(info: dict, *keys: str):
+    """The first of `keys` with a usable value — quoteSummary's name first, the
+    v7 quote's equivalent after it, so a lost quoteSummary still fills it."""
+    for k in keys:
+        if _safe(info.get(k)) is not None:
+            return info[k]
+    return None
+
 
 async def get_profile(symbol: str) -> dict:
     """Name, exchange and the key stats shown above the chart."""
@@ -474,11 +491,13 @@ async def get_profile(symbol: str) -> dict:
             "forward_pe": _round(info.get("forwardPE"), 2),
             "dividend_yield": _round(info.get("dividendYield"), 4),
             "beta": _round(info.get("beta"), 2),
-            "day_low": _round(info.get("dayLow"), 2),
-            "day_high": _round(info.get("dayHigh"), 2),
+            "day_low": _round(_first(info, "dayLow", "regularMarketDayLow"), 2),
+            "day_high": _round(_first(info, "dayHigh", "regularMarketDayHigh"), 2),
             "week52_low": _round(info.get("fiftyTwoWeekLow"), 2),
             "week52_high": _round(info.get("fiftyTwoWeekHigh"), 2),
-            "avg_volume": _safe(info.get("averageVolume")),
+            "avg_volume": _safe(
+                _first(info, "averageVolume", "averageDailyVolume3Month")
+            ),
             # Short interest, reported twice a month. Yahoo gives the float
             # share as a fraction; stored as a percent so prose quoting
             # "22.4%" grounds against it (see agents/base/guardrails.py).
@@ -489,10 +508,19 @@ async def get_profile(symbol: str) -> dict:
             "shares_short": _safe(info.get("sharesShort")),
             "shares_short_prior_month": _safe(info.get("sharesShortPriorMonth")),
             "next_earnings": None,
+            # Beta, sector and short interest are blank in a partial profile;
+            # the fallbacks above cover only day range and average volume.
+            "partial": all(_safe(info.get(k)) is None for k in _SUMMARY_ONLY_KEYS),
         }
 
     try:
-        return await _cached(f"profile:{symbol}", PROFILE_TTL, fetch)
+        # A partial profile is served but never stored. Cached, it pinned
+        # blank beta and average volume for ten minutes, and as the stale
+        # fallback for hours after that; uncached, the next request retries.
+        return await _cached(
+            f"profile:{symbol}", PROFILE_TTL, fetch,
+            should_cache=lambda r: not r.get("partial"),
+        )
     except Exception as e:
         log.error("profile_fetch_failed", symbol=symbol, error=str(e))
         return {"symbol": symbol, "name": symbol, "error": str(e)}
