@@ -165,6 +165,14 @@ The three written documents exist. Not done:
       "mixed"~~ — fixed 2026-11-03. `SignalSet.bias_phrase` ("Leaning bullish, with the
       horizons disagreeing") is the one phrase the chip, the prompt and the
       blocked-reply summary all use.
+- [x] ~~Chart MA200 started 200 bars into the range~~ — fixed 2026-11-04. The
+      average was computed from the visible candles alone, so on 1Y it drew only
+      the last ~50 sessions. Store-backed ranges (3M–5Y) now return `ma_lead`,
+      up to 199 closes before the first candle, and `PriceChart`'s `sma` seeds
+      its window with them.
+- [ ] **Intraday ranges (1D / 5D / 1M) and the live fallback still have no
+      lead**, so a long average on 5-minute bars starts late or not at all. A
+      longer yfinance period trimmed back to the visible sessions would fix it.
 
 ### Guardrails
 
@@ -217,13 +225,110 @@ Fixed on the way in (2026-11-03):
 
 ---
 
+## Market data beyond Yahoo (opened 2026-11-04)
+
+Almost every number in the app comes from yfinance: `.info` (78 call sites —
+profile, valuation inputs, ratios), `.history` and `yf.download` (bars),
+`.options` / `.option_chain` (the whole options phase), `.calendar` /
+`get_earnings_dates`, the statements, and `yf.screen` (Signals screens). It is
+free and unofficial, so there is no SLA and the throttle is per IP.
+
+**How it fails is the real problem.** yfinance's `.info` is two requests —
+quoteSummary (beta, sector, industry, short interest, `dayLow`,
+`averageVolume`) and the v7 quote (price, market cap, P/E, 52w range). When
+quoteSummary is throttled it returns the v7 half and raises nothing. Two
+consequences found so far:
+
+- [x] ~~Profile pinned blank beta / avg volume / day range for every symbol~~ —
+      fixed 2026-11-04 on `feat/ux-improvement`. A partial profile is served
+      but never cached (`should_cache`), and day range and average volume fall
+      back to the v7 quote's own fields. Beta and sector have no fallback.
+- [ ] **Valuation silently prices a throttled symbol with beta = 1.0.**
+      `cost_of_equity(None)` defaults rather than failing, and the result is
+      cached for 15 minutes. AAPL's 1.09 → 1.0 moves the discount rate, so the
+      reverse-DCF headline moves with it. Same `partial` guard, or the derived
+      beta below.
+
+### Tier 0 — free, no new vendor
+
+Most of what quoteSummary supplies can be computed from data already held,
+which is both more robust and more accurate (a stated method rather than
+Yahoo's undocumented one):
+
+- [ ] **Beta from `daily_bars`** against SPY — state the convention (5y monthly
+      matches Yahoo; 2y weekly is the common alternative). Removes the valuation
+      dependency above and makes beta reproducible.
+- [ ] **Average volume from `daily_bars`** (3-month mean) and today's range from
+      the intraday quote already fetched for the header.
+- [ ] **Sector from the GICS constituent tables** `market_data` already loads,
+      through `normalise_sector`; Yahoo's names only for symbols outside them.
+- [ ] **Fundamentals from SEC EDGAR `companyfacts`** — free, no key, 10 req/s
+      with a descriptive User-Agent. Filings-grade figures for the DCF, where
+      `.cashflow` is Yahoo's restatement of them.
+- [ ] **A Yahoo request governor** — one process-wide limiter (concurrency cap
+      plus token bucket) for every yfinance call, and a breaker on 429 like the
+      StockTwits one. The Signals page's profile fan-out is the likeliest
+      trigger today; nothing coordinates it with the chart page's calls.
+
+### Tier 1 — a `MarketDataProvider` seam
+
+The same move as `ModelProvider`: one interface (bars, quote, profile,
+fundamentals, option chain, calendar), yfinance as the first implementation,
+and an env var to choose. It turns every row in the table below into a config
+change, and fallbacks into a list rather than code.
+
+### Tier 2 — paid or keyed sources
+
+Prices checked 2026-11-04. *Official* = read on the vendor's own page;
+*third-party* = aggregator sites, which disagreed with each other, so confirm
+before buying.
+
+| Provider | Free | Paid entry | Good for | Gaps / caveats | Source |
+|---|---|---|---|---|---|
+| **Alpaca Market Data** | Basic: IEX-only real-time, 200 calls/min, history since 2016, 30 WebSocket symbols, indicative options | Algo Trader Plus **$99/mo**: all US exchanges (SIP), 10k calls/min, OPRA options | Bars, quotes, streaming — the `useQuotes` WebSocket seam; options on the paid tier | No fundamentals, no sector/beta. Needs an Alpaca (paper) account | Official |
+| **Tiingo** | 50 req/hr, 1,000/day, 500 symbols/mo | Power **$30/mo** ($300/yr): 10k/hr, 100k/day, 30+ yrs prices, 15+ yrs fundamentals; Business $50/mo | Validated EOD bars; cheapest reliable history | **Internal use only — may not display or share**; fundamentals add-on priced by sales | Official |
+| **Financial Modeling Prep** | 250 calls/day, EOD | Starter **$19/mo** annual ($29 monthly), 300/min; Premium $49 ($69); Ultimate $99 ($139) | Profile (beta, sector, avg volume), statements, earnings calendar, screener — the closest single replacement for `.info` | Redistribution needs a separate licence | Third-party transcription of the pricing page (2026-10-28); our fetch was refused |
+| **Massive** (formerly Polygon) | — | Stocks Advanced **$199/mo** (real-time, 20+ yrs, WebSockets, financials); Financials & Ratios $29/mo | Real-time and tick history | Lower stock tiers ($0/$29/$79 per aggregators) not on the official page as fetched; options a separate ladder (~$398/mo with real-time stocks, third-party) | Official (partial) |
+| **Finnhub** | 60 calls/min; US quotes, basic fundamentals, earnings calendar, company news | ~$50/mo per market (unverified; sources range to $3,500 for all-in-one) | Free earnings calendar and news — the dead NewsAPI key's replacement | Free tier non-commercial; paid pricing opaque | Third-party |
+| **EODHD** | Limited | $19.99 EOD → $29.99 +intraday → $59.99 fundamentals → $99.99 all-in-one; 100k weighted calls/day | Global coverage, one bill | Personal-use tier; commercial from $399 | Third-party (consistent) |
+| **Twelve Data** | Small | Grow $49 / $79, Pro $229 | — | A business plan is required for *any* company use | Official |
+| **Alpha Vantage** | 25 req/day | $49.99 (75/min) → $249.99 (1,200/min) | — | Free tier too small for a watchlist | Third-party |
+| **ThetaData** (options) | EOD tier | ~$40 / $80 / $160 per mo | Per-contract IV, greeks, history | Index underlyings extra; no vol surface | Third-party (rechecked 2026-09) |
+| **Tradier** (options) | Free with a brokerage account (unverified) | — | Chains with ORATS-computed greeks/IV | Brokerage account | Third-party |
+| **Interactive Brokers** | Cboe One + IEX real-time US stocks for account holders | ~$10/mo non-pro bundle, waived at $30/mo commissions | Real-time quotes and chains on an existing account | Needs TWS / IB Gateway running; personal use | Third-party + IBKR KB |
+| **Databento** | $125 credits | Standard $199/mo live; usage-based history | Tick / L2 | Overkill for EOD analytics | Official blog |
+
+**Recommendation, in order:**
+
+1. **Tier 0 first ($0).** Derived beta, average volume and sector, the governor,
+   and the `partial` guard on valuation remove the failures seen so far without
+   a vendor.
+2. **Then the seam, then FMP Starter (~$19–29/mo) + Alpaca Basic (free).** FMP
+   replaces `.info`, statements, the earnings calendar and the screener; Alpaca
+   takes bars, quotes and a WebSocket feed. yfinance stays as the fallback and
+   for option chains.
+3. **Alpaca Algo Trader Plus ($99/mo) only if real-time matters** — SIP quotes
+   plus OPRA options in one subscription, retiring Yahoo for the options phase
+   too. Confirm its option snapshots carry IV and greeks before relying on it.
+4. **Not Massive, Databento, or Twelve Data** for this app — real-time tick data
+   or business-only licensing at several times the price, for analytics built
+   on daily bars.
+
+**Licensing is the constraint most likely to bite.** Nearly every individual
+plan is personal or internal use, and Tiingo's says outright that data may not
+be displayed to anyone else. A publicly deployed demo serving live data to
+visitors would need a display licence; the portfolio demo should run on the
+author's key in a recording, or on a cached snapshot.
+
+---
+
 ## Accepted trade-offs
 
 Not bugs, and not worth relitigating without new information:
 
 | Decision | Why | What would change it |
 |---|---|---|
-| **No WebSocket price feed** | yfinance has no streaming API and is delayed anyway; the UI polls | A paid provider (Polygon/Alpaca/Finnhub). `useQuotes` is the single seam |
+| **No WebSocket price feed** | yfinance has no streaming API and is delayed anyway; the UI polls | Alpaca Basic streams IEX quotes free for 30 symbols; SIP is $99/mo. `useQuotes` is the single seam — see *Market data beyond Yahoo* |
 | **Heatmap is TradingView's embed** | Theirs is genuinely real-time; ours was delayed | Accepting delayed tiles that link internally |
 | **No bid/ask** | Not available from the data source | A paid feed |
 | **No verdict badge in chat** | "Should I buy?" is answered as a conditional setup — more defensible, and it makes the guardrail coherent | Nothing; this is the design |
