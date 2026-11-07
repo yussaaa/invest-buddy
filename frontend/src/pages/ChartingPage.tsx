@@ -47,6 +47,7 @@ import {
 } from '@/components/chart/sectionPrefs'
 import TechnicalPanel, { TECHNICALS_SUBLABEL } from '@/components/chart/TechnicalPanel'
 import OptionsPanel, { OPTIONS_SUBLABEL } from '@/components/chart/options/OptionsPanel'
+import PositionSizingPanel, { SIZING_SUBLABEL } from '@/components/chart/sizing/PositionSizingPanel'
 
 const RANGES = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'MAX'] as const
 
@@ -483,6 +484,17 @@ export default function ChartingPage() {
         >
           <ValuationPanel symbol={symbol} />
         </Suspense>
+      </Section>
+
+      <Section
+        id="sizing"
+        title="Position sizing"
+        sublabel={SIZING_SUBLABEL}
+        summary="ATR stop · shares at fixed risk · R-multiple"
+        open={sections.sizing}
+        onOpenChange={open => toggleSection('sizing', open)}
+      >
+        <PositionSizingPanel symbol={symbol} />
       </Section>
 
       <Section

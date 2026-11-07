@@ -565,6 +565,20 @@ export interface TrendPayload {
   error?: string
 }
 
+// ── ATR / volatility stop ────────────────────────────────────────────────────
+// Current price and Average True Range, in current-price dollars. The position
+// sizing panel does its arithmetic in the browser; this is the only real-data
+// input it needs. See services/technicals.get_atr.
+export interface AtrLevels {
+  symbol: string
+  period: number
+  price?: number
+  atr?: number
+  atr_pct?: number
+  as_of?: string
+  error?: string
+}
+
 // ── Valuation ───────────────────────────────────────────────────────────────
 
 export type ScenarioCase = 'bear' | 'base' | 'bull'

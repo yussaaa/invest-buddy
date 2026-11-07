@@ -15,6 +15,7 @@ import type {
   NewsFeed,
   NewsSettings,
   NewsSources,
+  AtrLevels,
   TrendPayload,
   Valuation,
   ValuationExplanation,
@@ -178,6 +179,9 @@ export const api = {
         `/market/trend?symbol=${encodeURIComponent(symbol)}&range=${range}`,
         { signal }
       ),
+
+    atr: (symbol: string, signal?: AbortSignal) =>
+      request<AtrLevels>(`/market/atr?symbol=${encodeURIComponent(symbol)}`, { signal }),
 
     valuation: (symbol: string, params: Record<string, number | string> = {}, signal?: AbortSignal) => {
       const query = new URLSearchParams({ symbol, ...Object.fromEntries(
