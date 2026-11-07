@@ -145,6 +145,12 @@ The three written documents exist. Not done:
       exact-name table with trader labels, plus jobless claims, ADP and ECI. A
       keyless or failed FRED answer is no longer cached, so adding the key
       shows at once instead of after 30 minutes.
+- [x] **Economic releases carry their numbers** — 2026-11-07
+      (`services/economic_values.py`). Actual as first published (ALFRED
+      vintages, so revisions do not rewrite history), previous as quoted on the
+      day, and a forecast: ForexFactory consensus for the current week, else
+      the mean of the three prior readings, labelled `avg` so it is never read
+      as a consensus. Impact analysis deliberately not built yet.
 - [x] ~~`/market/breadth` never served warm~~ — fixed 2026-08-18. `cached`
       stamps a value with the time its fetch *started*, so `BREADTH_TTL = 60`
       against a 120 s+ scan produced values that were **born expired** and could

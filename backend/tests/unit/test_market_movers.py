@@ -468,7 +468,10 @@ def test_high_importance_leads_its_day_and_repeats_collapse():
 async def test_an_unconfigured_calendar_is_not_cached(monkeypatch):
     import app.services.market_data as md
     from app.services import cache
+    from tests.unit.test_cache_tiers import FakeRedis
 
+    # Off the real Redis: a running stack may hold this week's live answer.
+    monkeypatch.setattr(cache, "redis_client", FakeRedis())
     cache._CACHE.clear()
     answers = iter([{"events": [], "available": False}, {"events": [], "available": True}])
     monkeypatch.setattr(md, "_fetch_economic", lambda s, e: next(answers))
@@ -479,3 +482,5 @@ async def test_an_unconfigured_calendar_is_not_cached(monkeypatch):
     # The key arrives: the next load sees it, not a cached "not configured".
     assert (await md.get_week_events(0))["economic"]["available"] is True
     cache._CACHE.clear()
+
+

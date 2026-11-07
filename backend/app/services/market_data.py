@@ -95,6 +95,7 @@ MAJOR_FRED_RELEASES: dict[str, tuple[str, str]] = {
     "h.4.1 factors affecting reserve balances": ("Fed Balance Sheet (H.4.1)", "medium"),
 }
 
+
 # Index membership for the breadth panel. Constituents come from Wikipedia's
 # tables (the only free source with GICS sectors attached); Dow 30 is small and
 # stable enough to also serve as the offline fallback.
@@ -767,8 +768,19 @@ def _fetch_economic(start: date, end: date) -> dict:
         log.error("fred_fetch_failed", error=str(e))
         return {"events": [], "source": "fred", "available": False, "error": str(e)}
 
+    events = _major_releases(payload.get("release_dates", []))
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    try:
+        from app.services.economic_values import attach_values
+
+        # Consensus comes from a feed that only knows the current week.
+        attach_values(events, api_key, today, with_consensus=start <= today <= end)
+    except Exception as e:
+        # The dates are still worth showing without the numbers.
+        log.error("economic_values_failed", error=str(e))
+
     return {
-        "events": _major_releases(payload.get("release_dates", [])),
+        "events": events,
         "source": "fred",
         "available": True,
     }
@@ -1537,19 +1549,21 @@ async def get_week_events(
             log.error("earnings_season_failed", error=str(e))
             return None
 
-    earnings, season_progress = await asyncio.gather(week(), season())
+    async def releases() -> dict:
+        try:
+            return await _cached(
+                f"economic:{start}:{end}",
+                EVENTS_TTL,
+                lambda: _fetch_economic(start, end),
+                # A missing key or a FRED outage is not an answer to keep for 30
+                # minutes: adding the key would otherwise not show until expiry.
+                should_cache=lambda v: bool(v.get("available")),
+            )
+        except Exception as e:
+            log.error("economic_fetch_failed", error=str(e))
+            return {"events": [], "available": False, "error": str(e)}
 
-    try:
-        economic = await _cached(
-            f"economic:{start}:{end}",
-            EVENTS_TTL,
-            lambda: _fetch_economic(start, end),
-            # A missing key or a FRED outage is not an answer to keep for 30
-            # minutes: adding the key would otherwise not show until expiry.
-            should_cache=lambda v: bool(v.get("available")),
-        )
-    except Exception as e:
-        log.error("economic_fetch_failed", error=str(e))
-        economic = {"events": [], "available": False, "error": str(e)}
+    # Three independent sources; the slowest sets the wait, not the sum.
+    earnings, season_progress, economic = await asyncio.gather(week(), season(), releases())
 
     return {**base, "earnings": earnings, "season": season_progress, "economic": economic}

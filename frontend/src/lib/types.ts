@@ -710,12 +710,30 @@ export interface EarningsSeason {
   reported: number
 }
 
+/** One headline number in a release — "CPI m/m", "Nonfarm payrolls". */
+export interface EconomicFigure {
+  label: string
+  /** "%", "K", "M", "B", "T", or "" for an index. */
+  unit: string
+  decimals: number
+  /** The reference period — "Oct 2026", "Q3 2026", "wk of Oct 31". */
+  period: string | null
+  /** As first published on the release day; null until it is out. */
+  actual: number | null
+  previous: number | null
+  forecast: number | null
+  /** "consensus" from economists, or "average" of the three prior readings. */
+  forecast_source: 'consensus' | 'average' | null
+}
+
 export interface EconomicEvent {
   /** What a trader calls it: "Consumer Price Index (CPI)". */
   name: string
   /** FRED's own release name, for the tooltip. */
   release?: string
   date: string
+  /** The headline figures inside the release; absent when FRED has none. */
+  indicators?: EconomicFigure[]
   importance: 'high' | 'medium'
   source: string
 }

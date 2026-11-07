@@ -31,6 +31,7 @@ import type {
   CapTier,
   EarningsEvent,
   EarningsSeason,
+  EconomicEvent,
   IndexBreadth,
   MarketEvents,
   MarketOverview,
@@ -721,6 +722,78 @@ function SeasonProgress({ season, cap }: { season: EarningsSeason; cap: CapTier 
   )
 }
 
+/** Label, actual, forecast, previous — shared by the header and every row. */
+const FIGURE_GRID = 'grid grid-cols-[minmax(0,1fr)_4.25rem_5.25rem_4.25rem] items-baseline gap-x-2'
+
+/** "0.3%", "165K", "-105.0B", "52.4" — the release's own way of quoting it. */
+function figure(value: number | null, unit: string, decimals: number): string {
+  if (value == null) return '—'
+  return `${value.toFixed(decimals)}${unit}`
+}
+
+/**
+ * One release: its name and day, then a line per headline figure.
+ *
+ * The forecast says where it came from. "cons." is economists' consensus; "avg"
+ * is the mean of the three readings before, standing in where no consensus is
+ * available — a baseline, not a prediction anyone made.
+ */
+function ReleaseRow({ event, isPast }: { event: EconomicEvent; isPast: boolean }) {
+  const figures = event.indicators ?? []
+
+  return (
+    <div className="flex flex-col gap-1 border-b border-border/40 py-2 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              'h-1.5 w-1.5 shrink-0 rounded-full',
+              event.importance === 'high' ? 'bg-amber-400' : 'bg-muted-foreground/40'
+            )}
+          />
+          <span className="truncate text-xs text-foreground" title={event.release}>
+            {event.name}
+          </span>
+        </div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{formatDay(event.date)}</span>
+      </div>
+
+      {figures.map(f => (
+        <div key={f.label} className={cn(FIGURE_GRID, 'pl-3.5 text-[11px] tabular-nums')}>
+          <span className="truncate text-muted-foreground" title={f.period ? `${f.label} · ${f.period}` : f.label}>
+            {f.label}
+            {f.period && <span className="ml-1 text-[10px] text-muted-foreground/50">{f.period}</span>}
+          </span>
+          <span
+            className={cn('text-right', f.actual != null ? 'font-semibold text-foreground' : 'text-muted-foreground/40')}
+            title={f.actual != null ? undefined : isPast ? 'Not on FRED yet' : 'Not released yet'}
+          >
+            {figure(f.actual, f.unit, f.decimals)}
+          </span>
+          <span
+            className="text-right text-muted-foreground"
+            title={
+              f.forecast_source === 'consensus'
+                ? "Economists' consensus (ForexFactory)"
+                : f.forecast_source === 'average'
+                  ? 'Mean of the three prior readings — a baseline, not a consensus forecast'
+                  : undefined
+            }
+          >
+            {figure(f.forecast, f.unit, f.decimals)}
+            {f.forecast_source && (
+              <span className="ml-1 text-[8px] uppercase tracking-wide text-muted-foreground/50">
+                {f.forecast_source === 'consensus' ? 'cons.' : 'avg'}
+              </span>
+            )}
+          </span>
+          <span className="text-right text-muted-foreground">{figure(f.previous, f.unit, f.decimals)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** "Last week", "in 3 weeks" — the offset in words, so the dates have context. */
 function relativeWeek(offset: number): string {
   if (offset === 0) return 'This week'
@@ -1183,26 +1256,20 @@ export default function MarketPage() {
                 </p>
               ) : (
                 <div className="flex flex-col">
-                  {economic.events.map(e => (
-                    <div
-                      key={`${e.name}-${e.date}`}
-                      className="flex items-center justify-between gap-3 border-b border-border/40 py-2 last:border-b-0"
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span
-                          className={cn(
-                            'h-1.5 w-1.5 shrink-0 rounded-full',
-                            e.importance === 'high' ? 'bg-amber-400' : 'bg-muted-foreground/40'
-                          )}
-                        />
-                        <span className="truncate text-xs text-foreground" title={e.release}>
-                          {e.name}
-                        </span>
-                      </div>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {formatDay(e.date)}
-                      </span>
+                  {economic.events.some(e => e.indicators?.length) && (
+                    <div className={cn(FIGURE_GRID, 'pb-1 text-[9px] uppercase tracking-wide text-muted-foreground/50')}>
+                      <span />
+                      <span className="text-right">Actual</span>
+                      <span className="text-right">Forecast</span>
+                      <span className="text-right">Previous</span>
                     </div>
+                  )}
+                  {economic.events.map(e => (
+                    <ReleaseRow
+                      key={`${e.name}-${e.date}`}
+                      event={e}
+                      isPast={e.date < (events?.today ?? isoDay(new Date()))}
+                    />
                   ))}
                 </div>
               )}
