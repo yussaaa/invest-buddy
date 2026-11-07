@@ -343,7 +343,7 @@ def test_each_day_lists_the_largest_companies_first(monkeypatch):
         {"symbol": "MONDAY", "cap": 11e9, "at": "2026-11-09 21:00"},
     )
     monkeypatch.setattr(md, "_earnings_pages", lambda q: [frame])
-    rows = md._fetch_week_earnings(*WEEK, [])
+    rows = md._fetch_earnings_between(*WEEK, [])
     assert [r["symbol"] for r in rows] == ["MONDAY", "BIG", "SMALL"]
 
 
@@ -357,7 +357,7 @@ def test_named_tickers_are_asked_for_separately_and_merged(monkeypatch):
         return [calendar({"symbol": "SMOL", "cap": 2e9})] if len(asked) == 2 else [calendar({})]
 
     monkeypatch.setattr(md, "_earnings_pages", pages)
-    rows = md._fetch_week_earnings(*WEEK, ["SMOL"])
+    rows = md._fetch_earnings_between(*WEEK, ["SMOL"])
     assert {r["symbol"] for r in rows} == {"ACME", "SMOL"}
     # The second query names the ticker and drops the cap floor.
     assert "SMOL" in str(asked[1]) and "intradaymarketcap" not in str(asked[1])
@@ -374,4 +374,34 @@ def test_share_classes_collapse_to_the_ticker_people_trade(monkeypatch):
         {"symbol": "XYZ", "company": "Someone Else", "cap": 20e9},
     )
     monkeypatch.setattr(md, "_earnings_pages", lambda q: [frame])
-    assert [r["symbol"] for r in md._fetch_week_earnings(*WEEK, [])] == ["GOOGL", "BRK-B", "XYZ"]
+    assert [r["symbol"] for r in md._fetch_earnings_between(*WEEK, [])] == ["GOOGL", "BRK-B", "XYZ"]
+
+
+@pytest.mark.parametrize(
+    "day, bounds, label",
+    [
+        (date(2026, 11, 7), (date(2026, 10, 1), date(2026, 12, 31)), "Q3 2026"),
+        (date(2026, 10, 1), (date(2026, 10, 1), date(2026, 12, 31)), "Q3 2026"),
+        (date(2026, 2, 2), (date(2026, 1, 1), date(2026, 3, 31)), "Q4 2025"),
+        (date(2026, 6, 30), (date(2026, 4, 1), date(2026, 6, 30)), "Q1 2026"),
+    ],
+)
+def test_the_season_is_the_quarter_results_land_in(day, bounds, label):
+    from app.services.market_data import _season_bounds
+
+    start, end, name = _season_bounds(day)
+    assert (start, end) == bounds and name == label
+
+
+def test_season_counts_a_past_date_as_reported_even_without_eps(monkeypatch):
+    import app.services.market_data as md
+
+    rows = [
+        {"symbol": "IN", "date": "2026-10-20", "reported_eps": 1.0},
+        {"symbol": "LAGGED", "date": "2026-10-21", "reported_eps": None},    # Yahoo never filled it
+        {"symbol": "TODAY", "date": "2026-11-07", "reported_eps": None},     # not out yet
+        {"symbol": "LATER", "date": "2026-12-01", "reported_eps": None},
+    ]
+    monkeypatch.setattr(md, "_fetch_earnings_between", lambda s, e, x: rows)
+    summary = md._season_summary(date(2026, 10, 1), date(2026, 12, 31), "Q3 2026", date(2026, 11, 7))
+    assert (summary["reported"], summary["total"]) == (2, 4)

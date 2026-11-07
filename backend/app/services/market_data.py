@@ -63,7 +63,7 @@ MACRO = [
 
 # Mega-caps the chat agent's forward event scan checks one by one, and the bar
 # store backfills first. The Market page's week calendar does not use this: it
-# asks Yahoo for every large cap reporting (see `_fetch_week_earnings`).
+# asks Yahoo for every large cap reporting (see `_fetch_earnings_between`).
 EARNINGS_UNIVERSE = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "BRK-B",
     "JPM", "V", "MA", "UNH", "XOM", "JNJ", "WMT", "PG", "HD", "COST", "ORCL",
@@ -1250,7 +1250,7 @@ async def get_events(days: int = 7, extra_symbols: list[str] | None = None) -> d
 # names while a hundred large caps reported around them.
 EARNINGS_MIN_MARKET_CAP = 10e9      # large caps: "the reports that move things"
 EARNINGS_PAGE = 100                 # Yahoo's cap on one page
-EARNINGS_MAX_PAGES = 8              # peak season is ~300 rows above $10B
+EARNINGS_MAX_PAGES = 12             # a whole season is ~860 rows above $10B
 EARNINGS_WEEK_TTL = 3600.0          # a week still in play fills in reported EPS
 EARNINGS_PAST_WEEK_TTL = 86400.0    # a finished week only changes by revision
 MAX_WEEK_OFFSET = 26
@@ -1358,7 +1358,7 @@ def _earnings_rows(frame: pd.DataFrame, start: date, end: date) -> list[dict]:
     return list(rows.values())
 
 
-def _fetch_week_earnings(start: date, end: date, extra_symbols: list[str]) -> list[dict]:
+def _fetch_earnings_between(start: date, end: date, extra_symbols: list[str]) -> list[dict]:
     frames = _earnings_pages(_earnings_query(start, end))
     if extra_symbols:
         frames += _earnings_pages(_earnings_query(start, end, extra_symbols))
@@ -1388,6 +1388,42 @@ def _one_line_per_company(rows: list[dict]) -> list[dict]:
     return list(best.values())
 
 
+def _season_bounds(day: date) -> tuple[date, date, str]:
+    """The reporting season `day` falls in: its calendar quarter, and the label
+    of the quarter whose results land in it.
+
+    October to December is "Q3 2026 season" — companies report the quarter
+    that just closed. Off-cycle fiscal years (Cisco's Q1 in November) still
+    report once inside the window, which is what makes it a fair denominator.
+    """
+    first_month = 3 * ((day.month - 1) // 3) + 1
+    start = date(day.year, first_month, 1)
+    following = date(day.year + 1, 1, 1) if first_month == 10 else date(day.year, first_month + 3, 1)
+    results_q = (first_month - 1) // 3 or 4
+    results_year = day.year if first_month > 1 else day.year - 1
+    return start, following - timedelta(days=1), f"Q{results_q} {results_year}"
+
+
+def _season_summary(start: date, end: date, label: str, today: date) -> dict:
+    """How many of the season's large-cap reporters are in.
+
+    Reported means the EPS is in, or the date has passed: Yahoo never fills in
+    a handful each season (~8 of ~860), and a finished season should read as
+    finished.
+    """
+    rows = _fetch_earnings_between(start, end, [])
+    reported = sum(
+        1 for r in rows if r["reported_eps"] is not None or r["date"] < today.isoformat()
+    )
+    return {
+        "label": label,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "total": len(rows),
+        "reported": reported,
+    }
+
+
 def _earnings_week_key(start: date, extra_symbols: list[str]) -> str:
     """Shared by the endpoint and the warm-up job, so the two cannot drift."""
     return f"earnings-week:{start.isoformat()}:{','.join(extra_symbols)}"
@@ -1415,7 +1451,7 @@ async def refresh_earnings_calendar(ahead: float = 0.85) -> bool:
     if current_age is not None and current_age < ttl * ahead:
         return False
 
-    rows = await asyncio.to_thread(_fetch_week_earnings, start, end, [])
+    rows = await asyncio.to_thread(_fetch_earnings_between, start, end, [])
     if rows:
         await cache.prime(key, rows, ttl)
     return bool(rows)
@@ -1442,17 +1478,35 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
         "is_current_week": start <= today <= end,
     }
 
-    try:
-        earnings = await _cached(
-            _earnings_week_key(start, extra),
-            _earnings_week_ttl(end, today),
-            lambda: _fetch_week_earnings(start, end, extra),
-            should_cache=bool,
-            lock=True,
-        )
-    except Exception as e:
-        log.error("earnings_calendar_failed", error=str(e))
-        earnings = []
+    season_start, season_end, season_label = _season_bounds(start)
+
+    async def week() -> list[dict]:
+        try:
+            return await _cached(
+                _earnings_week_key(start, extra),
+                _earnings_week_ttl(end, today),
+                lambda: _fetch_earnings_between(start, end, extra),
+                should_cache=bool,
+                lock=True,
+            )
+        except Exception as e:
+            log.error("earnings_calendar_failed", error=str(e))
+            return []
+
+    async def season() -> dict | None:
+        try:
+            return await _cached(
+                f"earnings-season:{season_start.isoformat()}",
+                _earnings_week_ttl(season_end, today),
+                lambda: _season_summary(season_start, season_end, season_label, today),
+                should_cache=lambda v: bool(v and v["total"]),
+                lock=True,
+            )
+        except Exception as e:
+            log.error("earnings_season_failed", error=str(e))
+            return None
+
+    earnings, season_progress = await asyncio.gather(week(), season())
 
     try:
         economic = await _cached(
@@ -1462,4 +1516,4 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
         log.error("economic_fetch_failed", error=str(e))
         economic = {"events": [], "available": False, "error": str(e)}
 
-    return {**base, "earnings": earnings, "economic": economic}
+    return {**base, "earnings": earnings, "season": season_progress, "economic": economic}

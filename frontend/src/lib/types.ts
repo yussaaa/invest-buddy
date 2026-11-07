@@ -700,6 +700,16 @@ export interface EarningsEvent {
   surprise_percent?: number
 }
 
+export interface EarningsSeason {
+  /** The quarter whose results are being reported, e.g. "Q3 2026". */
+  label: string
+  start: string
+  end: string
+  /** US-listed $10B+ companies reporting inside the window. */
+  total: number
+  reported: number
+}
+
 export interface EconomicEvent {
   name: string
   date: string
@@ -716,6 +726,9 @@ export interface MarketEvents {
   today?: string
   is_current_week?: boolean
   earnings: EarningsEvent[]
+  /** Progress through the reporting season the week falls in; null if the
+   *  calendar could not be read. */
+  season?: EarningsSeason | null
   economic: {
     events: EconomicEvent[]
     available: boolean

@@ -68,7 +68,7 @@ async def test_calendar_is_fetched_when_missing_and_primed_for_the_endpoint(monk
         calls.append((start, end, extra))
         return [{"symbol": "AAPL", "date": start.isoformat()}]
 
-    monkeypatch.setattr(md, "_fetch_week_earnings", fetch)
+    monkeypatch.setattr(md, "_fetch_earnings_between", fetch)
     assert await md.refresh_earnings_calendar() is True
 
     # The endpoint's key now holds it: a visitor would not trigger a fetch.
@@ -80,7 +80,7 @@ async def test_calendar_is_fetched_when_missing_and_primed_for_the_endpoint(monk
 
 async def test_a_young_calendar_is_left_alone(monkeypatch):
     await cache.prime(_this_week_key(), [{"symbol": "X"}], md.EARNINGS_WEEK_TTL)
-    monkeypatch.setattr(md, "_fetch_week_earnings", _explode)
+    monkeypatch.setattr(md, "_fetch_earnings_between", _explode)
     assert await md.refresh_earnings_calendar() is False
 
 
@@ -90,7 +90,7 @@ async def test_a_calendar_near_expiry_is_refreshed_before_it_lapses(monkeypatch)
     await cache.prime(_this_week_key(), [{"symbol": "OLD"}], md.EARNINGS_WEEK_TTL)
 
     clock["t"] += md.EARNINGS_WEEK_TTL * 0.9    # still fresh, but nearly due
-    monkeypatch.setattr(md, "_fetch_week_earnings", lambda s, e, x: [{"symbol": "NEW"}])
+    monkeypatch.setattr(md, "_fetch_earnings_between", lambda s, e, x: [{"symbol": "NEW"}])
     assert await md.refresh_earnings_calendar() is True
     assert cache.peek(_this_week_key()) == [{"symbol": "NEW"}]
 

@@ -30,6 +30,7 @@ import { useCachedResource } from '@/hooks/useCachedResource'
 import type {
   CapTier,
   EarningsEvent,
+  EarningsSeason,
   IndexBreadth,
   MarketEvents,
   MarketOverview,
@@ -644,6 +645,35 @@ function EarningsWeek({
   )
 }
 
+/**
+ * How far through the reporting season the market is: "Q3 2026 season ·
+ * 703 / 863 reported". The total is every US-listed $10B+ company reporting
+ * in the quarter the viewed week falls in, so it follows the week picker.
+ */
+function SeasonProgress({ season }: { season: EarningsSeason }) {
+  const { label, total, reported } = season
+  const window = [season.start, season.end]
+    .map(d => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
+    .join(' – ')
+
+  return (
+    <span
+      title={`${reported} of ${total} US-listed $10B+ companies reporting ${window} are in`}
+      className="flex items-center gap-1.5 text-[11px] font-normal text-muted-foreground"
+    >
+      <span className="tabular-nums">
+        {label} season · <span className="text-foreground">{reported}</span> / {total} large caps reported
+      </span>
+      <span className="h-1 w-14 overflow-hidden rounded-full bg-muted">
+        <span
+          className="block h-full rounded-full bg-primary/70"
+          style={{ width: `${total ? (reported / total) * 100 : 0}%` }}
+        />
+      </span>
+    </span>
+  )
+}
+
 /** "Last week", "in 3 weeks" — the offset in words, so the dates have context. */
 function relativeWeek(offset: number): string {
   if (offset === 0) return 'This week'
@@ -1061,9 +1091,13 @@ export default function MarketPage() {
                 <span>
                   Earnings <span className="text-muted-foreground/60">({earnings.length})</span>
                 </span>
-                <span className="text-[10px] font-normal text-muted-foreground/60">
-                  US-listed, $10B+ market cap
-                </span>
+                {events?.season ? (
+                  <SeasonProgress season={events.season} />
+                ) : (
+                  <span className="text-[10px] font-normal text-muted-foreground/60">
+                    US-listed, $10B+ market cap
+                  </span>
+                )}
               </h3>
               <Separator />
 
