@@ -711,7 +711,10 @@ export interface EarningsSeason {
 }
 
 export interface EconomicEvent {
+  /** What a trader calls it: "Consumer Price Index (CPI)". */
   name: string
+  /** FRED's own release name, for the tooltip. */
+  release?: string
   date: string
   importance: 'high' | 'medium'
   source: string

@@ -427,3 +427,55 @@ def test_each_tier_has_its_own_cache_key():
 
     keys = {_earnings_week_key(WEEK[0], [], cap) for cap in ("all", "large", "mid", "small")}
     assert len(keys) == 4
+
+
+
+# ── economic releases ───────────────────────────────────────────────────────
+
+
+def test_releases_match_by_exact_name_not_substring():
+    from app.services.market_data import _major_releases
+
+    dates = [
+        {"release_name": "Consumer Price Index", "date": "2026-11-10"},
+        {"release_name": "Research Consumer Price Index", "date": "2026-11-10"},
+        {"release_name": "Consumer Price Index Excluding Energy Commodities", "date": "2026-11-10"},
+        {"release_name": "Gross Domestic Product by County", "date": "2026-12-02"},
+        {"release_name": "Surveys of Consumers", "date": "2026-11-13"},
+    ]
+    assert [e["name"] for e in _major_releases(dates)] == [
+        "Consumer Price Index (CPI)",
+        "UMich Consumer Sentiment",
+    ]
+
+
+def test_high_importance_leads_its_day_and_repeats_collapse():
+    from app.services.market_data import _major_releases
+
+    dates = [
+        {"release_name": "G.19 Consumer Credit", "date": "2026-11-06"},
+        {"release_name": "Employment Situation", "date": "2026-11-06"},
+        {"release_name": "Employment Situation", "date": "2026-11-06"},
+    ]
+    events = _major_releases(dates)
+    assert [(e["name"], e["importance"]) for e in events] == [
+        ("Employment Situation (jobs report)", "high"),
+        ("Consumer Credit", "medium"),
+    ]
+    assert events[0]["release"] == "Employment Situation"
+
+
+async def test_an_unconfigured_calendar_is_not_cached(monkeypatch):
+    import app.services.market_data as md
+    from app.services import cache
+
+    cache._CACHE.clear()
+    answers = iter([{"events": [], "available": False}, {"events": [], "available": True}])
+    monkeypatch.setattr(md, "_fetch_economic", lambda s, e: next(answers))
+    monkeypatch.setattr(md, "_fetch_earnings_between", lambda *a, **k: [])
+    monkeypatch.setattr(md, "_season_summary", lambda *a, **k: {"total": 0})
+
+    assert (await md.get_week_events(0))["economic"]["available"] is False
+    # The key arrives: the next load sees it, not a cached "not configured".
+    assert (await md.get_week_events(0))["economic"]["available"] is True
+    cache._CACHE.clear()

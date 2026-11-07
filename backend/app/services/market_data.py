@@ -71,20 +71,28 @@ EARNINGS_UNIVERSE = [
     "BAC", "GS", "MS", "PFE", "MRK", "LLY", "CVX", "BA", "CAT", "DIS",
 ]
 
-# FRED releases worth surfacing — everything else is noise for a markets view.
-MAJOR_FRED_RELEASES = {
-    "employment situation": "high",
-    "consumer price index": "high",
-    "producer price index": "high",
-    "gross domestic product": "high",
-    "personal income and outlays": "high",
-    "advance monthly sales for retail and food services": "high",
-    "job openings and labor turnover survey": "medium",
-    "industrial production and capacity utilization": "medium",
-    "new residential construction": "medium",
-    "consumer credit": "medium",
-    "university of michigan: consumer sentiment": "medium",
-    "h.4.1 factors affecting reserve balances": "medium",
+# FRED releases worth surfacing, by FRED's exact release name — everything else
+# is noise for a markets view. Exact, not substring: "consumer price index"
+# used to also match "Research Consumer Price Index" and "... Excluding Energy
+# Commodities", and "gross domestic product" matched "GDP by County", each
+# shown as a second high-importance release. The label is what a trader calls it.
+MAJOR_FRED_RELEASES: dict[str, tuple[str, str]] = {
+    "employment situation": ("Employment Situation (jobs report)", "high"),
+    "consumer price index": ("Consumer Price Index (CPI)", "high"),
+    "producer price index": ("Producer Price Index (PPI)", "high"),
+    "gross domestic product": ("Gross Domestic Product (GDP)", "high"),
+    "personal income and outlays": ("Personal Income & Outlays (PCE)", "high"),
+    "advance monthly sales for retail and food services": ("Retail Sales", "high"),
+    "unemployment insurance weekly claims report": ("Initial Jobless Claims", "medium"),
+    "job openings and labor turnover survey": ("JOLTS Job Openings", "medium"),
+    "adp national employment report": ("ADP Employment Report", "medium"),
+    "employment cost index": ("Employment Cost Index", "medium"),
+    "g.17 industrial production and capacity utilization": ("Industrial Production", "medium"),
+    "new residential construction": ("Housing Starts & Permits", "medium"),
+    "surveys of consumers": ("UMich Consumer Sentiment", "medium"),
+    "u.s. international trade in goods and services": ("Trade Balance", "medium"),
+    "g.19 consumer credit": ("Consumer Credit", "medium"),
+    "h.4.1 factors affecting reserve balances": ("Fed Balance Sheet (H.4.1)", "medium"),
 }
 
 # Index membership for the breadth panel. Constituents come from Wikipedia's
@@ -759,31 +767,32 @@ def _fetch_economic(start: date, end: date) -> dict:
         log.error("fred_fetch_failed", error=str(e))
         return {"events": [], "source": "fred", "available": False, "error": str(e)}
 
+    return {
+        "events": _major_releases(payload.get("release_dates", [])),
+        "source": "fred",
+        "available": True,
+    }
+
+
+def _major_releases(release_dates: list[dict]) -> list[dict]:
+    """FRED's release dates narrowed to `MAJOR_FRED_RELEASES`: high first within
+    a day, one line per release per day."""
     events, seen = [], set()
-    for item in payload.get("release_dates", []):
-        name = (item.get("release_name") or "").strip()
-        lowered = name.lower()
-        importance = next(
-            (imp for key, imp in MAJOR_FRED_RELEASES.items() if key in lowered), None
-        )
-        if not importance:
+    for item in release_dates:
+        release = (item.get("release_name") or "").strip()
+        match = MAJOR_FRED_RELEASES.get(release.lower())
+        if not match or (release, item.get("date")) in seen:
             continue
-        key = (name, item.get("date"))
-        if key in seen:
-            continue
-        seen.add(key)
+        seen.add((release, item.get("date")))
+        label, importance = match
         events.append({
-            "name": name,
+            "name": label,
+            "release": release,
             "date": item.get("date"),
             "importance": importance,
             "source": "FRED",
         })
-
-    return {
-        "events": sorted(events, key=lambda e: (e["date"], e["name"])),
-        "source": "fred",
-        "available": True,
-    }
+    return sorted(events, key=lambda e: (e["date"], e["importance"] != "high", e["name"]))
 
 
 # ── index constituents ────────────────────────────────────────────────────────
@@ -1532,7 +1541,12 @@ async def get_week_events(
 
     try:
         economic = await _cached(
-            f"economic:{start}:{end}", EVENTS_TTL, lambda: _fetch_economic(start, end)
+            f"economic:{start}:{end}",
+            EVENTS_TTL,
+            lambda: _fetch_economic(start, end),
+            # A missing key or a FRED outage is not an answer to keep for 30
+            # minutes: adding the key would otherwise not show until expiry.
+            should_cache=lambda v: bool(v.get("available")),
         )
     except Exception as e:
         log.error("economic_fetch_failed", error=str(e))

@@ -138,6 +138,13 @@ The three written documents exist. Not done:
       caps reported"): the same filter over the quarter the week falls in.
       A cap-tier toggle (All / Large / Mid / Small, the movers' `CAP_TIERS`)
       filters both; large by default, remembered per browser.
+- [x] ~~**Economic releases matched FRED names by substring**~~ — fixed
+      2026-11-07. "Consumer price index" also matched "Research CPI" and "CPI
+      excluding energy commodities", "gross domestic product" matched "GDP by
+      County", and the UMich entry named a release FRED does not have. Now an
+      exact-name table with trader labels, plus jobless claims, ADP and ECI. A
+      keyless or failed FRED answer is no longer cached, so adding the key
+      shows at once instead of after 30 minutes.
 - [x] ~~`/market/breadth` never served warm~~ — fixed 2026-08-18. `cached`
       stamps a value with the time its fetch *started*, so `BREADTH_TTL = 60`
       against a 120 s+ scan produced values that were **born expired** and could

@@ -1160,6 +1160,15 @@ export default function MarketPage() {
                   <Loader2 size={14} className="animate-spin" />
                   Loading calendar…
                 </div>
+              ) : economic?.error ? (
+                // The key is set but FRED did not answer — not a setup problem.
+                <div className="py-6 text-center">
+                  <p className="text-xs text-muted-foreground">Couldn't reach FRED</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground/60">
+                    The St. Louis Fed's release calendar did not respond. It will retry on the
+                    next load.
+                  </p>
+                </div>
               ) : !economic?.available ? (
                 <div className="py-6 text-center">
                   <p className="text-xs text-muted-foreground">Economic calendar not configured</p>
@@ -1186,7 +1195,9 @@ export default function MarketPage() {
                             e.importance === 'high' ? 'bg-amber-400' : 'bg-muted-foreground/40'
                           )}
                         />
-                        <span className="truncate text-xs text-foreground">{e.name}</span>
+                        <span className="truncate text-xs text-foreground" title={e.release}>
+                          {e.name}
+                        </span>
                       </div>
                       <span className="shrink-0 text-[11px] text-muted-foreground">
                         {formatDay(e.date)}
