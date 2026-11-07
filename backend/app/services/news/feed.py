@@ -58,6 +58,7 @@ def to_dict(row) -> dict:
         "symbols": list(row.symbols or []),
         "category": row.category,
         "tags": list(row.tags or []),
+        "symbol_info": row.symbol_info,
         "importance": row.importance,
         "exposures": row.exposures,
         "explanation": row.explanation,

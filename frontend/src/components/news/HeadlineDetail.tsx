@@ -82,11 +82,14 @@ export default function HeadlineDetail({
             <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Tickers named</h3>
             {headline.symbols.map(symbol => {
               const pct = quotes[symbol]?.change_percent
+              const info = headline.symbol_info?.[symbol]
+              const kind = [info?.sector, info?.industry].filter(Boolean).join(' · ')
               return (
                 <div
                   key={symbol}
                   className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
                 >
+                  <div className="min-w-0">
                   <div className="flex items-baseline gap-2">
                     <span className="font-mono text-sm font-semibold">{symbol}</span>
                     {quotes[symbol]?.last !== undefined && (
@@ -105,6 +108,8 @@ export default function HeadlineDetail({
                         {pct.toFixed(2)}% last session
                       </span>
                     )}
+                  </div>
+                  {kind && <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{kind}</p>}
                   </div>
                   <div className="flex items-center gap-1">
                     <Link

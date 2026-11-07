@@ -424,6 +424,10 @@ class NewsHeadline(Base):
     # Source-specific labels — 8-K item numbers, the Fed's release category.
     tags: Mapped[list] = mapped_column(PG_ARRAY(String(64)), nullable=False, server_default="{}")
 
+    # {symbol: {"sector", "industry"} | null}, filled just after ingest
+    # (services/news/classify.py). Null until then; a symbol with no profile
+    # maps to null, so the row is not looked up again.
+    symbol_info: Mapped[dict | None] = mapped_column(JSONB)
     importance: Mapped[int | None] = mapped_column(SmallInteger)
     exposures: Mapped[list | None] = mapped_column(JSONB)
     triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

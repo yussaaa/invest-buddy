@@ -1,7 +1,7 @@
 """news_headlines — the market news wire.
 
 One row per headline from Alpaca, SEC EDGAR or the Fed, filled in stages
-(ingest, triage, explanation, measured reaction). Idempotent like 003 and
+(ingest, sector/industry, triage, explanation, measured reaction). Idempotent like 003 and
 004, so a dev schema that `create_all` already built upgrades cleanly.
 
 Revision ID: 005
@@ -46,6 +46,7 @@ def upgrade() -> None:
         sa.Column("category", sa.String(24), nullable=True),
         sa.Column("tags", postgresql.ARRAY(sa.String(64)),
                   server_default="{}", nullable=False),
+        sa.Column("symbol_info", postgresql.JSONB(), nullable=True),
         sa.Column("importance", sa.SmallInteger(), nullable=True),
         sa.Column("exposures", postgresql.JSONB(), nullable=True),
         sa.Column("triaged_at", sa.DateTime(timezone=True), nullable=True),

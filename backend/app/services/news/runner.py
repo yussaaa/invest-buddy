@@ -13,9 +13,10 @@ wakes every ten minutes, and a wire that is ten minutes late is not a wire.
 * **Each source fails alone.** Sources run as sibling tasks; a poll that
   raises is logged and retried on its interval, and only losing the lease
   stops the group.
-* **Ingest only.** Parsing and storing, no model calls. Triage and
-  explanation read from the table on their own schedule, so a slow model can
-  never back up the wire.
+* **Ingest first, enrich after.** Parsing and storing, no model calls and no
+  per-symbol lookups in the way of a headline. Sector/industry
+  (classify.py), and later triage and explanation, read from the table on
+  their own schedule and restamp the row, so nothing slow backs up the wire.
 """
 
 from __future__ import annotations
@@ -44,6 +45,12 @@ ALPACA_POLL_SECONDS = 60.0
 STREAM_BACKOFF_MAX = 120.0
 FATAL_RETRY_SECONDS = 600.0
 PRUNE_EVERY = 6 * 3600.0
+# Sector/industry fill-in: how often, how far back, and how many new symbols
+# one pass may look up (each is a Yahoo request; the first pass after a
+# backfill would otherwise be hundreds at once).
+CLASSIFY_EVERY = 15.0
+CLASSIFY_WINDOW = timedelta(days=3)
+CLASSIFY_MAX_SYMBOLS = 40
 
 
 class LeaseLost(Exception):
@@ -149,6 +156,46 @@ async def _poll_alpaca_for(seconds: float) -> None:
         await asyncio.sleep(ALPACA_POLL_SECONDS)
 
 
+async def classify_pending() -> int:
+    """Fill sector/industry on recent headlines that lack it; returns rows filled.
+
+    A row is filled only once every symbol it names has a final answer, so a
+    failed lookup leaves the row for the next pass rather than half-done.
+    """
+    from app.db.repositories_news import needing_symbol_info, set_symbol_info
+    from app.db.session import AsyncSessionLocal
+    from app.services.news.classify import classify
+
+    async with AsyncSessionLocal() as session:
+        rows = await needing_symbol_info(
+            session, since=datetime.now(timezone.utc) - CLASSIFY_WINDOW
+        )
+        wanted = [(r.id, list(r.symbols)) for r in rows]
+    if not wanted:
+        return 0
+
+    symbols = list(dict.fromkeys(s for _, syms in wanted for s in syms))[:CLASSIFY_MAX_SYMBOLS]
+    known = await classify(symbols)
+    filled = {hid: {s: known[s] for s in syms}
+              for hid, syms in wanted if all(s in known for s in syms)}
+    if filled:
+        async with AsyncSessionLocal() as session:
+            await set_symbol_info(session, filled)
+            await session.commit()
+    return len(filled)
+
+
+async def _classify_forever() -> None:
+    while True:
+        try:
+            filled = await classify_pending()
+            if filled:
+                log.info("news_classified", rows=filled)
+        except Exception as e:
+            log.warning("news_classify_failed", error=str(e)[:200])
+        await asyncio.sleep(CLASSIFY_EVERY)
+
+
 async def _prune_forever() -> None:
     from app.db.repositories_news import prune
     from app.db.session import AsyncSessionLocal
@@ -182,6 +229,7 @@ async def lead(token: str) -> None:
         group.create_task(poll_forever(news.FED, settings.news_fed_poll_seconds),
                           name="news-fed")
         group.create_task(run_alpaca(), name="news-alpaca")
+        group.create_task(_classify_forever(), name="news-classify")
         group.create_task(_prune_forever(), name="news-prune")
 
 

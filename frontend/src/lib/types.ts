@@ -1042,6 +1042,12 @@ export type NewsCategory =
   | 'regulatory'
   | 'news'
 
+/** Yahoo's classification of a ticker, as the profile panel shows it. */
+export interface SymbolInfo {
+  sector: string | null
+  industry: string | null
+}
+
 export interface NewsHeadline {
   id: string
   source: NewsSourceId
@@ -1053,6 +1059,9 @@ export interface NewsHeadline {
   symbols: string[]
   category: NewsCategory | null
   tags: string[]
+  /** Filled seconds after ingest. A symbol Yahoo has no profile for maps to
+   *  null; the whole field is null until the lookup has run. */
+  symbol_info: Record<string, SymbolInfo | null> | null
   /** Filled by later stages — null until then. */
   importance: number | null
   exposures: unknown[] | null

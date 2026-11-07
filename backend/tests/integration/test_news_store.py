@@ -10,14 +10,16 @@ import pytest
 from sqlalchemy import update
 
 from app.db.models import NewsHeadline
-from app.db.repositories_settings import all_settings, set_setting
 from app.db.repositories_news import (
     insert_headlines,
     last_published,
     latest,
+    needing_symbol_info,
     prune,
     recently_changed,
+    set_symbol_info,
 )
+from app.db.repositories_settings import all_settings, set_setting
 from app.services.news.models import Headline, headline_id
 
 pytestmark = pytest.mark.integration
@@ -117,3 +119,24 @@ async def test_app_settings_upsert_and_clear(db_session):
     assert (await all_settings(db_session))["zztest_key"] == "second"
     await set_setting(db_session, "zztest_key", "")
     assert "zztest_key" not in await all_settings(db_session)
+
+
+async def test_symbol_info_is_wanted_once_then_restamps_the_row(db_session):
+    await insert_headlines(db_session, [
+        headline("named", symbols=["ZZTG"]), headline("bare"),
+        headline("stale", symbols=["ZZQ"], minutes_ago=60 * 24 * 5),
+    ])
+    since = NOW - timedelta(days=3)
+    ids = lambda rows: {r.source_id for r in rows if r.source_id.startswith("zztest")}  # noqa: E731
+    assert ids(await needing_symbol_info(db_session, since=since)) == {"zztest-named"}
+
+    named = headline("named")["id"]
+    before = (await recently_changed(db_session, limit=300))
+    stamp = next(r.updated_at for r in before if r.id == named)
+    info = {"ZZTG": {"sector": "Technology", "industry": "Semiconductors"}}
+    await set_symbol_info(db_session, {named: info})
+    db_session.expire_all()
+
+    assert ids(await needing_symbol_info(db_session, since=since)) == set()
+    row = next(r for r in await recently_changed(db_session, limit=300) if r.id == named)
+    assert row.symbol_info == info and row.updated_at >= stamp

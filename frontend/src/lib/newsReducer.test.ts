@@ -5,7 +5,7 @@ import { EMPTY_FILTER, filterHeadlines, mergeHeadlines, newestStamp } from './ne
 function h(id: string, published: string, stamp = published, extra: Partial<NewsHeadline> = {}): NewsHeadline {
   return {
     id, source: 'alpaca', publisher: 'Benzinga', title: `headline ${id}`, summary: null, url: null,
-    published_at: published, symbols: [], category: 'news', tags: [], importance: null,
+    published_at: published, symbols: [], category: 'news', tags: [], symbol_info: null, importance: null,
     exposures: null, explanation: null, reaction: null, updated_at: stamp, ...extra,
   }
 }
@@ -50,7 +50,10 @@ describe('newestStamp', () => {
 
 describe('filterHeadlines', () => {
   const rows = [
-    h('nvda', T(3), T(3), { symbols: ['NVDA'], category: 'news' }),
+    h('nvda', T(3), T(3), {
+      symbols: ['NVDA'], category: 'news',
+      symbol_info: { NVDA: { sector: 'Technology', industry: 'Semiconductors' } },
+    }),
     h('fomc', T(2), T(2), { source: 'fed', category: 'monetary_policy', title: 'FOMC statement' }),
     h('tg', T(1), T(1), { source: 'edgar', symbols: ['TG'], category: 'earnings' }),
   ]
@@ -65,8 +68,9 @@ describe('filterHeadlines', () => {
     expect(ids({ ...EMPTY_FILTER, symbols: ['nvda'] })).toEqual(['nvda'])
     expect(ids({ ...EMPTY_FILTER, symbols: [] })).toEqual([])
   })
-  it('searches title and tickers', () => {
+  it('searches title, tickers, and their sector and industry', () => {
     expect(ids({ ...EMPTY_FILTER, query: 'fomc' })).toEqual(['fomc'])
     expect(ids({ ...EMPTY_FILTER, query: 'tg' })).toEqual(['tg'])
+    expect(ids({ ...EMPTY_FILTER, query: 'semiconductor' })).toEqual(['nvda'])
   })
 })

@@ -248,8 +248,8 @@ export default function NewsPage() {
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Filter headlines"
-            className="h-7 w-48 rounded-md border border-border bg-transparent pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary/50"
+            placeholder="Search ticker, industry, words"
+            className="h-7 w-56 rounded-md border border-border bg-transparent pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-primary/50"
           />
         </div>
       </div>

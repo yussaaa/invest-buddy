@@ -207,11 +207,12 @@ async def test_losing_the_lease_stops_every_source(monkeypatch):
     monkeypatch.setattr(runner, "poll_forever", lambda provider, interval: forever(provider.id))
     monkeypatch.setattr(runner, "run_alpaca", lambda: forever("alpaca"))
     monkeypatch.setattr(runner, "_prune_forever", lambda: forever("prune"))
+    monkeypatch.setattr(runner, "_classify_forever", lambda: forever("classify"))
 
     with pytest.raises(BaseExceptionGroup) as raised:
         await asyncio.wait_for(runner.lead("token"), timeout=2)
     assert raised.group_contains(runner.LeaseLost)
-    assert set(started) == {"edgar", "fed", "alpaca", "prune"}
+    assert set(started) == {"edgar", "fed", "alpaca", "prune", "classify"}
 
 
 async def test_an_unreachable_redis_does_not_stop_the_leader(monkeypatch):

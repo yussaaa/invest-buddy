@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional, Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,3 +93,28 @@ async def prune(session: AsyncSession, older_than_days: int = RETENTION_DAYS) ->
     )
     await session.flush()
     return result.rowcount or 0
+
+
+async def needing_symbol_info(
+    session: AsyncSession, *, since: datetime, limit: int = 100
+) -> list[NewsHeadline]:
+    """Recent headlines that name tickers whose sector/industry is not filled yet."""
+    stmt = (
+        select(NewsHeadline)
+        .where(NewsHeadline.symbol_info.is_(None))
+        .where(func.cardinality(NewsHeadline.symbols) > 0)
+        .where(NewsHeadline.published_at >= since)
+        .order_by(NewsHeadline.published_at.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def set_symbol_info(session: AsyncSession, info_by_id: dict[str, dict]) -> None:
+    """Fill symbol_info and restamp, so the stream sends the row again."""
+    for headline_id, info in info_by_id.items():
+        await session.execute(
+            update(NewsHeadline).where(NewsHeadline.id == headline_id)
+            .values(symbol_info=info, updated_at=func.now())
+        )
+    await session.flush()

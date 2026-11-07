@@ -1,5 +1,5 @@
 /**
- * One line of the wire: time, category, headline, tickers.
+ * One line of the wire: time, category, headline, tickers with their industry.
  *
  * Dense on purpose — a wire is scanned, not read. The row that just arrived
  * over the stream flashes once so the eye finds it.
@@ -76,7 +76,13 @@ export default function HeadlineRow({
         {headline.symbols.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
             {headline.symbols.map(symbol => (
-              <TickerChip key={symbol} symbol={symbol} quote={quotes[symbol]} onClick={onTicker} />
+              <TickerChip
+                key={symbol}
+                symbol={symbol}
+                quote={quotes[symbol]}
+                info={headline.symbol_info?.[symbol]}
+                onClick={onTicker}
+              />
             ))}
           </div>
         )}

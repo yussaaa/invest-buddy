@@ -56,7 +56,9 @@ export function filterHeadlines(headlines: NewsHeadline[], f: NewsFilter): NewsH
     if (categories.size && !(h.category && categories.has(h.category))) return false
     if (symbols && !h.symbols.some(s => symbols.has(s))) return false
     if (query) {
-      const haystack = `${h.title} ${h.summary ?? ''} ${h.symbols.join(' ')}`.toLowerCase()
+      // Sector and industry too, so "semiconductors" finds the chip names.
+      const kinds = Object.values(h.symbol_info ?? {}).flatMap(i => (i ? [i.sector, i.industry] : []))
+      const haystack = `${h.title} ${h.summary ?? ''} ${h.symbols.join(' ')} ${kinds.join(' ')}`.toLowerCase()
       if (!haystack.includes(query)) return false
     }
     return true
