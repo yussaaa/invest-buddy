@@ -57,40 +57,42 @@ def test_backfill_runs_the_next_evening_not_the_next_morning():
 # ── earnings calendar refresh-ahead ─────────────────────────────────────────
 
 
+def _this_week_key() -> str:
+    return md._earnings_week_key(md._iso_week_bounds(0)[0], [])
+
+
 async def test_calendar_is_fetched_when_missing_and_primed_for_the_endpoint(monkeypatch):
     calls = []
 
-    def fetch(universe):
-        calls.append(len(universe))
-        return {"AAPL": [{"date": "2026-11-05"}]}
+    def fetch(start, end, extra):
+        calls.append((start, end, extra))
+        return [{"symbol": "AAPL", "date": start.isoformat()}]
 
-    monkeypatch.setattr(md, "_fetch_earnings_calendar", fetch)
+    monkeypatch.setattr(md, "_fetch_week_earnings", fetch)
     assert await md.refresh_earnings_calendar() is True
 
     # The endpoint's key now holds it: a visitor would not trigger a fetch.
-    key = md._earnings_key(md._earnings_universe())
-    served = await cache.cached(key, md.EARNINGS_CALENDAR_TTL, lambda: fetch([]))
-    assert served == {"AAPL": [{"date": "2026-11-05"}]}
-    assert calls == [len(md.EARNINGS_UNIVERSE)]
+    served = await cache.cached(_this_week_key(), md.EARNINGS_WEEK_TTL, lambda: _explode())
+    assert served[0]["symbol"] == "AAPL"
+    start, end = md._iso_week_bounds(0)
+    assert calls == [(start, end, [])]
 
 
 async def test_a_young_calendar_is_left_alone(monkeypatch):
-    key = md._earnings_key(md._earnings_universe())
-    await cache.prime(key, {"X": []}, md.EARNINGS_CALENDAR_TTL)
-    monkeypatch.setattr(md, "_fetch_earnings_calendar", _explode)
+    await cache.prime(_this_week_key(), [{"symbol": "X"}], md.EARNINGS_WEEK_TTL)
+    monkeypatch.setattr(md, "_fetch_week_earnings", _explode)
     assert await md.refresh_earnings_calendar() is False
 
 
 async def test_a_calendar_near_expiry_is_refreshed_before_it_lapses(monkeypatch):
     clock = {"t": 1_000_000.0}
     monkeypatch.setattr(cache.time, "time", lambda: clock["t"])
-    key = md._earnings_key(md._earnings_universe())
-    await cache.prime(key, {"OLD": []}, md.EARNINGS_CALENDAR_TTL)
+    await cache.prime(_this_week_key(), [{"symbol": "OLD"}], md.EARNINGS_WEEK_TTL)
 
-    clock["t"] += md.EARNINGS_CALENDAR_TTL * 0.9    # still fresh, but nearly due
-    monkeypatch.setattr(md, "_fetch_earnings_calendar", lambda u: {"NEW": []})
+    clock["t"] += md.EARNINGS_WEEK_TTL * 0.9    # still fresh, but nearly due
+    monkeypatch.setattr(md, "_fetch_week_earnings", lambda s, e, x: [{"symbol": "NEW"}])
     assert await md.refresh_earnings_calendar() is True
-    assert cache.peek(key) == {"NEW": []}
+    assert cache.peek(_this_week_key()) == [{"symbol": "NEW"}]
 
 
 # ── tick ────────────────────────────────────────────────────────────────────

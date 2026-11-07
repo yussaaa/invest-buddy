@@ -261,3 +261,117 @@ def test_a_monday_anchor_holds_on_every_weekday(monkeypatch):
     monkeypatch.setattr(md, "datetime", FrozenDatetime)
     start, end = _iso_week_bounds(0)
     assert (start, end) == (date(2026, 8, 3), date(2026, 8, 9))
+
+
+# ── the week's earnings calendar ────────────────────────────────────────────
+
+WEEK = (date(2026, 11, 9), date(2026, 11, 15))
+
+
+def calendar(*rows: dict):
+    """A Calendars frame as yfinance hands it back: symbol index, UTC stamps."""
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        [
+            {
+                "Symbol": r.get("symbol", "ACME"),
+                "Company": r.get("company", f"{r.get('symbol', 'ACME')} Inc."),
+                "Marketcap": r.get("cap", 50e9),
+                "Event Start Date": pd.Timestamp(r.get("at", "2026-11-10 21:00"), tz="UTC"),
+                "Timing": r.get("timing", "AMC"),
+                "EPS Estimate": r.get("est", 1.0),
+                "Reported EPS": r.get("eps", float("nan")),
+                "Surprise(%)": r.get("surprise", float("nan")),
+            }
+            for r in rows
+        ]
+    )
+    return frame.set_index("Symbol")
+
+
+def test_the_date_is_new_yorks_not_utcs():
+    from app.services.market_data import _earnings_rows
+
+    # 01:00 UTC Saturday is 8pm Friday in New York: a Friday after-close report.
+    [row] = _earnings_rows(calendar({"at": "2026-11-14 01:00", "timing": "TAS"}), *WEEK)
+    assert row["date"] == "2026-11-13"
+    assert row["session"] == "after_close"
+
+
+def test_the_padded_query_window_is_trimmed_back_to_the_week():
+    from app.services.market_data import _earnings_rows
+
+    frame = calendar(
+        {"symbol": "SUN", "at": "2026-11-09 03:00"},    # Sunday 10pm ET, last week
+        {"symbol": "MON", "at": "2026-11-09 13:30"},
+        {"symbol": "NEXT", "at": "2026-11-16 13:30"},
+    )
+    assert [r["symbol"] for r in _earnings_rows(frame, *WEEK)] == ["MON"]
+
+
+def test_timing_codes_decide_the_session_and_a_missing_time_claims_none():
+    from app.services.market_data import _earnings_rows
+
+    frame = calendar(
+        {"symbol": "B", "timing": "BMO", "at": "2026-11-10 21:00"},   # code beats stamp
+        {"symbol": "A", "timing": "AMC", "at": "2026-11-10 13:30"},
+        {"symbol": "T", "timing": "TAS", "at": "2026-11-10 12:00"},   # 7am ET
+        {"symbol": "N", "timing": "TNS"},
+    )
+    sessions = {r["symbol"]: r["session"] for r in _earnings_rows(frame, *WEEK)}
+    assert sessions == {"B": "before_open", "A": "after_close", "T": "before_open", "N": None}
+
+
+def test_one_row_per_symbol_and_numbers_are_plain_json():
+    import json
+
+    from app.services.market_data import _earnings_rows
+
+    frame = calendar({"symbol": "DUP", "eps": 1.234567}, {"symbol": "DUP", "at": "2026-11-11 21:00"})
+    [row] = _earnings_rows(frame, *WEEK)
+    assert row["reported_eps"] == 1.235 and row["surprise_percent"] is None
+    json.dumps(row)     # numpy scalars would not survive the cache
+
+
+def test_each_day_lists_the_largest_companies_first(monkeypatch):
+    import app.services.market_data as md
+
+    frame = calendar(
+        {"symbol": "SMALL", "cap": 12e9, "at": "2026-11-10 13:30"},
+        {"symbol": "BIG", "cap": 900e9, "at": "2026-11-10 21:00"},
+        {"symbol": "MONDAY", "cap": 11e9, "at": "2026-11-09 21:00"},
+    )
+    monkeypatch.setattr(md, "_earnings_pages", lambda q: [frame])
+    rows = md._fetch_week_earnings(*WEEK, [])
+    assert [r["symbol"] for r in rows] == ["MONDAY", "BIG", "SMALL"]
+
+
+def test_named_tickers_are_asked_for_separately_and_merged(monkeypatch):
+    import app.services.market_data as md
+
+    asked = []
+
+    def pages(query):
+        asked.append(query.to_dict())
+        return [calendar({"symbol": "SMOL", "cap": 2e9})] if len(asked) == 2 else [calendar({})]
+
+    monkeypatch.setattr(md, "_earnings_pages", pages)
+    rows = md._fetch_week_earnings(*WEEK, ["SMOL"])
+    assert {r["symbol"] for r in rows} == {"ACME", "SMOL"}
+    # The second query names the ticker and drops the cap floor.
+    assert "SMOL" in str(asked[1]) and "intradaymarketcap" not in str(asked[1])
+
+
+def test_share_classes_collapse_to_the_ticker_people_trade(monkeypatch):
+    import app.services.market_data as md
+
+    frame = calendar(
+        {"symbol": "BRK-A", "company": "Berkshire Hathaway Inc.", "cap": 1e12},
+        {"symbol": "BRK-B", "company": "Berkshire Hathaway Inc.", "cap": 1e12},
+        {"symbol": "GOOG", "company": "Alphabet Inc.", "cap": 3e12},
+        {"symbol": "GOOGL", "company": "Alphabet Inc.", "cap": 3e12},
+        {"symbol": "XYZ", "company": "Someone Else", "cap": 20e9},
+    )
+    monkeypatch.setattr(md, "_earnings_pages", lambda q: [frame])
+    assert [r["symbol"] for r in md._fetch_week_earnings(*WEEK, [])] == ["GOOGL", "BRK-B", "XYZ"]

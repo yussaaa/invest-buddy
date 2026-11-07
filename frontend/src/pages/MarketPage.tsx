@@ -461,7 +461,8 @@ function EarningsTile({
 }) {
   const reported = event.reported_eps != null
   const surprise = event.surprise_percent
-  const session = event.session === 'before_open' ? 'before open' : 'after close'
+  const session =
+    event.session === 'before_open' ? 'before open' : event.session === 'after_close' ? 'after close' : null
 
   const detail = reported
     ? `${event.reported_eps!.toFixed(2)}${event.eps_estimate != null ? ` vs ${event.eps_estimate.toFixed(2)}` : ''}`
@@ -473,7 +474,8 @@ function EarningsTile({
     <button
       onClick={() => onSelect(event.symbol)}
       title={[
-        event.symbol,
+        event.name ? `${event.symbol} — ${event.name}` : event.symbol,
+        event.market_cap != null ? `${cap(event.market_cap)} market cap` : null,
         session,
         reported ? `reported ${event.reported_eps!.toFixed(2)}` : null,
         event.eps_estimate != null ? `est. ${event.eps_estimate.toFixed(2)}` : null,
@@ -483,14 +485,8 @@ function EarningsTile({
         .join(' · ')}
       className="flex flex-col rounded bg-card px-1.5 py-1 text-left transition-colors hover:bg-muted"
     >
-      <div className="flex items-baseline justify-between gap-1">
-        <span className="font-mono text-[11px] font-semibold text-foreground">{event.symbol}</span>
-        {/* Before the open or after the close — the part that decides which
-            session the move lands in. */}
-        <span className="shrink-0 text-[8px] uppercase tracking-wide text-muted-foreground/50">
-          {event.session === 'before_open' ? 'bmo' : 'amc'}
-        </span>
-      </div>
+      {/* Which session it lands in is the group heading above, not repeated here. */}
+      <span className="font-mono text-[11px] font-semibold text-foreground">{event.symbol}</span>
 
       {detail && (
         <span className="text-[9px] tabular-nums text-muted-foreground/70">{detail}</span>
@@ -502,7 +498,31 @@ function EarningsTile({
   )
 }
 
-/** Mon–Fri style calendar: one column per trading day, tickers stacked inside. */
+/** Reports shown per day before the column folds the rest behind "+N more". */
+const EARNINGS_PER_DAY = 8
+
+/**
+ * A day's reports split by the session they land in, in trading order: the
+ * open reacts to the first group, the next morning to the second. Companies
+ * that have not given a time come last rather than being guessed into either.
+ */
+const SESSION_GROUPS: { session: EarningsEvent['session']; label: string }[] = [
+  { session: 'before_open', label: 'Before open' },
+  { session: 'after_close', label: 'After close' },
+  { session: null, label: 'Time TBA' },
+]
+
+function sessionGroup(e: EarningsEvent): EarningsEvent['session'] {
+  return e.session === 'before_open' || e.session === 'after_close' ? e.session : null
+}
+
+/**
+ * Mon–Fri style calendar: one column per trading day, tickers stacked inside.
+ *
+ * In peak season a single day can carry eighty large-cap reports, so each
+ * column shows its biggest names (the backend sends them largest first) and
+ * folds the rest behind a toggle rather than stretching the whole row.
+ */
 function EarningsWeek({
   earnings,
   startIso,
@@ -514,8 +534,19 @@ function EarningsWeek({
   todayIso: string
   onSelect: (symbol: string) => void
 }) {
-  const days = businessDays(startIso, 5)
   const today = todayIso
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  // A different week is a different set of columns; start folded again.
+  useEffect(() => setExpanded(new Set()), [startIso])
+
+  const toggle = (day: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(day)) next.delete(day)
+      else next.add(day)
+      return next
+    })
 
   const byDay = new Map<string, EarningsEvent[]>()
   for (const e of earnings) {
@@ -524,12 +555,32 @@ function EarningsWeek({
     byDay.set(e.date, list)
   }
 
+  // Mon–Fri always; Saturday or Sunday only when someone reports on one
+  // (Berkshire does, every quarter).
+  const days = businessDays(startIso, 5)
+  for (const weekend of [1, 2]) {
+    const day = new Date(days[4])
+    day.setDate(day.getDate() + weekend)
+    if (byDay.has(isoDay(day))) days.push(day)
+  }
+  const columns = ['grid-cols-5', 'grid-cols-6', 'grid-cols-7'][days.length - 5]
+
   return (
-    <div className="grid grid-cols-5 gap-1.5">
+    <div className={cn('grid gap-1.5', columns)}>
       {days.map(day => {
         const key = isoDay(day)
         const items = byDay.get(key) ?? []
         const isToday = key === today
+        const open = expanded.has(key)
+        const hidden = items.length - EARNINGS_PER_DAY
+        // Fold first, group second: folded, a day still shows its biggest
+        // names whichever session they report in. Items arrive largest first.
+        const shown = open || hidden <= 0 ? items : items.slice(0, EARNINGS_PER_DAY)
+        const groups = SESSION_GROUPS.map(g => ({
+          ...g,
+          total: items.filter(e => sessionGroup(e) === g.session).length,
+          events: shown.filter(e => sessionGroup(e) === g.session),
+        })).filter(g => g.events.length > 0)
 
         return (
           <div
@@ -555,6 +606,9 @@ function EarningsWeek({
               </span>
               <span className="text-[10px] tabular-nums text-muted-foreground/60">
                 {day.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+                {items.length > 0 && (
+                  <span className="ml-1 text-muted-foreground/40">· {items.length}</span>
+                )}
               </span>
             </div>
 
@@ -562,7 +616,25 @@ function EarningsWeek({
               {items.length === 0 ? (
                 <span className="mt-3 text-center text-[10px] text-muted-foreground/30">—</span>
               ) : (
-                items.map(e => <EarningsTile key={e.symbol} event={e} onSelect={onSelect} />)
+                groups.map(g => (
+                  <div key={g.label} className="flex flex-col gap-1">
+                    <span className="mt-0.5 flex items-baseline justify-between px-0.5 text-[8px] uppercase tracking-wide text-muted-foreground/50">
+                      {g.label}
+                      <span className="tabular-nums">{g.total}</span>
+                    </span>
+                    {g.events.map(e => (
+                      <EarningsTile key={e.symbol} event={e} onSelect={onSelect} />
+                    ))}
+                  </div>
+                ))
+              )}
+              {hidden > 0 && (
+                <button
+                  onClick={() => toggle(key)}
+                  className="mt-0.5 rounded px-1.5 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  {open ? 'Show fewer' : `+${hidden} more`}
+                </button>
               )}
             </div>
           </div>
@@ -985,8 +1057,13 @@ export default function MarketPage() {
           {/* Earnings — laid out as a working-week calendar */}
           <Card>
             <CardContent className="flex flex-col gap-3 py-4">
-              <h3 className="text-sm font-semibold text-foreground">
-                Earnings <span className="text-muted-foreground/60">({earnings.length})</span>
+              <h3 className="flex items-baseline justify-between gap-2 text-sm font-semibold text-foreground">
+                <span>
+                  Earnings <span className="text-muted-foreground/60">({earnings.length})</span>
+                </span>
+                <span className="text-[10px] font-normal text-muted-foreground/60">
+                  US-listed, $10B+ market cap
+                </span>
               </h3>
               <Separator />
 

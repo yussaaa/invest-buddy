@@ -686,9 +686,13 @@ export interface MarketMovers {
 
 export interface EarningsEvent {
   symbol: string
+  /** Company name, when the calendar carries one. */
+  name?: string | null
+  market_cap?: number | null
   date: string
-  /** Whether the call lands before the open or after the close. */
-  session?: 'before_open' | 'after_close'
+  /** Whether the call lands before the open or after the close; null when the
+   *  company has not said. */
+  session?: 'before_open' | 'after_close' | null
   eps_estimate?: number
   revenue_estimate?: number
   /** Past weeks only — what was actually reported, and by how much it beat. */

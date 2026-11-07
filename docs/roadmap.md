@@ -127,6 +127,13 @@ The three written documents exist. Not done:
 - [x] ~~**The movers earnings calendar costs ~36s cold**~~ — fixed 2026-11-03. The
       warm-up loop re-fetches it at 85% of its TTL and primes the endpoint's
       own key, so no visitor waits.
+- [x] ~~**The week calendar showed two or three reports a day**~~ — fixed
+      2026-11-07. It scanned a fixed list of 40 mega-caps, so once those had
+      reported a peak-season day of ~80 large-cap reports showed a couple. Now
+      one Yahoo calendar query per week (`yf.Calendars`) covers every NYSE /
+      Nasdaq listing at $10B+, in under a second, which also retires the 36s
+      cold fetch above. Columns show the eight largest, grouped before-open /
+      after-close / time TBA, and fold the rest.
 - [x] ~~`/market/breadth` never served warm~~ — fixed 2026-08-18. `cached`
       stamps a value with the time its fetch *started*, so `BREADTH_TTL = 60`
       against a 120 s+ scan produced values that were **born expired** and could
