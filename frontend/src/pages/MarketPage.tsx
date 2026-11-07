@@ -751,25 +751,26 @@ function ReleaseRow({ event, isPast }: { event: EconomicEvent; isPast: boolean }
               event.importance === 'high' ? 'bg-amber-400' : 'bg-muted-foreground/40'
             )}
           />
-          <span className="truncate text-xs text-foreground" title={event.release}>
-            {event.name}
-          </span>
-        </div>
-        <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
-          {event.url && (
+          {/* The name is the link: it opens the publishing agency's own
+              release page (BLS, BEA, ...) in a new tab, not FRED's copy. */}
+          {event.url ? (
             <a
               href={event.url}
               target="_blank"
               rel="noopener noreferrer"
-              title={`${event.release ?? event.name} — ${event.publisher ?? 'publisher'}`}
-              className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60 transition-colors hover:text-primary"
+              title={`Open the ${event.publisher ?? 'official'} release: ${event.release ?? event.name}`}
+              className="group flex min-w-0 items-center gap-1 text-xs text-foreground transition-colors hover:text-primary"
             >
-              {event.publisher ?? 'Source'}
-              <ExternalLink size={9} />
+              <span className="truncate underline-offset-2 group-hover:underline">{event.name}</span>
+              <ExternalLink size={10} className="shrink-0 text-muted-foreground/50 group-hover:text-primary" />
             </a>
+          ) : (
+            <span className="truncate text-xs text-foreground" title={event.release}>
+              {event.name}
+            </span>
           )}
-          {formatDay(event.date)}
-        </span>
+        </div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{formatDay(event.date)}</span>
       </div>
 
       {figures.map(f => (
