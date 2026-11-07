@@ -22,6 +22,7 @@ import { cn, readJSON, writeJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { K, TTL } from '@/lib/cacheKeys'
 import { useCachedResource } from '@/hooks/useCachedResource'
+import { money } from '../valuation/format'
 
 export const SIZING_SUBLABEL =
   'Fixed-fractional risk · ATR volatility stop · R-multiple target'
@@ -42,9 +43,6 @@ function readPrefs(): SizingPrefs {
       typeof p.riskPct === 'number' && p.riskPct > 0 ? p.riskPct : DEFAULT_PREFS.riskPct,
   }
 }
-
-const money = (v: number, digits = 2): string =>
-  v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
 
 function Stat({
   label,
@@ -108,7 +106,9 @@ export default function PositionSizingPanel({ symbol }: { symbol: string }) {
   const [atrMult, setAtrMult] = useState(2)
   const [rTarget, setRTarget] = useState(2)
   const [entryStr, setEntryStr] = useState('')
-  const [entrySym, setEntrySym] = useState(symbol)
+  // null until the first auto-fill; tracks which symbol the entry was snapped
+  // for, so a symbol change re-snaps but a cleared field does not.
+  const [entrySym, setEntrySym] = useState<string | null>(null)
 
   const price = res.data?.price ?? null
   const atr = res.data?.atr ?? null
@@ -124,14 +124,15 @@ export default function PositionSizingPanel({ symbol }: { symbol: string }) {
     }
   }, [equityStr, riskStr])
 
-  // Snap the entry to the live price on load and whenever the symbol changes;
-  // leave it alone once the reader has typed their own for this symbol.
+  // Snap the entry to the live price on first load and whenever the symbol
+  // changes. Keyed on entrySym rather than an empty field, so the reader can
+  // clear the entry and retype without it refilling from under them.
   useEffect(() => {
-    if (price != null && (entrySym !== symbol || entryStr === '')) {
+    if (price != null && entrySym !== symbol) {
       setEntryStr(price.toFixed(2))
       setEntrySym(symbol)
     }
-  }, [symbol, price, entrySym, entryStr])
+  }, [symbol, price, entrySym])
 
   if (res.isLoading) {
     return (
