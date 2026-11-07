@@ -21,6 +21,7 @@ import type {
   OptionsChain,
   OptionsExplanation,
   OptionsStrategies,
+  ExpectedMove,
   Quote,
   ScreenContextValue,
   ScreenPayload,
@@ -237,6 +238,12 @@ export const api = {
     explainOptions: (symbol: string, strategy = 'all', signal?: AbortSignal) =>
       request<OptionsExplanation>(
         `/market/options/explain?symbol=${encodeURIComponent(symbol)}&strategy=${strategy}`,
+        { signal }
+      ),
+
+    expectedMove: (symbol: string, signal?: AbortSignal) =>
+      request<ExpectedMove>(
+        `/market/options/expected-move?symbol=${encodeURIComponent(symbol)}`,
         { signal }
       ),
   },

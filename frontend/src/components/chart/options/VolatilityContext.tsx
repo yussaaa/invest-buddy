@@ -13,7 +13,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import type { OptionExpirySummary, VolatilityContext as VolContext } from '@/lib/types'
+import type { ExpectedMove, OptionExpirySummary, VolatilityContext as VolContext } from '@/lib/types'
 import { compact, fmt, pct, pts, shortDate } from './format'
 
 /** 0–100 track with a marker, matching the RSI gauge in TechnicalPanel. */
@@ -44,6 +44,7 @@ interface Props {
   expiries?: OptionExpirySummary[]
   nextEarnings?: string | null
   shortestDte?: number
+  expectedMove?: ExpectedMove
 }
 
 export default function VolatilityContextCards({
@@ -51,6 +52,7 @@ export default function VolatilityContextCards({
   expiries = [],
   nextEarnings,
   shortestDte,
+  expectedMove,
 }: Props) {
   const hasRank = volatility?.iv_rank_available === true
   const gaugeValue = hasRank ? volatility?.iv_rank : volatility?.iv_percentile_vs_realized
@@ -177,6 +179,32 @@ export default function VolatilityContextCards({
               Earnings land inside the shortest expiry screened. None of the probabilities
               below model that event.
             </p>
+          )}
+
+          {expectedMove?.available && expectedMove.expected_move_pct != null && (
+            <div className="mt-0.5 border-t border-border/40 pt-2" title={expectedMove.caveat}>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Expected move</span>
+                <span className="tabular-nums font-semibold text-foreground">
+                  ±{pct(expectedMove.expected_move_pct)}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground/60">
+                <span className="tabular-nums">
+                  ${fmt(expectedMove.implied_low)} – ${fmt(expectedMove.implied_high)}
+                </span>
+                {expectedMove.confidence && (
+                  <Badge variant="secondary" className="text-[9px] uppercase tracking-wide">
+                    {expectedMove.confidence}
+                  </Badge>
+                )}
+              </div>
+              <p className="mt-1 text-[9px] leading-snug text-muted-foreground/50">
+                The options market is pricing this range through{' '}
+                {shortDate(expectedMove.expiry_used)}, around the{' '}
+                {shortDate(expectedMove.earnings_date)} print.
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>

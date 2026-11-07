@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.services import market_data, options, technicals, valuation, valuation_explain
+from app.services import (
+    earnings_move,
+    market_data,
+    options,
+    technicals,
+    valuation,
+    valuation_explain,
+)
 
 router = APIRouter()
 
@@ -132,6 +139,14 @@ async def explain_options(
 ) -> dict:
     """Plain-English read of what the screen surfaced, written by the fast model."""
     return await options.explain_options(symbol, strategy)
+
+
+@router.get("/options/expected-move")
+async def get_expected_move(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+) -> dict:
+    """The options-implied ±% move priced in around the next earnings date."""
+    return await earnings_move.expected_earnings_move(symbol)
 
 
 @router.get("/breadth")

@@ -438,6 +438,28 @@ export interface OptionsStrategies {
   error?: string
 }
 
+// The options-implied ± move priced in around the next earnings date. Scalars
+// only; see backend services/earnings_move.py.
+export interface ExpectedMove {
+  symbol: string
+  available: boolean
+  reason?: string | null
+  spot?: number
+  earnings_date?: string
+  days_to_earnings?: number
+  expiry_used?: string
+  expiry_dte?: number
+  straddle_price?: number | null
+  expected_move_pct?: number
+  implied_low?: number
+  implied_high?: number
+  method?: 'atm_straddle' | 'iv_sqrt_t'
+  confidence?: 'high' | 'medium' | 'low'
+  caveat?: string
+  disclaimer?: string
+  as_of?: string
+}
+
 export interface ValuationExplanation {
   symbol: string
   available: boolean

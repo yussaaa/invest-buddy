@@ -25,6 +25,7 @@ export const K = {
   technicalsExplain: (symbol: string) => `technicals:explain:${symbol}`,
   optionStrategies: (symbol: string) => `options:strategies:${symbol}`,
   optionsExplain: (symbol: string, strategy: string) => `options:explain:${symbol}:${strategy}`,
+  expectedMove: (symbol: string) => `earnmove:${symbol}`,
   overview: () => 'overview',
   breadth: () => 'breadth',
   movers: (cap: CapTier, limit = 10) => `movers:${cap}:${limit}`,
@@ -54,6 +55,7 @@ export const TTL = {
   valuation: 900_000,         // valuation.VALUATION_TTL
   explanation: 900_000,       // technicals/options EXPLANATION_TTL
   optionStrategies: 300_000,  // options.OPTIONS_CHAIN_TTL
+  expectedMove: 300_000,      // earnings_move.EARNINGS_MOVE_TTL
   weekEvents: 1_800_000,      // market_data.EVENTS_TTL
   socialTrending: 300_000,    // social/apewisdom.PAGE_TTL
   screen: 120_000,            // screens.SCREEN_TTL

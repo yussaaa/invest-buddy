@@ -80,6 +80,15 @@ export default function OptionsPanel({ symbol }: OptionsPanelProps) {
   )
   const data = res.data ?? null
   const loading = res.isLoading
+
+  // The options-implied move into the next print. Its own request because it
+  // fetches the one expiry that straddles earnings, which the strategy chain
+  // (scoped to 7–45 DTE + LEAPS) usually does not carry.
+  const move = useCachedResource(
+    K.expectedMove(symbol),
+    () => api.market.expectedMove(symbol),
+    { ttl: TTL.expectedMove },
+  ).data
   const error = res.error?.message ?? null
 
   const [strategy, setStrategy] = useState<OptionStrategyKey>(() => {
@@ -154,6 +163,7 @@ export default function OptionsPanel({ symbol }: OptionsPanelProps) {
             expiries={data?.expiries}
             nextEarnings={data?.next_earnings}
             shortestDte={shortestDte}
+            expectedMove={move}
           />
 
           {(data?.warnings ?? []).length > 0 && (
