@@ -6,13 +6,13 @@
  * call per symbol, and most of the time the numbers speak for themselves.
  */
 
-import { useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { AlertCircle, Loader2, Sparkles } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import { cn, readJSON, writeJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { cached, put } from '@/lib/clientCache'
 import { K, TTL } from '@/lib/cacheKeys'
@@ -62,6 +62,26 @@ function compactVol(v?: number | null): string {
   if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
   if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`
   return String(v)
+}
+
+// One-tap macro proxies for the relative-strength comparison, plus whatever
+// ticker the reader types. The chosen set persists — it's a property of how the
+// reader likes to compare, not of the symbol on screen.
+const RS_PRESETS = [
+  { sym: 'GLD', label: 'Gold' },
+  { sym: 'USO', label: 'Oil' },
+  { sym: 'TLT', label: 'Bonds' },
+  { sym: 'UUP', label: 'Dollar' },
+  { sym: 'IBIT', label: 'Bitcoin' },
+]
+const RS_COMPARE_KEY = 'agent-invest.charting.rs-compare'
+const RS_MAX_COMPARE = 5
+const RS_TICKER = /^[A-Z0-9.\-^=]{1,12}$/
+
+function readCompare(): string[] {
+  const raw = readJSON<unknown>(RS_COMPARE_KEY, [])
+  if (!Array.isArray(raw)) return []
+  return raw.filter((s): s is string => typeof s === 'string').slice(0, RS_MAX_COMPARE)
 }
 
 /** 0–100 track with the oversold/overbought bands marked. */
@@ -357,11 +377,39 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
     }
   }
 
+  // Which extra benchmarks to compare against (gold, oil, …). A preference, so
+  // it persists; keyed into the request so switching it refetches and caches.
+  const [compare, setCompare] = useState<string[]>(readCompare)
+  const [compareDraft, setCompareDraft] = useState('')
+  useEffect(() => {
+    writeJSON(RS_COMPARE_KEY, compare)
+  }, [compare])
+
+  function addCompare(sym: string) {
+    const s = sym.toUpperCase()
+    setCompare(prev => (prev.includes(s) || prev.length >= RS_MAX_COMPARE ? prev : [...prev, s]))
+  }
+  function toggleCompare(sym: string) {
+    const s = sym.toUpperCase()
+    setCompare(prev =>
+      prev.includes(s)
+        ? prev.filter(x => x !== s)
+        : prev.length >= RS_MAX_COMPARE
+          ? prev
+          : [...prev, s]
+    )
+  }
+  function submitDraft() {
+    const s = compareDraft.trim().toUpperCase()
+    setCompareDraft('')
+    if (s && RS_TICKER.test(s)) addCompare(s)
+  }
+
   // Relative strength + relative volume: its own request (SPY and the sector
   // ETF are extra bar reads), surfaced as two more cards in the same grid.
   const relative = useCachedResource(
-    K.relative(symbol),
-    () => api.market.relative(symbol),
+    K.relative(symbol, compare),
+    () => api.market.relative(symbol, compare),
     { ttl: TTL.relative },
   ).data
 
@@ -371,6 +419,9 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
   const drawdown = data?.drawdown
   const rvol = relative?.available ? relative.rvol : null
   const rsWindows = relative?.available ? (relative.windows ?? []) : []
+  const rsBenchmarks = relative?.available ? (relative.benchmarks ?? []) : []
+  // Custom chips the reader added beyond the presets, for removable display.
+  const customCompare = compare.filter(s => !RS_PRESETS.some(p => p.sym === s))
 
   const rsiValue = rsi?.current_rsi
   const zoneColor =
@@ -667,24 +718,85 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                   <span className="text-2xl font-bold capitalize text-foreground">
                     {relative?.trend_label ?? '—'}
                   </span>
-                  <div className="mt-1 grid grid-cols-3 gap-x-2 text-[9px] uppercase tracking-wide text-muted-foreground/50">
-                    <span>window</span>
-                    <span className="text-right">vs SPY</span>
-                    <span className="text-right">vs {relative?.sector_etf ?? 'sector'}</span>
-                  </div>
-                  {rsWindows.map(w => (
-                    <div key={w.window} className="grid grid-cols-3 gap-x-2 text-[11px] tabular-nums">
-                      <span className="text-muted-foreground">{w.window}</span>
-                      <span className={cn('text-right', tone(w.vs_spy))}>{pctSigned(w.vs_spy)}</span>
-                      <span className={cn('text-right', tone(w.vs_sector))}>
-                        {pctSigned(w.vs_sector)}
+
+                  {/* Rows = benchmarks, columns = windows, so adding a custom
+                      benchmark grows the card down rather than needing width. */}
+                  <div
+                    className="mt-1 grid items-center gap-x-2 gap-y-1 text-[11px] tabular-nums"
+                    style={{ gridTemplateColumns: `minmax(0,1fr) repeat(${rsWindows.length}, auto)` }}
+                  >
+                    <span className="text-[9px] uppercase tracking-wide text-muted-foreground/50">
+                      vs
+                    </span>
+                    {rsWindows.map(w => (
+                      <span
+                        key={w}
+                        className="text-right text-[9px] uppercase tracking-wide text-muted-foreground/50"
+                      >
+                        {w}
                       </span>
-                    </div>
-                  ))}
-                  <p className="mt-auto pt-1 text-[9px] leading-snug text-muted-foreground/50">
-                    Price return vs {relative?.benchmark ?? 'SPY'}
-                    {relative?.sector ? ` and ${relative.sector}` : ''}, from adjusted bars.
-                  </p>
+                    ))}
+                    {rsBenchmarks.map(b => (
+                      <Fragment key={b.symbol}>
+                        <span className="truncate text-muted-foreground" title={b.symbol}>
+                          {b.label}
+                        </span>
+                        {rsWindows.map(w => (
+                          <span key={w} className={cn('text-right', tone(b.excess[w]))}>
+                            {b.no_data ? '—' : pctSigned(b.excess[w])}
+                          </span>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </div>
+
+                  {/* Compare against custom benchmarks — presets plus a free ticker. */}
+                  <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-border/40 pt-2">
+                    <span className="mr-0.5 text-[9px] uppercase tracking-wide text-muted-foreground/50">
+                      compare
+                    </span>
+                    {RS_PRESETS.map(p => (
+                      <button
+                        key={p.sym}
+                        type="button"
+                        onClick={() => toggleCompare(p.sym)}
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[10px] transition-colors',
+                          compare.includes(p.sym)
+                            ? 'bg-sky-500/20 text-sky-300'
+                            : 'bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                    {customCompare.map(sym => (
+                      <button
+                        key={sym}
+                        type="button"
+                        onClick={() => toggleCompare(sym)}
+                        title="Remove"
+                        className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-300"
+                      >
+                        {sym} ×
+                      </button>
+                    ))}
+                    {compare.length < RS_MAX_COMPARE && (
+                      <input
+                        value={compareDraft}
+                        onChange={e => setCompareDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            submitDraft()
+                          }
+                        }}
+                        onBlur={submitDraft}
+                        placeholder="+ ticker"
+                        className="w-16 rounded bg-muted px-1.5 py-0.5 text-[10px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+                      />
+                    )}
+                  </div>
                 </>
               )}
             </CardContent>

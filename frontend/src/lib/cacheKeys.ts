@@ -15,7 +15,8 @@ export const K = {
   history: (symbol: string, range: string) => `hist:${symbol}:${range}`,
   profile: (symbol: string) => `profile:${symbol}`,
   technicals: (symbol: string) => `technicals:${symbol}`,
-  relative: (symbol: string) => `relative:${symbol}`,
+  relative: (symbol: string, compare: string[] = []) =>
+    `relative:${symbol}:${[...compare].map(s => s.toUpperCase()).sort().join(',')}`,
   trend: (symbol: string, range: string) => `trend:${symbol}:${range}`,
   /** Assumption overrides are part of the key — they change the answer. */
   valuation: (symbol: string, params: Record<string, number | string> = {}) =>

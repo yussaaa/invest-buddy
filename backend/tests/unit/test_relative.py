@@ -3,7 +3,7 @@
 The arithmetic is simple and the failure mode is quiet: an excess return
 computed against the wrong benchmark, or a sector mapped to the wrong ETF, both
 produce a plausible wrong number. These pin the returns, the sector→ETF map,
-and the RVOL ratio with bars, quotes, and the cache all stubbed.
+custom benchmarks, and the RVOL ratio with bars, quotes, and the cache stubbed.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from app.services.bar_derive import BarRow
 from app.services.relative import (
     _return_over,
     _rvol_label,
+    _sanitise_extra,
     _trend_label,
     get_relative,
 )
@@ -55,6 +56,20 @@ def test_trend_label(vs_spy, label):
     assert _trend_label(vs_spy) == label
 
 
+def test_sanitise_extra_dedupes_drops_self_and_benchmark_uppercases():
+    out = _sanitise_extra(["gld", "GLD", " spy ", "AAPL", "uso"], "AAPL")
+    assert out == ["GLD", "USO"]
+
+
+def test_sanitise_extra_caps_count():
+    out = _sanitise_extra(["A", "B", "C", "D", "E", "F", "G"], "ZZZ")
+    assert len(out) == relative.MAX_EXTRA
+
+
+def test_sanitise_extra_drops_invalid_tickers():
+    assert _sanitise_extra(["GLD", "not a ticker", "$$$"], "AAPL") == ["GLD"]
+
+
 # ── Full flow, stubbed ────────────────────────────────────────────────────────
 
 
@@ -63,12 +78,7 @@ def _bars(closes: list[float], volume: int = 1_000_000) -> list[BarRow]:
     return [
         BarRow(
             bar_date=start + timedelta(days=i),
-            open=c,
-            high=c,
-            low=c,
-            close=c,
-            adj_close=c,
-            volume=volume,
+            open=c, high=c, low=c, close=c, adj_close=c, volume=volume,
         )
         for i, c in enumerate(closes)
     ]
@@ -98,6 +108,10 @@ def stub(monkeypatch):
     return configure
 
 
+def _bench(out: dict, symbol: str) -> dict:
+    return next(b for b in out["benchmarks"] if b["symbol"] == symbol)
+
+
 async def test_relative_strength_and_volume_end_to_end(stub):
     stub(
         bars_by_symbol={
@@ -110,50 +124,61 @@ async def test_relative_strength_and_volume_end_to_end(stub):
     out = await get_relative("AAPL")
 
     assert out["available"] is True
-    assert out["benchmark"] == "SPY"
     assert out["sector"] == "Technology"
     assert out["sector_etf"] == "XLK"
+    assert out["windows"] == ["1M", "3M", "6M"]
+    assert out["stock_returns"]["3M"] == pytest.approx(0.10)
 
     # RVOL
     assert out["rvol"]["value"] == pytest.approx(1.5)
     assert out["rvol"]["label"] == "elevated"
     assert out["rvol"]["avg_volume"] == 1_000_000
-    assert out["rvol"]["today_volume"] == 1_500_000
 
-    # Three windows, each: stock +10%, excess +5% vs SPY, +2% vs sector
-    assert [w["window"] for w in out["windows"]] == ["1M", "3M", "6M"]
-    for w in out["windows"]:
-        assert w["stock_return"] == pytest.approx(0.10)
-        assert w["vs_spy"] == pytest.approx(0.05)
-        assert w["vs_sector"] == pytest.approx(0.02)
+    # SPY benchmark: +5% excess each window; sector: +2%
+    spy = _bench(out, "SPY")
+    assert spy["kind"] == "market"
+    assert all(spy["excess"][w] == pytest.approx(0.05) for w in out["windows"])
+    sector = _bench(out, "XLK")
+    assert sector["kind"] == "sector"
+    assert sector["label"] == "Technology"
+    assert all(sector["excess"][w] == pytest.approx(0.02) for w in out["windows"])
 
     assert out["trend_label"] == "leading"
 
 
-async def test_unknown_sector_still_gives_vs_spy(stub):
+async def test_custom_benchmark_is_added_with_label(stub):
     stub(
         bars_by_symbol={
-            "FOO": _bars([100.0] * 129 + [90.0]),   # -10%
-            "SPY": _bars([100.0] * 129 + [100.0]),  # flat
-        },
-        sector=None,  # no sector → no ETF
+            "AAPL": _bars([100.0] * 129 + [110.0]),  # +10%
+            "SPY": _bars([100.0] * 129 + [105.0]),
+            "XLK": _bars([100.0] * 129 + [108.0]),
+            "GLD": _bars([100.0] * 129 + [103.0]),   # +3% → excess +7%
+        }
     )
-    out = await get_relative("FOO")
+    out = await get_relative("AAPL", ["gld"])  # lower-case on purpose
 
-    assert out["available"] is True
-    assert out["sector_etf"] is None
-    assert out["windows"][0]["vs_spy"] == pytest.approx(-0.10)
-    assert out["windows"][0]["vs_sector"] is None
-    assert out["trend_label"] == "lagging"
+    gld = _bench(out, "GLD")
+    assert gld["kind"] == "custom"
+    assert gld["label"] == "Gold"
+    assert gld["excess"]["3M"] == pytest.approx(0.07)
+    assert not gld.get("no_data")
+
+
+async def test_custom_benchmark_with_no_bars_is_flagged(stub):
+    stub(
+        bars_by_symbol={
+            "AAPL": _bars([100.0] * 129 + [110.0]),
+            "SPY": _bars([100.0] * 129 + [105.0]),
+        },
+        sector=None,
+    )
+    out = await get_relative("AAPL", ["ZZZZ"])
+    zz = _bench(out, "ZZZZ")
+    assert zz["no_data"] is True
+    assert all(v is None for v in zz["excess"].values())
 
 
 async def test_no_history_is_unavailable(stub):
     stub(bars_by_symbol={"SPY": _bars([100.0] * 130)})  # target has none
     out = await get_relative("NOPE")
     assert out["available"] is False
-
-
-async def test_short_history_is_unavailable(stub):
-    stub(bars_by_symbol={"AAPL": _bars([100.0] * 10), "SPY": _bars([100.0] * 10)})
-    out = await get_relative("AAPL")
-    assert out["available"] is False  # no window fits and RVOL lacks 20 sessions

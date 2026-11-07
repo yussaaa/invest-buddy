@@ -68,9 +68,13 @@ async def get_trend(
 
 
 @router.get("/relative")
-async def get_relative(symbol: str = Query(..., description="Ticker, e.g. AAPL")) -> dict:
-    """Relative strength vs SPY and sector (1M/3M/6M) and relative volume."""
-    return await relative.get_relative(symbol)
+async def get_relative(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    compare: str = Query("", description="Extra benchmark tickers, comma-separated (e.g. GLD,USO)"),
+) -> dict:
+    """Relative strength vs SPY, sector and any extra tickers (1M/3M/6M), plus relative volume."""
+    extra = [s for s in compare.split(",") if s.strip()]
+    return await relative.get_relative(symbol, extra)
 
 
 @router.get("/technicals/explain")

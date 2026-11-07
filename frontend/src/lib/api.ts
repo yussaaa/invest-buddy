@@ -201,8 +201,11 @@ export const api = {
     technicals: (symbol: string, signal?: AbortSignal) =>
       request<Technicals>(`/market/technicals?symbol=${encodeURIComponent(symbol)}`, { signal }),
 
-    relative: (symbol: string, signal?: AbortSignal) =>
-      request<RelativeStrength>(`/market/relative?symbol=${encodeURIComponent(symbol)}`, { signal }),
+    relative: (symbol: string, compare: string[] = [], signal?: AbortSignal) => {
+      const q = new URLSearchParams({ symbol })
+      if (compare.length) q.set('compare', compare.join(','))
+      return request<RelativeStrength>(`/market/relative?${q}`, { signal })
+    },
 
     explainTechnicals: (symbol: string, signal?: AbortSignal) =>
       request<TechnicalsExplanation>(
