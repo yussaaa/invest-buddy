@@ -114,6 +114,27 @@ const GREEKS: Column[] = [
     render: c => <span className="text-muted-foreground">{fmt(Math.abs(c.delta), 3)}</span>,
   },
   {
+    key: 'gamma',
+    label: 'Γ',
+    hint: 'Gamma — change in delta per $1 of underlying',
+    sort: c => c.gamma ?? 0,
+    render: c => <span className="text-muted-foreground">{fmt(c.gamma, 3)}</span>,
+  },
+  {
+    key: 'theta',
+    label: 'Θ',
+    hint: 'Theta — option value lost per calendar day',
+    sort: c => c.theta_per_day ?? 0,
+    render: c => <span className="text-muted-foreground">{fmt(c.theta_per_day, 2)}</span>,
+  },
+  {
+    key: 'vega',
+    label: 'ν',
+    hint: 'Vega — change in option value per 1 point of implied volatility',
+    sort: c => c.vega ?? 0,
+    render: c => <span className="text-muted-foreground">{fmt(c.vega, 2)}</span>,
+  },
+  {
     key: 'iv',
     label: 'IV',
     hint: 'Implied volatility, annualised',

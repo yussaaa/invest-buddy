@@ -288,7 +288,7 @@ async def _build_chain(symbol: str, horizon: str) -> dict:
             symbol, expiry, today, calls, puts, spot, risk_free, dividend_yield
         )
         contracts.extend(parsed)
-        summaries.append(_summarise_expiry(expiry, today, parsed, calls, puts))
+        summaries.append(_summarise_expiry(expiry, today, parsed, calls, puts, spot))
 
     contracts = _cap(contracts, spot)
     atm_iv = _atm_iv_near_30d(summaries)
@@ -387,10 +387,13 @@ def _normalise_expiry(
 
 
 def _summarise_expiry(
-    expiry: date, today: date, parsed: list[Contract], calls: list[dict], puts: list[dict]
+    expiry: date, today: date, parsed: list[Contract], calls: list[dict], puts: list[dict],
+    spot: float,
 ) -> dict:
     call_oi = sum(_int(r.get("openInterest")) for r in calls)
     put_oi = sum(_int(r.get("openInterest")) for r in puts)
+    call_vol = sum(_int(r.get("volume")) for r in calls)
+    put_vol = sum(_int(r.get("volume")) for r in puts)
     atm_call = _atm_iv(parsed, "call")
     atm_put = _atm_iv(parsed, "put")
     both = [v for v in (atm_call, atm_put) if v is not None]
@@ -406,7 +409,36 @@ def _summarise_expiry(
         "total_call_oi": call_oi,
         "total_put_oi": put_oi,
         "put_call_oi_ratio": round(put_oi / call_oi, 4) if call_oi else None,
+        # Volume says what traded today, OI what's held — a volume ratio reads
+        # today's positioning where the OI ratio reads the accumulated book.
+        "total_call_volume": call_vol,
+        "total_put_volume": put_vol,
+        "put_call_volume_ratio": round(put_vol / call_vol, 4) if call_vol else None,
+        "skew": _skew_curve(parsed, spot),
     }
+
+
+def _skew_curve(parsed: list[Contract], spot: float) -> list[dict]:
+    """The out-of-the-money implied-vol curve, as moneyness → iv.
+
+    Puts below spot and calls above — the OTM wing on each side, which is the
+    convention for a volatility skew and sidesteps the deep-in-the-money IVs the
+    provider's model prints as garbage. The contracts are already windowed
+    around spot, so the curve is naturally bounded.
+    """
+    if spot <= 0:
+        return []
+    by_strike: dict[float, float] = {}
+    for c in parsed:
+        if c.iv is None or c.strike <= 0:
+            continue
+        otm = (c.kind == "put" and c.strike <= spot) or (c.kind == "call" and c.strike > spot)
+        if otm:
+            by_strike[c.strike] = c.iv
+    return [
+        {"moneyness": round(strike / spot, 4), "iv": round(iv, 4)}
+        for strike, iv in sorted(by_strike.items())
+    ]
 
 
 def _atm_iv(contracts: list[Contract], kind: str) -> float | None:

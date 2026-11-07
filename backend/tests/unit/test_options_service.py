@@ -17,8 +17,42 @@ from app.services.options import (
     _parse_date,
     _rehydrate,
     _serialise,
+    _skew_curve,
 )
 from app.services.options_screen import Contract
+
+
+def _contract(strike: float, kind: str, iv: float | None) -> Contract:
+    return Contract(
+        symbol="X", expiry=date(2027, 1, 1), dte=30, strike=strike, kind=kind,
+        mid=1.0, bid=0.9, ask=1.1, last=1.0, iv=iv,
+        open_interest=0, volume=0, spread_pct=0.1, quality=(),
+    )
+
+
+# ── Skew curve ──────────────────────────────────────────────────────────────
+
+
+def test_skew_curve_uses_the_otm_wing_sorted_by_moneyness():
+    spot = 100.0
+    parsed = [
+        _contract(90, "put", 0.30),    # OTM put → kept
+        _contract(90, "call", 0.99),   # ITM call → dropped
+        _contract(100, "put", 0.28),   # ATM put (strike <= spot) → kept
+        _contract(100, "call", 0.99),  # strike not > spot → dropped
+        _contract(110, "call", 0.25),  # OTM call → kept
+        _contract(110, "put", 0.99),   # ITM put → dropped
+    ]
+    assert _skew_curve(parsed, spot) == [
+        {"moneyness": 0.9, "iv": 0.30},
+        {"moneyness": 1.0, "iv": 0.28},
+        {"moneyness": 1.1, "iv": 0.25},
+    ]
+
+
+def test_skew_curve_skips_missing_iv_and_bad_spot():
+    assert _skew_curve([_contract(90, "put", None)], 100.0) == []
+    assert _skew_curve([_contract(90, "put", 0.3)], 0.0) == []
 
 # ── Dividend yield ──────────────────────────────────────────────────────────
 
