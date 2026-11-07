@@ -203,7 +203,14 @@ async def get_relative(symbol: str, extra: list[str] | None = None) -> dict:
             benchmarks.append(
                 {"symbol": sector_etf, "label": sector, "kind": "sector", "excess": _excess(sector_closes)}
             )
+        # Skip an extra that is already a benchmark — most often the stock's own
+        # sector ETF typed into the compare box, which would otherwise render a
+        # second row with the same symbol (and a duplicate React key).
+        present = {b["symbol"] for b in benchmarks}
         for sym in extra:
+            if sym in present:
+                continue
+            present.add(sym)
             closes = extra_closes.get(sym)
             closes = [] if isinstance(closes, Exception) or closes is None else closes
             benchmarks.append(

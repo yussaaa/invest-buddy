@@ -410,7 +410,9 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
   const relative = useCachedResource(
     K.relative(symbol, compare),
     () => api.market.relative(symbol, compare),
-    { ttl: TTL.relative },
+    // Don't cache a failure/empty response — mirror the backend, which only
+    // caches available results, so a transient error clears on the next read.
+    { ttl: TTL.relative, shouldCache: r => r.available === true },
   ).data
 
   const rsi = data?.rsi
@@ -453,8 +455,10 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
         </Card>
       ) : (
         // Four across once each card gets ~225px (what the MA ladder's three
-        // columns need), 2×2 below that, one column on a phone — never 3 + 1,
-        // which left one card stranded on a row of its own.
+        // columns need), 2-wide below that, one column on a phone. Six cards
+        // now (RSI, MACD, MAs, drawdown, relative strength, relative volume),
+        // so the wide layout is 4 + 2 — the even column counts keep any row
+        // from stranding a single card on its own.
         <div className="grid gap-3 [@container(min-width:480px)]:grid-cols-2 [@container(min-width:940px)]:grid-cols-4">
           {/* RSI */}
           <Card>

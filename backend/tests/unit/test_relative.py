@@ -178,6 +178,21 @@ async def test_custom_benchmark_with_no_bars_is_flagged(stub):
     assert all(v is None for v in zz["excess"].values())
 
 
+async def test_custom_matching_sector_etf_is_not_duplicated(stub):
+    stub(
+        bars_by_symbol={
+            "AAPL": _bars([100.0] * 129 + [110.0]),
+            "SPY": _bars([100.0] * 129 + [105.0]),
+            "XLK": _bars([100.0] * 129 + [108.0]),
+        }
+    )
+    # Typing the stock's own sector ETF must not add a second XLK row.
+    out = await get_relative("AAPL", ["XLK"])
+    xlk = [b for b in out["benchmarks"] if b["symbol"] == "XLK"]
+    assert len(xlk) == 1
+    assert xlk[0]["kind"] == "sector"
+
+
 async def test_no_history_is_unavailable(stub):
     stub(bars_by_symbol={"SPY": _bars([100.0] * 130)})  # target has none
     out = await get_relative("NOPE")
