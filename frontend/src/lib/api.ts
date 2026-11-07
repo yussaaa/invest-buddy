@@ -213,8 +213,8 @@ export const api = {
       request<MarketEvents>(`/market/events?days=${days}`, { signal }),
 
     /** One calendar week — offset 0 is this week, -1 last week, +1 next. */
-    weekEvents: (offset = 0, signal?: AbortSignal) =>
-      request<MarketEvents>(`/market/events/week?offset=${offset}`, { signal }),
+    weekEvents: (offset = 0, cap = 'large', signal?: AbortSignal) =>
+      request<MarketEvents>(`/market/events/week?offset=${offset}&cap=${cap}`, { signal }),
 
     optionsChain: (symbol: string, horizon = 'both', signal?: AbortSignal) =>
       request<OptionsChain>(

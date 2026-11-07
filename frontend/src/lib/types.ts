@@ -686,9 +686,13 @@ export interface MarketMovers {
 
 export interface EarningsEvent {
   symbol: string
+  /** Company name, when the calendar carries one. */
+  name?: string | null
+  market_cap?: number | null
   date: string
-  /** Whether the call lands before the open or after the close. */
-  session?: 'before_open' | 'after_close'
+  /** Whether the call lands before the open or after the close; null when the
+   *  company has not said. */
+  session?: 'before_open' | 'after_close' | null
   eps_estimate?: number
   revenue_estimate?: number
   /** Past weeks only — what was actually reported, and by how much it beat. */
@@ -696,9 +700,43 @@ export interface EarningsEvent {
   surprise_percent?: number
 }
 
+export interface EarningsSeason {
+  /** The quarter whose results are being reported, e.g. "Q3 2026". */
+  label: string
+  start: string
+  end: string
+  /** US-listed $10B+ companies reporting inside the window. */
+  total: number
+  reported: number
+}
+
+/** One headline number in a release — "CPI m/m", "Nonfarm payrolls". */
+export interface EconomicFigure {
+  label: string
+  /** "%", "K", "M", "B", "T", or "" for an index. */
+  unit: string
+  decimals: number
+  /** The reference period — "Oct 2026", "Q3 2026", "wk of Oct 31". */
+  period: string | null
+  /** As first published on the release day; null until it is out. */
+  actual: number | null
+  previous: number | null
+  forecast: number | null
+  /** "consensus" from economists, or "average" of the three prior readings. */
+  forecast_source: 'consensus' | 'average' | null
+}
+
 export interface EconomicEvent {
+  /** What a trader calls it: "Consumer Price Index (CPI)". */
   name: string
+  /** FRED's own release name, for the tooltip. */
+  release?: string
   date: string
+  /** The agency that publishes it — "BLS", "BEA" — and its release page. */
+  publisher?: string | null
+  url?: string | null
+  /** The headline figures inside the release; absent when FRED has none. */
+  indicators?: EconomicFigure[]
   importance: 'high' | 'medium'
   source: string
 }
@@ -711,7 +749,12 @@ export interface MarketEvents {
   /** Today in US market time — the browser clock can be a day off. */
   today?: string
   is_current_week?: boolean
+  /** Week view only: the cap tier the earnings and season are filtered to. */
+  cap?: CapTier
   earnings: EarningsEvent[]
+  /** Progress through the reporting season the week falls in; null if the
+   *  calendar could not be read. */
+  season?: EarningsSeason | null
   economic: {
     events: EconomicEvent[]
     available: boolean

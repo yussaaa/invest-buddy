@@ -127,6 +127,30 @@ The three written documents exist. Not done:
 - [x] ~~**The movers earnings calendar costs ~36s cold**~~ — fixed 2026-11-03. The
       warm-up loop re-fetches it at 85% of its TTL and primes the endpoint's
       own key, so no visitor waits.
+- [x] ~~**The week calendar showed two or three reports a day**~~ — fixed
+      2026-11-07. It scanned a fixed list of 40 mega-caps, so once those had
+      reported a peak-season day of ~80 large-cap reports showed a couple. Now
+      one Yahoo calendar query per week (`yf.Calendars`) covers every NYSE /
+      Nasdaq listing at $10B+, in under a second, which also retires the 36s
+      cold fetch above. Columns show the eight largest, grouped before-open /
+      after-close / time TBA, and fold the rest.
+      The header shows season progress ("Q3 2026 season · 703 / 863 large
+      caps reported"): the same filter over the quarter the week falls in.
+      A cap-tier toggle (All / Large / Mid / Small, the movers' `CAP_TIERS`)
+      filters both; large by default, remembered per browser.
+- [x] ~~**Economic releases matched FRED names by substring**~~ — fixed
+      2026-11-07. "Consumer price index" also matched "Research CPI" and "CPI
+      excluding energy commodities", "gross domestic product" matched "GDP by
+      County", and the UMich entry named a release FRED does not have. Now an
+      exact-name table with trader labels, plus jobless claims, ADP and ECI. A
+      keyless or failed FRED answer is no longer cached, so adding the key
+      shows at once instead of after 30 minutes.
+- [x] **Economic releases carry their numbers** — 2026-11-07
+      (`services/economic_values.py`). Actual as first published (ALFRED
+      vintages, so revisions do not rewrite history), previous as quoted on the
+      day, and a forecast: ForexFactory consensus for the current week, else
+      the mean of the three prior readings, labelled `avg` so it is never read
+      as a consensus. Impact analysis deliberately not built yet.
 - [x] ~~`/market/breadth` never served warm~~ — fixed 2026-08-18. `cached`
       stamps a value with the time its fetch *started*, so `BREADTH_TTL = 60`
       against a 120 s+ scan produced values that were **born expired** and could

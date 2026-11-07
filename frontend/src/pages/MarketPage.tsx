@@ -30,6 +30,8 @@ import { useCachedResource } from '@/hooks/useCachedResource'
 import type {
   CapTier,
   EarningsEvent,
+  EarningsSeason,
+  EconomicEvent,
   IndexBreadth,
   MarketEvents,
   MarketOverview,
@@ -49,12 +51,51 @@ const INDEX_OPTIONS = [
 
 // Cap tiers mirror CAP_TIERS in services/market_data.py — the bounds live
 // server-side, these are only the labels and the order they appear in.
-const CAP_TIERS: { value: CapTier; label: string; hint: string }[] = [
-  { value: 'all', label: 'All caps', hint: 'Every US listing above $300M' },
-  { value: 'large', label: 'Large cap', hint: 'Above $10B' },
-  { value: 'mid', label: 'Mid cap', hint: '$2B – $10B' },
-  { value: 'small', label: 'Small cap', hint: '$300M – $2B' },
+// Shared by the movers screen and the earnings calendar, so "large cap" means
+// one thing on the page.
+const CAP_TIERS: { value: CapTier; label: string; short: string; noun: string; hint: string }[] = [
+  { value: 'all', label: 'All caps', short: 'All', noun: 'companies', hint: 'Every US listing above $300M' },
+  { value: 'large', label: 'Large cap', short: 'Large', noun: 'large caps', hint: 'Above $10B' },
+  { value: 'mid', label: 'Mid cap', short: 'Mid', noun: 'mid caps', hint: '$2B – $10B' },
+  { value: 'small', label: 'Small cap', short: 'Small', noun: 'small caps', hint: '$300M – $2B' },
 ]
+
+/** Segmented cap-tier picker; `compact` for a card header, full for a section. */
+function CapTierToggle({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: CapTier
+  onChange: (tier: CapTier) => void
+  compact?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex items-center rounded-lg border border-border bg-card',
+        compact ? 'gap-0.5 p-0.5' : 'gap-1 p-1'
+      )}
+    >
+      {CAP_TIERS.map(tier => (
+        <button
+          key={tier.value}
+          onClick={() => onChange(tier.value)}
+          title={tier.hint}
+          className={cn(
+            'rounded font-medium transition-colors',
+            compact ? 'h-6 px-2 text-[11px]' : 'h-7 px-2.5 text-xs',
+            value === tier.value
+              ? 'bg-primary/20 text-primary'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          )}
+        >
+          {compact ? tier.short : tier.label}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 const HEATMAP_RANGES = [
   { value: 'change', label: '1D' },
@@ -83,12 +124,15 @@ const MARKET_SESSION_KEY = 'agent-invest-market-session'
 
 interface MarketPrefs {
   capTier: CapTier
+  /** The earnings calendar's own tier — large by default, unlike the movers. */
+  earningsCap: CapTier
   index: string
   blockColor: string
 }
 
 const DEFAULT_MARKET_PREFS: MarketPrefs = {
   capTier: 'all',
+  earningsCap: 'large',
   index: 'SPX500',
   blockColor: 'change',
 }
@@ -99,6 +143,9 @@ function readMarketPrefs(): MarketPrefs {
     capTier: CAP_TIERS.some(t => t.value === stored.capTier)
       ? (stored.capTier as CapTier)
       : DEFAULT_MARKET_PREFS.capTier,
+    earningsCap: CAP_TIERS.some(t => t.value === stored.earningsCap)
+      ? (stored.earningsCap as CapTier)
+      : DEFAULT_MARKET_PREFS.earningsCap,
     index: INDEX_OPTIONS.some(o => o.value === stored.index)
       ? (stored.index as string)
       : DEFAULT_MARKET_PREFS.index,
@@ -461,7 +508,8 @@ function EarningsTile({
 }) {
   const reported = event.reported_eps != null
   const surprise = event.surprise_percent
-  const session = event.session === 'before_open' ? 'before open' : 'after close'
+  const session =
+    event.session === 'before_open' ? 'before open' : event.session === 'after_close' ? 'after close' : null
 
   const detail = reported
     ? `${event.reported_eps!.toFixed(2)}${event.eps_estimate != null ? ` vs ${event.eps_estimate.toFixed(2)}` : ''}`
@@ -473,7 +521,8 @@ function EarningsTile({
     <button
       onClick={() => onSelect(event.symbol)}
       title={[
-        event.symbol,
+        event.name ? `${event.symbol} — ${event.name}` : event.symbol,
+        event.market_cap != null ? `${cap(event.market_cap)} market cap` : null,
         session,
         reported ? `reported ${event.reported_eps!.toFixed(2)}` : null,
         event.eps_estimate != null ? `est. ${event.eps_estimate.toFixed(2)}` : null,
@@ -483,14 +532,8 @@ function EarningsTile({
         .join(' · ')}
       className="flex flex-col rounded bg-card px-1.5 py-1 text-left transition-colors hover:bg-muted"
     >
-      <div className="flex items-baseline justify-between gap-1">
-        <span className="font-mono text-[11px] font-semibold text-foreground">{event.symbol}</span>
-        {/* Before the open or after the close — the part that decides which
-            session the move lands in. */}
-        <span className="shrink-0 text-[8px] uppercase tracking-wide text-muted-foreground/50">
-          {event.session === 'before_open' ? 'bmo' : 'amc'}
-        </span>
-      </div>
+      {/* Which session it lands in is the group heading above, not repeated here. */}
+      <span className="font-mono text-[11px] font-semibold text-foreground">{event.symbol}</span>
 
       {detail && (
         <span className="text-[9px] tabular-nums text-muted-foreground/70">{detail}</span>
@@ -502,7 +545,31 @@ function EarningsTile({
   )
 }
 
-/** Mon–Fri style calendar: one column per trading day, tickers stacked inside. */
+/** Reports shown per day before the column folds the rest behind "+N more". */
+const EARNINGS_PER_DAY = 8
+
+/**
+ * A day's reports split by the session they land in, in trading order: the
+ * open reacts to the first group, the next morning to the second. Companies
+ * that have not given a time come last rather than being guessed into either.
+ */
+const SESSION_GROUPS: { session: EarningsEvent['session']; label: string }[] = [
+  { session: 'before_open', label: 'Before open' },
+  { session: 'after_close', label: 'After close' },
+  { session: null, label: 'Time TBA' },
+]
+
+function sessionGroup(e: EarningsEvent): EarningsEvent['session'] {
+  return e.session === 'before_open' || e.session === 'after_close' ? e.session : null
+}
+
+/**
+ * Mon–Fri style calendar: one column per trading day, tickers stacked inside.
+ *
+ * In peak season a single day can carry eighty large-cap reports, so each
+ * column shows its biggest names (the backend sends them largest first) and
+ * folds the rest behind a toggle rather than stretching the whole row.
+ */
 function EarningsWeek({
   earnings,
   startIso,
@@ -514,8 +581,19 @@ function EarningsWeek({
   todayIso: string
   onSelect: (symbol: string) => void
 }) {
-  const days = businessDays(startIso, 5)
   const today = todayIso
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  // A different week is a different set of columns; start folded again.
+  useEffect(() => setExpanded(new Set()), [startIso])
+
+  const toggle = (day: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(day)) next.delete(day)
+      else next.add(day)
+      return next
+    })
 
   const byDay = new Map<string, EarningsEvent[]>()
   for (const e of earnings) {
@@ -524,12 +602,32 @@ function EarningsWeek({
     byDay.set(e.date, list)
   }
 
+  // Mon–Fri always; Saturday or Sunday only when someone reports on one
+  // (Berkshire does, every quarter).
+  const days = businessDays(startIso, 5)
+  for (const weekend of [1, 2]) {
+    const day = new Date(days[4])
+    day.setDate(day.getDate() + weekend)
+    if (byDay.has(isoDay(day))) days.push(day)
+  }
+  const columns = ['grid-cols-5', 'grid-cols-6', 'grid-cols-7'][days.length - 5]
+
   return (
-    <div className="grid grid-cols-5 gap-1.5">
+    <div className={cn('grid gap-1.5', columns)}>
       {days.map(day => {
         const key = isoDay(day)
         const items = byDay.get(key) ?? []
         const isToday = key === today
+        const open = expanded.has(key)
+        const hidden = items.length - EARNINGS_PER_DAY
+        // Fold first, group second: folded, a day still shows its biggest
+        // names whichever session they report in. Items arrive largest first.
+        const shown = open || hidden <= 0 ? items : items.slice(0, EARNINGS_PER_DAY)
+        const groups = SESSION_GROUPS.map(g => ({
+          ...g,
+          total: items.filter(e => sessionGroup(e) === g.session).length,
+          events: shown.filter(e => sessionGroup(e) === g.session),
+        })).filter(g => g.events.length > 0)
 
         return (
           <div
@@ -555,6 +653,9 @@ function EarningsWeek({
               </span>
               <span className="text-[10px] tabular-nums text-muted-foreground/60">
                 {day.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+                {items.length > 0 && (
+                  <span className="ml-1 text-muted-foreground/40">· {items.length}</span>
+                )}
               </span>
             </div>
 
@@ -562,12 +663,148 @@ function EarningsWeek({
               {items.length === 0 ? (
                 <span className="mt-3 text-center text-[10px] text-muted-foreground/30">—</span>
               ) : (
-                items.map(e => <EarningsTile key={e.symbol} event={e} onSelect={onSelect} />)
+                groups.map(g => (
+                  <div key={g.label} className="flex flex-col gap-1">
+                    <span className="mt-0.5 flex items-baseline justify-between px-0.5 text-[8px] uppercase tracking-wide text-muted-foreground/50">
+                      {g.label}
+                      <span className="tabular-nums">{g.total}</span>
+                    </span>
+                    {g.events.map(e => (
+                      <EarningsTile key={e.symbol} event={e} onSelect={onSelect} />
+                    ))}
+                  </div>
+                ))
+              )}
+              {hidden > 0 && (
+                <button
+                  onClick={() => toggle(key)}
+                  className="mt-0.5 rounded px-1.5 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  {open ? 'Show fewer' : `+${hidden} more`}
+                </button>
               )}
             </div>
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * How far through the reporting season the market is: "Q3 2026 season ·
+ * 703 / 863 large caps reported". The total is every US-listed company in
+ * the chosen cap tier reporting in the quarter the viewed week falls in, so it
+ * follows both the week picker and the tier.
+ */
+function SeasonProgress({ season, cap }: { season: EarningsSeason; cap: CapTier }) {
+  const { label, total, reported } = season
+  const tier = CAP_TIERS.find(t => t.value === cap) ?? CAP_TIERS[1]
+  const window = [season.start, season.end]
+    .map(d => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
+    .join(' – ')
+
+  return (
+    <span
+      title={`${reported} of ${total} US-listed companies (${tier.hint}) reporting ${window} are in`}
+      className="flex items-center gap-1.5 text-[11px] font-normal text-muted-foreground"
+    >
+      <span className="tabular-nums">
+        {label} season · <span className="text-foreground">{reported}</span> / {total} {tier.noun} reported
+      </span>
+      <span className="h-1 w-14 overflow-hidden rounded-full bg-muted">
+        <span
+          className="block h-full rounded-full bg-primary/70"
+          style={{ width: `${total ? (reported / total) * 100 : 0}%` }}
+        />
+      </span>
+    </span>
+  )
+}
+
+/** Label, actual, forecast, previous — shared by the header and every row. */
+const FIGURE_GRID = 'grid grid-cols-[minmax(0,1fr)_4.25rem_5.25rem_4.25rem] items-baseline gap-x-2'
+
+/** "0.3%", "165K", "-105.0B", "52.4" — the release's own way of quoting it. */
+function figure(value: number | null, unit: string, decimals: number): string {
+  if (value == null) return '—'
+  return `${value.toFixed(decimals)}${unit}`
+}
+
+/**
+ * One release: its name and day, then a line per headline figure.
+ *
+ * The forecast says where it came from. "cons." is economists' consensus; "avg"
+ * is the mean of the three readings before, standing in where no consensus is
+ * available — a baseline, not a prediction anyone made.
+ */
+function ReleaseRow({ event, isPast }: { event: EconomicEvent; isPast: boolean }) {
+  const figures = event.indicators ?? []
+
+  return (
+    <div className="flex flex-col gap-1 border-b border-border/40 py-2 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              'h-1.5 w-1.5 shrink-0 rounded-full',
+              event.importance === 'high' ? 'bg-amber-400' : 'bg-muted-foreground/40'
+            )}
+          />
+          {/* The name is the link: it opens the publishing agency's own
+              release page (BLS, BEA, ...) in a new tab, not FRED's copy. */}
+          {event.url ? (
+            <a
+              href={event.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Open the ${event.publisher ?? 'official'} release: ${event.release ?? event.name}`}
+              className="group flex min-w-0 items-center gap-1 text-xs text-foreground transition-colors hover:text-primary"
+            >
+              <span className="truncate underline-offset-2 group-hover:underline">{event.name}</span>
+              <ExternalLink size={10} className="shrink-0 text-muted-foreground/50 group-hover:text-primary" />
+            </a>
+          ) : (
+            <span className="truncate text-xs text-foreground" title={event.release}>
+              {event.name}
+            </span>
+          )}
+        </div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{formatDay(event.date)}</span>
+      </div>
+
+      {figures.map(f => (
+        <div key={f.label} className={cn(FIGURE_GRID, 'pl-3.5 text-[11px] tabular-nums')}>
+          <span className="truncate text-muted-foreground" title={f.period ? `${f.label} · ${f.period}` : f.label}>
+            {f.label}
+            {f.period && <span className="ml-1 text-[10px] text-muted-foreground/50">{f.period}</span>}
+          </span>
+          <span
+            className={cn('text-right', f.actual != null ? 'font-semibold text-foreground' : 'text-muted-foreground/40')}
+            title={f.actual != null ? undefined : isPast ? 'Not on FRED yet' : 'Not released yet'}
+          >
+            {figure(f.actual, f.unit, f.decimals)}
+          </span>
+          <span
+            className="text-right text-muted-foreground"
+            title={
+              f.forecast_source === 'consensus'
+                ? "Economists' consensus (ForexFactory)"
+                : f.forecast_source === 'average'
+                  ? 'Mean of the three prior readings — a baseline, not a consensus forecast'
+                  : undefined
+            }
+          >
+            {figure(f.forecast, f.unit, f.decimals)}
+            {f.forecast_source && (
+              <span className="ml-1 text-[8px] uppercase tracking-wide text-muted-foreground/50">
+                {f.forecast_source === 'consensus' ? 'cons.' : 'avg'}
+              </span>
+            )}
+          </span>
+          <span className="text-right text-muted-foreground">{figure(f.previous, f.unit, f.decimals)}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -664,11 +901,12 @@ export default function MarketPage() {
   const [index, setIndex] = useState(initialPrefs.index)
   const [blockColor, setBlockColor] = useState(initialPrefs.blockColor)
   const [capTier, setCapTier] = useState<CapTier>(initialPrefs.capTier)
+  const [earningsCap, setEarningsCap] = useState<CapTier>(initialPrefs.earningsCap)
   const [weekOffset, setWeekOffset] = useState(readWeekOffset)
 
   useEffect(() => {
-    writeJSON(MARKET_PREFS_KEY, { capTier, index, blockColor })
-  }, [capTier, index, blockColor])
+    writeJSON(MARKET_PREFS_KEY, { capTier, earningsCap, index, blockColor })
+  }, [capTier, earningsCap, index, blockColor])
 
   useEffect(() => {
     writeJSON(MARKET_SESSION_KEY, { weekOffset }, sessionStorage)
@@ -714,8 +952,8 @@ export default function MarketPage() {
   )
 
   const eventsRes = useCachedResource(
-    K.weekEvents(weekOffset),
-    () => api.market.weekEvents(weekOffset),
+    K.weekEvents(weekOffset, earningsCap),
+    () => api.market.weekEvents(weekOffset, earningsCap),
     { ttl: TTL.weekEvents },
   )
   const events = eventsRes.data ?? null
@@ -806,23 +1044,7 @@ export default function MarketPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-            {CAP_TIERS.map(tier => (
-              <button
-                key={tier.value}
-                onClick={() => setCapTier(tier.value)}
-                title={tier.hint}
-                className={cn(
-                  'h-7 rounded px-2.5 text-xs font-medium transition-colors',
-                  capTier === tier.value
-                    ? 'bg-primary/20 text-primary'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                )}
-              >
-                {tier.label}
-              </button>
-            ))}
-          </div>
+          <CapTierToggle value={capTier} onChange={setCapTier} />
         </div>
 
         {tierMovers?.error && (
@@ -985,15 +1207,21 @@ export default function MarketPage() {
           {/* Earnings — laid out as a working-week calendar */}
           <Card>
             <CardContent className="flex flex-col gap-3 py-4">
-              <h3 className="text-sm font-semibold text-foreground">
-                Earnings <span className="text-muted-foreground/60">({earnings.length})</span>
-              </h3>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Earnings <span className="text-muted-foreground/60">({earnings.length})</span>
+                  </h3>
+                  {events?.season && <SeasonProgress season={events.season} cap={earningsCap} />}
+                </div>
+                <CapTierToggle value={earningsCap} onChange={setEarningsCap} compact />
+              </div>
               <Separator />
 
               {eventsRes.isLoading ? (
                 <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" />
-                  Scanning large caps…
+                  Loading {CAP_TIERS.find(t => t.value === earningsCap)?.noun ?? 'earnings'}…
                 </div>
               ) : (
                 <EarningsWeek
@@ -1009,16 +1237,39 @@ export default function MarketPage() {
           {/* Economic releases */}
           <Card>
             <CardContent className="flex flex-col gap-3 py-4">
-              <h3 className="text-sm font-semibold text-foreground">
-                Economic releases{' '}
-                <span className="text-muted-foreground/60">({economic?.events.length ?? 0})</span>
-              </h3>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Economic releases{' '}
+                  <span className="text-muted-foreground/60">({economic?.events.length ?? 0})</span>
+                </h3>
+                {/* A fixed rating per release, not something measured from the
+                    print — see MAJOR_FRED_RELEASES in market_data.py. */}
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground/70">
+                  <span className="flex items-center gap-1.5" title="Usually moves markets the most">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                    High impact
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+                    Medium
+                  </span>
+                </div>
+              </div>
               <Separator />
 
               {eventsRes.isLoading ? (
                 <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" />
                   Loading calendar…
+                </div>
+              ) : economic?.error ? (
+                // The key is set but FRED did not answer — not a setup problem.
+                <div className="py-6 text-center">
+                  <p className="text-xs text-muted-foreground">Couldn't reach FRED</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground/60">
+                    The St. Louis Fed's release calendar did not respond. It will retry on the
+                    next load.
+                  </p>
                 </div>
               ) : !economic?.available ? (
                 <div className="py-6 text-center">
@@ -1034,24 +1285,20 @@ export default function MarketPage() {
                 </p>
               ) : (
                 <div className="flex flex-col">
-                  {economic.events.map(e => (
-                    <div
-                      key={`${e.name}-${e.date}`}
-                      className="flex items-center justify-between gap-3 border-b border-border/40 py-2 last:border-b-0"
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span
-                          className={cn(
-                            'h-1.5 w-1.5 shrink-0 rounded-full',
-                            e.importance === 'high' ? 'bg-amber-400' : 'bg-muted-foreground/40'
-                          )}
-                        />
-                        <span className="truncate text-xs text-foreground">{e.name}</span>
-                      </div>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {formatDay(e.date)}
-                      </span>
+                  {economic.events.some(e => e.indicators?.length) && (
+                    <div className={cn(FIGURE_GRID, 'pb-1 text-[9px] uppercase tracking-wide text-muted-foreground/50')}>
+                      <span />
+                      <span className="text-right">Actual</span>
+                      <span className="text-right">Forecast</span>
+                      <span className="text-right">Previous</span>
                     </div>
+                  )}
+                  {economic.events.map(e => (
+                    <ReleaseRow
+                      key={`${e.name}-${e.date}`}
+                      event={e}
+                      isPast={e.date < (events?.today ?? isoDay(new Date()))}
+                    />
                   ))}
                 </div>
               )}

@@ -271,7 +271,7 @@ to one ~10ms query.
 | breadth | 60s | ~700-symbol constituent scan |
 | movers | 60s | One screener call per side |
 | events (forward) | 30 min | Earnings dates barely move |
-| earnings calendar | 6 h | ~36s to fetch; sliced per week after |
+| earnings week (`earnings-week:*`) | 1 h; 24 h once past | One market-wide Yahoo calendar query per week, $10B+ US listings, <1s |
 | sectors | 7 days | A company changes sector roughly never |
 | index constituents | 24 h | Membership changes a few times a year |
 | profile | 10 min | Static-ish company metadata |

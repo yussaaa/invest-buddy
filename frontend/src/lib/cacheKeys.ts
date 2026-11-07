@@ -28,7 +28,7 @@ export const K = {
   overview: () => 'overview',
   breadth: () => 'breadth',
   movers: (cap: CapTier, limit = 10) => `movers:${cap}:${limit}`,
-  weekEvents: (offset: number) => `events:week:${offset}`,
+  weekEvents: (offset: number, cap: CapTier) => `events:week:${cap}:${offset}`,
   signalSources: () => 'signals:sources',
   socialTrending: (source: string, filter: string, limit: number) =>
     `social:trending:${source}:${filter}:${limit}`,

@@ -61,7 +61,9 @@ MACRO = [
     {"symbol": "ETH-USD", "label": "Ethereum"},
 ]
 
-# Universe scanned for the "earnings this week" panel.
+# Mega-caps the chat agent's forward event scan checks one by one, and the bar
+# store backfills first. The Market page's week calendar does not use this: it
+# asks Yahoo for every large cap reporting (see `_fetch_earnings_between`).
 EARNINGS_UNIVERSE = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "BRK-B",
     "JPM", "V", "MA", "UNH", "XOM", "JNJ", "WMT", "PG", "HD", "COST", "ORCL",
@@ -69,20 +71,56 @@ EARNINGS_UNIVERSE = [
     "BAC", "GS", "MS", "PFE", "MRK", "LLY", "CVX", "BA", "CAT", "DIS",
 ]
 
-# FRED releases worth surfacing — everything else is noise for a markets view.
-MAJOR_FRED_RELEASES = {
-    "employment situation": "high",
-    "consumer price index": "high",
-    "producer price index": "high",
-    "gross domestic product": "high",
-    "personal income and outlays": "high",
-    "advance monthly sales for retail and food services": "high",
-    "job openings and labor turnover survey": "medium",
-    "industrial production and capacity utilization": "medium",
-    "new residential construction": "medium",
-    "consumer credit": "medium",
-    "university of michigan: consumer sentiment": "medium",
-    "h.4.1 factors affecting reserve balances": "medium",
+# FRED releases worth surfacing, by FRED's exact release name — everything else
+# is noise for a markets view. Exact, not substring: "consumer price index"
+# used to also match "Research Consumer Price Index" and "... Excluding Energy
+# Commodities", and "gross domestic product" matched "GDP by County", each
+# shown as a second high-importance release. The label is what a trader calls it.
+MAJOR_FRED_RELEASES: dict[str, tuple[str, str]] = {
+    "employment situation": ("Employment Situation (jobs report)", "high"),
+    "consumer price index": ("Consumer Price Index (CPI)", "high"),
+    "producer price index": ("Producer Price Index (PPI)", "high"),
+    "gross domestic product": ("Gross Domestic Product (GDP)", "high"),
+    "personal income and outlays": ("Personal Income & Outlays (PCE)", "high"),
+    "advance monthly sales for retail and food services": ("Retail Sales", "high"),
+    "unemployment insurance weekly claims report": ("Initial Jobless Claims", "medium"),
+    "job openings and labor turnover survey": ("JOLTS Job Openings", "medium"),
+    "adp national employment report": ("ADP Employment Report", "medium"),
+    "employment cost index": ("Employment Cost Index", "medium"),
+    "g.17 industrial production and capacity utilization": ("Industrial Production", "medium"),
+    "new residential construction": ("Housing Starts & Permits", "medium"),
+    "surveys of consumers": ("UMich Consumer Sentiment", "medium"),
+    "u.s. international trade in goods and services": ("Trade Balance", "medium"),
+    "g.19 consumer credit": ("Consumer Credit", "medium"),
+    "h.4.1 factors affecting reserve balances": ("Fed Balance Sheet (H.4.1)", "medium"),
+}
+
+# Who publishes each release, and where — the original, not FRED's copy of it.
+# BLS answers scripted clients with 403, so its links cannot be checked from a
+# server; they are BLS's standing news-release addresses.
+RELEASE_PUBLISHERS: dict[str, tuple[str, str]] = {
+    "employment situation": ("BLS", "https://www.bls.gov/news.release/empsit.nr0.htm"),
+    "consumer price index": ("BLS", "https://www.bls.gov/news.release/cpi.nr0.htm"),
+    "producer price index": ("BLS", "https://www.bls.gov/news.release/ppi.nr0.htm"),
+    "gross domestic product": ("BEA", "https://www.bea.gov/data/gdp/gross-domestic-product"),
+    "personal income and outlays": ("BEA", "https://www.bea.gov/data/income-saving/personal-income"),
+    "advance monthly sales for retail and food services": ("Census", "https://www.census.gov/retail/index.html"),
+    "unemployment insurance weekly claims report": ("DOL", "https://oui.doleta.gov/unemploy/claims.asp"),
+    "job openings and labor turnover survey": ("BLS", "https://www.bls.gov/news.release/jolts.nr0.htm"),
+    "adp national employment report": ("ADP", "https://adpemploymentreport.com/"),
+    "employment cost index": ("BLS", "https://www.bls.gov/news.release/eci.nr0.htm"),
+    "g.17 industrial production and capacity utilization": (
+        "Fed", "https://www.federalreserve.gov/releases/g17/current/default.htm",
+    ),
+    "new residential construction": ("Census", "https://www.census.gov/construction/nrc/index.html"),
+    "surveys of consumers": ("UMich", "https://www.sca.isr.umich.edu/"),
+    "u.s. international trade in goods and services": (
+        "BEA", "https://www.bea.gov/data/intl-trade-investment/international-trade-goods-and-services",
+    ),
+    "g.19 consumer credit": ("Fed", "https://www.federalreserve.gov/releases/g19/current/default.htm"),
+    "h.4.1 factors affecting reserve balances": (
+        "Fed", "https://www.federalreserve.gov/releases/h41/current/default.htm",
+    ),
 }
 
 # Index membership for the breadth panel. Constituents come from Wikipedia's
@@ -757,31 +795,46 @@ def _fetch_economic(start: date, end: date) -> dict:
         log.error("fred_fetch_failed", error=str(e))
         return {"events": [], "source": "fred", "available": False, "error": str(e)}
 
-    events, seen = [], set()
-    for item in payload.get("release_dates", []):
-        name = (item.get("release_name") or "").strip()
-        lowered = name.lower()
-        importance = next(
-            (imp for key, imp in MAJOR_FRED_RELEASES.items() if key in lowered), None
-        )
-        if not importance:
-            continue
-        key = (name, item.get("date"))
-        if key in seen:
-            continue
-        seen.add(key)
-        events.append({
-            "name": name,
-            "date": item.get("date"),
-            "importance": importance,
-            "source": "FRED",
-        })
+    events = _major_releases(payload.get("release_dates", []))
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    try:
+        from app.services.economic_values import attach_values
+
+        # Consensus comes from a feed that only knows the current week.
+        attach_values(events, api_key, today, with_consensus=start <= today <= end)
+    except Exception as e:
+        # The dates are still worth showing without the numbers.
+        log.error("economic_values_failed", error=str(e))
 
     return {
-        "events": sorted(events, key=lambda e: (e["date"], e["name"])),
+        "events": events,
         "source": "fred",
         "available": True,
     }
+
+
+def _major_releases(release_dates: list[dict]) -> list[dict]:
+    """FRED's release dates narrowed to `MAJOR_FRED_RELEASES`: high first within
+    a day, one line per release per day."""
+    events, seen = [], set()
+    for item in release_dates:
+        release = (item.get("release_name") or "").strip()
+        match = MAJOR_FRED_RELEASES.get(release.lower())
+        if not match or (release, item.get("date")) in seen:
+            continue
+        seen.add((release, item.get("date")))
+        label, importance = match
+        publisher, url = RELEASE_PUBLISHERS.get(release.lower(), (None, None))
+        events.append({
+            "name": label,
+            "release": release,
+            "date": item.get("date"),
+            "importance": importance,
+            "source": "FRED",
+            "publisher": publisher,
+            "url": url,
+        })
+    return sorted(events, key=lambda e: (e["date"], e["importance"] != "high", e["name"]))
 
 
 # ── index constituents ────────────────────────────────────────────────────────
@@ -1242,10 +1295,22 @@ async def get_events(days: int = 7, extra_symbols: list[str] | None = None) -> d
 
 # ── one calendar week of events, navigable ────────────────────────────────────
 
-# The calendar is fetched whole and sliced per week, so this TTL is what the
-# first visitor of the day pays, not what each arrow press costs.
-EARNINGS_CALENDAR_TTL = 21600.0     # 6 hours
+# One query per week against Yahoo's market-wide earnings calendar. The panel
+# used to scan a fixed list of 40 mega-caps one ticker at a time, which cost ~36s
+# cold and, once those 40 had reported, left a day of peak season showing two
+# names while a hundred large caps reported around them.
+# The cap tier is the movers screen's (`CAP_TIERS`), so "large cap" means the
+# same thing in both panels. Large is the default: the reports that move things.
+EARNINGS_DEFAULT_CAP = "large"
+EARNINGS_PAGE = 100                 # Yahoo's cap on one page
+EARNINGS_MAX_PAGES = 40             # an all-caps season is ~3,100 rows
+EARNINGS_WEEK_TTL = 3600.0          # a week still in play fills in reported EPS
+EARNINGS_PAST_WEEK_TTL = 86400.0    # a finished week only changes by revision
 MAX_WEEK_OFFSET = 26
+
+# Yahoo's timing codes. "TAS" (time as specified) and "TNS" (not supplied)
+# fall through to the timestamp, or to no session at all.
+_TIMING_SESSION = {"BMO": "before_open", "AMC": "after_close"}
 
 
 def _iso_week_bounds(offset: int) -> tuple[date, date]:
@@ -1260,87 +1325,222 @@ def _iso_week_bounds(offset: int) -> tuple[date, date]:
     return monday, monday + timedelta(days=6)
 
 
-def _earnings_history(symbol: str) -> list[dict]:
-    """Every earnings date yfinance knows for one symbol, past and scheduled.
+def _earnings_query(
+    start: date,
+    end: date,
+    symbols: list[str] | None = None,
+    cap: str = EARNINGS_DEFAULT_CAP,
+):
+    """The calendar filter: US earnings events in a window, by cap tier or by name.
 
-    `calendar` would be one cheap call, but it only ever returns the *next*
-    report — which cannot answer "who reported on Tuesday" for a week already
-    under way, let alone a past one. This endpoint is slower and returns ~3
-    years in a single call, which is what makes week navigation free.
+    The window is padded a day each side because Yahoo filters on the UTC
+    timestamp and the caller slices on the New York date; a report at 8pm ET
+    on Friday is Saturday in UTC.
     """
-    try:
-        frame = yf.Ticker(symbol).get_earnings_dates(limit=24)
-    except Exception:
-        return []
-    if frame is None or frame.empty:
-        return []
+    from yfinance.calendars import CalendarQuery as Q
 
-    rows = []
-    for stamp, row in frame.iterrows():
-        when = stamp.to_pydatetime() if hasattr(stamp, "to_pydatetime") else stamp
-        if not isinstance(when, datetime):
+    operands = [
+        Q("eq", ["region", "us"]),
+        Q("or", [Q("eq", ["eventtype", "EAD"]), Q("eq", ["eventtype", "ERA"])]),
+        Q("gte", ["startdatetime", (start - timedelta(days=1)).isoformat()]),
+        Q("lte", ["startdatetime", (end + timedelta(days=1)).isoformat()]),
+    ]
+    if symbols:
+        # Named tickers come back whatever their size or listing: someone asked.
+        operands.append(Q("or", [Q("eq", ["ticker", s]) for s in symbols]))
+    else:
+        tier = CAP_TIERS[cap]
+        operands.append(Q("gte", ["intradaymarketcap", tier["min"]]))
+        if tier["max"] is not None:
+            operands.append(Q("lt", ["intradaymarketcap", tier["max"]]))
+        # Primary US listings only (the movers screen's list). Without this the
+        # feed carries foreign giants again as OTC lines: MUFG beside MBFJF,
+        # Siemens as both SIEGY and SMAWF.
+        operands.append(Q("or", [Q("eq", ["exchange", x]) for x in sorted(US_EXCHANGES)]))
+    return Q("and", operands)
+
+
+def _earnings_pages(query) -> list[pd.DataFrame]:
+    """Every page of one calendar query, largest companies first.
+
+    `Calendars.get_earnings_calendar` is the public door, but it can filter
+    neither by exchange nor by ticker, so this goes one level down to the
+    request it wraps. yfinance keeps the cookie and crumb, which is the part
+    worth not re-implementing.
+    """
+    frames = []
+    for page in range(EARNINGS_MAX_PAGES):
+        frame = yf.Calendars()._get_data(
+            "sp_earnings", query, limit=EARNINGS_PAGE, offset=page * EARNINGS_PAGE
+        )
+        if frame is None or frame.empty:
+            break
+        frames.append(frame)
+        if len(frame) < EARNINGS_PAGE:
+            break
+    return frames
+
+
+def _session_for(timing: Any, when: datetime) -> str | None:
+    """Before the open or after the close — the part traders plan around."""
+    if isinstance(timing, str) and timing in _TIMING_SESSION:
+        return _TIMING_SESSION[timing]
+    if timing == "TNS":
+        return None
+    # Time as specified: the timestamp is the call itself.
+    return "before_open" if when.hour < 12 else "after_close"
+
+
+def _earnings_rows(frame: pd.DataFrame, start: date, end: date) -> list[dict]:
+    """Calendar rows inside the New York week, one per symbol."""
+    tz = ZoneInfo("America/New_York")
+    rows: dict[str, dict] = {}
+    for symbol, row in frame.iterrows():
+        stamp = row.get("Event Start Date")
+        if stamp is None or pd.isna(stamp):
             continue
-        rows.append({
+        when = pd.Timestamp(stamp)
+        when = (when.tz_localize("UTC") if when.tzinfo is None else when).tz_convert(tz).to_pydatetime()
+        if not start <= when.date() <= end:
+            continue
+        symbol = str(symbol)
+        if symbol in rows:      # a confirmed date and an estimate for one report
+            continue
+        rows[symbol] = {
             "symbol": symbol,
+            "name": _safe(row.get("Company")),
+            "market_cap": _round(row.get("Marketcap"), 0),
             "date": when.date().isoformat(),
-            # Yahoo timestamps the call itself: before the 9:30 open or after
-            # the 4pm close is the part traders actually plan around.
-            "session": "before_open" if when.hour < 12 else "after_close",
+            "session": _session_for(row.get("Timing"), when),
             "eps_estimate": _round(row.get("EPS Estimate"), 3),
             "reported_eps": _round(row.get("Reported EPS"), 3),
             "surprise_percent": _round(row.get("Surprise(%)"), 2),
-        })
+        }
+    return list(rows.values())
+
+
+def _fetch_earnings_between(
+    start: date, end: date, extra_symbols: list[str], cap: str = EARNINGS_DEFAULT_CAP
+) -> list[dict]:
+    frames = _earnings_pages(_earnings_query(start, end, cap=cap))
+    if extra_symbols:
+        frames += _earnings_pages(_earnings_query(start, end, extra_symbols))
+    frames = [f for f in frames if not f.empty]
+    if not frames:
+        return []
+    rows = _one_line_per_company(_earnings_rows(pd.concat(frames), start, end))
+    # Within a day, biggest first: the frontend shows the head of each column.
+    rows.sort(key=lambda r: (r["date"], -(r["market_cap"] or 0), r["symbol"]))
     return rows
 
 
-def _fetch_earnings_calendar(universe: list[str]) -> dict[str, list[dict]]:
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        results = pool.map(_earnings_history, universe)
-    return {sym: rows for sym, rows in zip(universe, results) if rows}
+def _one_line_per_company(rows: list[dict]) -> list[dict]:
+    """Collapse share classes: one Berkshire report, not BRK-A beside BRK-B.
+
+    Where a company lists twice, the ticker people trade wins — the one in
+    `EARNINGS_UNIVERSE` if either is, otherwise the shorter symbol.
+    """
+    familiar = set(EARNINGS_UNIVERSE)
+    best: dict[tuple, dict] = {}
+    for row in rows:
+        key = (row["name"] or row["symbol"], row["date"])
+        held = best.get(key)
+        rank = lambda r: (r["symbol"] not in familiar, len(r["symbol"]), r["symbol"])  # noqa: E731
+        if held is None or rank(row) < rank(held):
+            best[key] = row
+    return list(best.values())
 
 
-def _earnings_universe(extra_symbols: list[str] | None = None) -> list[str]:
-    return list(dict.fromkeys(EARNINGS_UNIVERSE + [s.upper() for s in (extra_symbols or [])]))
+def _season_bounds(day: date) -> tuple[date, date, str]:
+    """The reporting season `day` falls in: its calendar quarter, and the label
+    of the quarter whose results land in it.
+
+    October to December is "Q3 2026 season" — companies report the quarter
+    that just closed. Off-cycle fiscal years (Cisco's Q1 in November) still
+    report once inside the window, which is what makes it a fair denominator.
+    """
+    first_month = 3 * ((day.month - 1) // 3) + 1
+    start = date(day.year, first_month, 1)
+    following = date(day.year + 1, 1, 1) if first_month == 10 else date(day.year, first_month + 3, 1)
+    results_q = (first_month - 1) // 3 or 4
+    results_year = day.year if first_month > 1 else day.year - 1
+    return start, following - timedelta(days=1), f"Q{results_q} {results_year}"
 
 
-def _earnings_key(universe: list[str]) -> str:
+def _season_summary(
+    start: date, end: date, label: str, today: date, cap: str = EARNINGS_DEFAULT_CAP
+) -> dict:
+    """How many of the season's reporters in one cap tier are in.
+
+    Reported means the EPS is in, or the date has passed: Yahoo never fills in
+    a handful each season (~8 of ~860), and a finished season should read as
+    finished.
+    """
+    rows = _fetch_earnings_between(start, end, [], cap)
+    reported = sum(
+        1 for r in rows if r["reported_eps"] is not None or r["date"] < today.isoformat()
+    )
+    return {
+        "label": label,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "total": len(rows),
+        "reported": reported,
+    }
+
+
+def _earnings_week_key(start: date, extra_symbols: list[str], cap: str = EARNINGS_DEFAULT_CAP) -> str:
     """Shared by the endpoint and the warm-up job, so the two cannot drift."""
-    return f"earnings-calendar:{','.join(universe)}"
+    return f"earnings-week:{cap}:{start.isoformat()}:{','.join(extra_symbols)}"
+
+
+def _earnings_week_ttl(end: date, today: date) -> float:
+    return EARNINGS_PAST_WEEK_TTL if end < today else EARNINGS_WEEK_TTL
 
 
 async def refresh_earnings_calendar(ahead: float = 0.85) -> bool:
-    """Re-fetch the default calendar once it is `ahead` of the way to expiry.
+    """Re-fetch this week's calendar once it is `ahead` of the way to expiry.
 
-    The cold fetch costs ~36s and the frontend always asks for the default
-    universe, so refreshing that one key ahead of expiry means no visitor ever
-    waits for it. Returns True if it fetched.
+    The fetch is now a second or less, so this is no longer what stands between
+    a visitor and a 36s wait — but the current week at the default tier is what
+    every visitor opens on, and keeping it warm means Yahoo being slow is never
+    their problem. Returns True if it fetched.
     """
     from app.services import cache
 
-    universe = _earnings_universe()
-    key = _earnings_key(universe)
+    start, end = _iso_week_bounds(0)
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    key = _earnings_week_key(start, [])
+    ttl = _earnings_week_ttl(end, today)
     current_age = await cache.age(key)
-    if current_age is not None and current_age < EARNINGS_CALENDAR_TTL * ahead:
+    if current_age is not None and current_age < ttl * ahead:
         return False
 
-    calendar = await asyncio.to_thread(_fetch_earnings_calendar, universe)
-    if calendar:
-        await cache.prime(key, calendar, EARNINGS_CALENDAR_TTL)
-    return bool(calendar)
+    rows = await asyncio.to_thread(_fetch_earnings_between, start, end, [])
+    if rows:
+        await cache.prime(key, rows, ttl)
+    return bool(rows)
 
 
-async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None = None) -> dict:
+async def get_week_events(
+    week_offset: int = 0,
+    extra_symbols: list[str] | None = None,
+    cap: str = EARNINGS_DEFAULT_CAP,
+) -> dict:
     """Earnings and economic releases for one calendar week.
 
     `week_offset` is relative to the current week — 0 is this one, -1 last
     week, +1 next. Past weeks carry reported EPS and the surprise against
-    estimate; future weeks carry the estimate alone.
+    estimate; future weeks carry the estimate alone. `cap` is a `CAP_TIERS`
+    key and filters the earnings and the season progress alike.
     """
+    if cap not in CAP_TIERS:
+        cap = EARNINGS_DEFAULT_CAP
     week_offset = max(-MAX_WEEK_OFFSET, min(week_offset, MAX_WEEK_OFFSET))
     start, end = _iso_week_bounds(week_offset)
     today = datetime.now(ZoneInfo("America/New_York")).date()
 
-    universe = _earnings_universe(extra_symbols)
+    extra = sorted({s.upper() for s in (extra_symbols or [])})
 
     base = {
         "week_offset": week_offset,
@@ -1348,34 +1548,52 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
         "week_end": end.isoformat(),
         "today": today.isoformat(),
         "is_current_week": start <= today <= end,
+        "cap": cap,
     }
 
-    try:
-        calendar = await _cached(
-            _earnings_key(universe),
-            EARNINGS_CALENDAR_TTL,
-            lambda: _fetch_earnings_calendar(universe),
-            should_cache=bool,
-            lock=True,
-        )
-    except Exception as e:
-        log.error("earnings_calendar_failed", error=str(e))
-        calendar = {}
+    season_start, season_end, season_label = _season_bounds(start)
 
-    earnings = [
-        row
-        for rows in calendar.values()
-        for row in rows
-        if start.isoformat() <= row["date"] <= end.isoformat()
-    ]
-    earnings.sort(key=lambda r: (r["date"], r["symbol"]))
+    async def week() -> list[dict]:
+        try:
+            return await _cached(
+                _earnings_week_key(start, extra, cap),
+                _earnings_week_ttl(end, today),
+                lambda: _fetch_earnings_between(start, end, extra, cap),
+                should_cache=bool,
+                lock=True,
+            )
+        except Exception as e:
+            log.error("earnings_calendar_failed", error=str(e))
+            return []
 
-    try:
-        economic = await _cached(
-            f"economic:{start}:{end}", EVENTS_TTL, lambda: _fetch_economic(start, end)
-        )
-    except Exception as e:
-        log.error("economic_fetch_failed", error=str(e))
-        economic = {"events": [], "available": False, "error": str(e)}
+    async def season() -> dict | None:
+        try:
+            return await _cached(
+                f"earnings-season:{cap}:{season_start.isoformat()}",
+                _earnings_week_ttl(season_end, today),
+                lambda: _season_summary(season_start, season_end, season_label, today, cap),
+                should_cache=lambda v: bool(v and v["total"]),
+                lock=True,
+            )
+        except Exception as e:
+            log.error("earnings_season_failed", error=str(e))
+            return None
 
-    return {**base, "earnings": earnings, "economic": economic}
+    async def releases() -> dict:
+        try:
+            return await _cached(
+                f"economic:{start}:{end}",
+                EVENTS_TTL,
+                lambda: _fetch_economic(start, end),
+                # A missing key or a FRED outage is not an answer to keep for 30
+                # minutes: adding the key would otherwise not show until expiry.
+                should_cache=lambda v: bool(v.get("available")),
+            )
+        except Exception as e:
+            log.error("economic_fetch_failed", error=str(e))
+            return {"events": [], "available": False, "error": str(e)}
+
+    # Three independent sources; the slowest sets the wait, not the sum.
+    earnings, season_progress, economic = await asyncio.gather(week(), season(), releases())
+
+    return {**base, "earnings": earnings, "season": season_progress, "economic": economic}
