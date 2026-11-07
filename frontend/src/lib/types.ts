@@ -555,6 +555,37 @@ export interface TrendSeries {
   z_score: (number | null)[]
 }
 
+// Relative strength (excess return vs SPY and sector) and relative volume.
+// Scalars only; see backend services/relative.py.
+export interface RelativeWindow {
+  window: string
+  sessions: number
+  stock_return: number
+  vs_spy: number | null
+  vs_sector: number | null
+}
+
+export interface RelativeVolume {
+  value: number
+  today_volume: number
+  avg_volume: number
+  window: number
+  label: string
+}
+
+export interface RelativeStrength {
+  symbol: string
+  available: boolean
+  reason?: string | null
+  benchmark?: string
+  sector?: string | null
+  sector_etf?: string | null
+  rvol?: RelativeVolume | null
+  windows?: RelativeWindow[]
+  trend_label?: string | null
+  as_of?: string
+}
+
 export interface TrendPayload {
   symbol: string
   range: string

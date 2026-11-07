@@ -49,6 +49,21 @@ function tone(v?: number | null) {
   return v > 0 ? 'text-emerald-400' : 'text-rose-400'
 }
 
+/** A decimal rate as a signed percentage: 0.052 → "+5.2%". */
+function pctSigned(v?: number | null, digits = 1): string {
+  if (v == null) return '—'
+  return `${v > 0 ? '+' : ''}${(v * 100).toFixed(digits)}%`
+}
+
+/** Share volume, abbreviated: 1_540_000 → "1.5M". */
+function compactVol(v?: number | null): string {
+  if (v == null) return '—'
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`
+  return String(v)
+}
+
 /** 0–100 track with the oversold/overbought bands marked. */
 function RsiGauge({ value }: { value: number }) {
   return (
@@ -342,10 +357,20 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
     }
   }
 
+  // Relative strength + relative volume: its own request (SPY and the sector
+  // ETF are extra bar reads), surfaced as two more cards in the same grid.
+  const relative = useCachedResource(
+    K.relative(symbol),
+    () => api.market.relative(symbol),
+    { ttl: TTL.relative },
+  ).data
+
   const rsi = data?.rsi
   const macd = data?.macd
   const ladder = data?.moving_averages
   const drawdown = data?.drawdown
+  const rvol = relative?.available ? relative.rvol : null
+  const rsWindows = relative?.available ? (relative.windows ?? []) : []
 
   const rsiValue = rsi?.current_rsi
   const zoneColor =
@@ -615,6 +640,91 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                         </span>
                       </div>
                     )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Relative strength — excess return vs SPY and the sector ETF */}
+          <Card>
+            <CardContent className="flex h-full flex-col gap-2.5 py-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] font-semibold text-foreground">Relative strength</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  excess return
+                </span>
+              </div>
+
+              {rsWindows.length === 0 ? (
+                <p className="py-3 text-xs text-muted-foreground/60">
+                  {relative && !relative.available
+                    ? (relative.reason ?? 'No data')
+                    : 'Not enough history.'}
+                </p>
+              ) : (
+                <>
+                  <span className="text-2xl font-bold capitalize text-foreground">
+                    {relative?.trend_label ?? '—'}
+                  </span>
+                  <div className="mt-1 grid grid-cols-3 gap-x-2 text-[9px] uppercase tracking-wide text-muted-foreground/50">
+                    <span>window</span>
+                    <span className="text-right">vs SPY</span>
+                    <span className="text-right">vs {relative?.sector_etf ?? 'sector'}</span>
+                  </div>
+                  {rsWindows.map(w => (
+                    <div key={w.window} className="grid grid-cols-3 gap-x-2 text-[11px] tabular-nums">
+                      <span className="text-muted-foreground">{w.window}</span>
+                      <span className={cn('text-right', tone(w.vs_spy))}>{pctSigned(w.vs_spy)}</span>
+                      <span className={cn('text-right', tone(w.vs_sector))}>
+                        {pctSigned(w.vs_sector)}
+                      </span>
+                    </div>
+                  ))}
+                  <p className="mt-auto pt-1 text-[9px] leading-snug text-muted-foreground/50">
+                    Price return vs {relative?.benchmark ?? 'SPY'}
+                    {relative?.sector ? ` and ${relative.sector}` : ''}, from adjusted bars.
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Relative volume — today's volume against its own 20-day average */}
+          <Card>
+            <CardContent className="flex h-full flex-col gap-2.5 py-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] font-semibold text-foreground">Relative volume</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  vs {rvol?.window ?? 20}-day avg
+                </span>
+              </div>
+
+              {!rvol ? (
+                <p className="py-3 text-xs text-muted-foreground/60">No volume data.</p>
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold tabular-nums text-foreground">
+                      {fmt(rvol.value, 1)}×
+                    </span>
+                    <Badge variant="secondary" className="text-[10px] capitalize">
+                      {rvol.label}
+                    </Badge>
+                  </div>
+                  <div className="mt-auto flex flex-col gap-1 pt-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Today</span>
+                      <span className="tabular-nums text-foreground">
+                        {compactVol(rvol.today_volume)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Avg ({rvol.window}d)</span>
+                      <span className="tabular-nums text-foreground">
+                        {compactVol(rvol.avg_volume)}
+                      </span>
+                    </div>
                   </div>
                 </>
               )}

@@ -15,6 +15,7 @@ export const K = {
   history: (symbol: string, range: string) => `hist:${symbol}:${range}`,
   profile: (symbol: string) => `profile:${symbol}`,
   technicals: (symbol: string) => `technicals:${symbol}`,
+  relative: (symbol: string) => `relative:${symbol}`,
   trend: (symbol: string, range: string) => `trend:${symbol}:${range}`,
   /** Assumption overrides are part of the key — they change the answer. */
   valuation: (symbol: string, params: Record<string, number | string> = {}) =>
@@ -50,6 +51,7 @@ export const TTL = {
   movers: 60_000,             // market_data.MOVERS_TTL
   profile: 600_000,           // market_data.PROFILE_TTL
   technicals: 120_000,        // technicals.TECHNICALS_TTL
+  relative: 120_000,          // relative.RELATIVE_TTL
   trend: 300_000,             // technicals.TREND_TTL
   valuation: 900_000,         // valuation.VALUATION_TTL
   explanation: 900_000,       // technicals/options EXPLANATION_TTL
