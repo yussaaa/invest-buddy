@@ -755,7 +755,21 @@ function ReleaseRow({ event, isPast }: { event: EconomicEvent; isPast: boolean }
             {event.name}
           </span>
         </div>
-        <span className="shrink-0 text-[11px] text-muted-foreground">{formatDay(event.date)}</span>
+        <span className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+          {event.url && (
+            <a
+              href={event.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`${event.release ?? event.name} — ${event.publisher ?? 'publisher'}`}
+              className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60 transition-colors hover:text-primary"
+            >
+              {event.publisher ?? 'Source'}
+              <ExternalLink size={9} />
+            </a>
+          )}
+          {formatDay(event.date)}
+        </span>
       </div>
 
       {figures.map(f => (
@@ -1222,10 +1236,24 @@ export default function MarketPage() {
           {/* Economic releases */}
           <Card>
             <CardContent className="flex flex-col gap-3 py-4">
-              <h3 className="text-sm font-semibold text-foreground">
-                Economic releases{' '}
-                <span className="text-muted-foreground/60">({economic?.events.length ?? 0})</span>
-              </h3>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Economic releases{' '}
+                  <span className="text-muted-foreground/60">({economic?.events.length ?? 0})</span>
+                </h3>
+                {/* A fixed rating per release, not something measured from the
+                    print — see MAJOR_FRED_RELEASES in market_data.py. */}
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground/70">
+                  <span className="flex items-center gap-1.5" title="Usually moves markets the most">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                    High impact
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+                    Medium
+                  </span>
+                </div>
+              </div>
               <Separator />
 
               {eventsRes.isLoading ? (

@@ -484,3 +484,12 @@ async def test_an_unconfigured_calendar_is_not_cached(monkeypatch):
     cache._CACHE.clear()
 
 
+
+def test_every_release_links_to_its_publisher_over_https():
+    from app.services.market_data import MAJOR_FRED_RELEASES, RELEASE_PUBLISHERS, _major_releases
+
+    assert set(RELEASE_PUBLISHERS) == set(MAJOR_FRED_RELEASES)
+    assert all(url.startswith("https://") for _, url in RELEASE_PUBLISHERS.values())
+
+    [cpi] = _major_releases([{"release_name": "Consumer Price Index", "date": "2026-11-10"}])
+    assert cpi["publisher"] == "BLS" and "bls.gov" in cpi["url"]

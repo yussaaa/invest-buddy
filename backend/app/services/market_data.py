@@ -95,6 +95,33 @@ MAJOR_FRED_RELEASES: dict[str, tuple[str, str]] = {
     "h.4.1 factors affecting reserve balances": ("Fed Balance Sheet (H.4.1)", "medium"),
 }
 
+# Who publishes each release, and where — the original, not FRED's copy of it.
+# BLS answers scripted clients with 403, so its links cannot be checked from a
+# server; they are BLS's standing news-release addresses.
+RELEASE_PUBLISHERS: dict[str, tuple[str, str]] = {
+    "employment situation": ("BLS", "https://www.bls.gov/news.release/empsit.nr0.htm"),
+    "consumer price index": ("BLS", "https://www.bls.gov/news.release/cpi.nr0.htm"),
+    "producer price index": ("BLS", "https://www.bls.gov/news.release/ppi.nr0.htm"),
+    "gross domestic product": ("BEA", "https://www.bea.gov/data/gdp/gross-domestic-product"),
+    "personal income and outlays": ("BEA", "https://www.bea.gov/data/income-saving/personal-income"),
+    "advance monthly sales for retail and food services": ("Census", "https://www.census.gov/retail/index.html"),
+    "unemployment insurance weekly claims report": ("DOL", "https://oui.doleta.gov/unemploy/claims.asp"),
+    "job openings and labor turnover survey": ("BLS", "https://www.bls.gov/news.release/jolts.nr0.htm"),
+    "adp national employment report": ("ADP", "https://adpemploymentreport.com/"),
+    "employment cost index": ("BLS", "https://www.bls.gov/news.release/eci.nr0.htm"),
+    "g.17 industrial production and capacity utilization": (
+        "Fed", "https://www.federalreserve.gov/releases/g17/current/default.htm",
+    ),
+    "new residential construction": ("Census", "https://www.census.gov/construction/nrc/index.html"),
+    "surveys of consumers": ("UMich", "https://www.sca.isr.umich.edu/"),
+    "u.s. international trade in goods and services": (
+        "BEA", "https://www.bea.gov/data/intl-trade-investment/international-trade-goods-and-services",
+    ),
+    "g.19 consumer credit": ("Fed", "https://www.federalreserve.gov/releases/g19/current/default.htm"),
+    "h.4.1 factors affecting reserve balances": (
+        "Fed", "https://www.federalreserve.gov/releases/h41/current/default.htm",
+    ),
+}
 
 # Index membership for the breadth panel. Constituents come from Wikipedia's
 # tables (the only free source with GICS sectors attached); Dow 30 is small and
@@ -797,12 +824,15 @@ def _major_releases(release_dates: list[dict]) -> list[dict]:
             continue
         seen.add((release, item.get("date")))
         label, importance = match
+        publisher, url = RELEASE_PUBLISHERS.get(release.lower(), (None, None))
         events.append({
             "name": label,
             "release": release,
             "date": item.get("date"),
             "importance": importance,
             "source": "FRED",
+            "publisher": publisher,
+            "url": url,
         })
     return sorted(events, key=lambda e: (e["date"], e["importance"] != "high", e["name"]))
 

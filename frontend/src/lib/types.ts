@@ -732,6 +732,9 @@ export interface EconomicEvent {
   /** FRED's own release name, for the tooltip. */
   release?: string
   date: string
+  /** The agency that publishes it — "BLS", "BEA" — and its release page. */
+  publisher?: string | null
+  url?: string | null
   /** The headline figures inside the release; absent when FRED has none. */
   indicators?: EconomicFigure[]
   importance: 'high' | 'medium'
