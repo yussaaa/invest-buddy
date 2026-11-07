@@ -12,6 +12,9 @@ import type {
   MarketEvents,
   MarketMovers,
   MarketOverview,
+  NewsFeed,
+  NewsSettings,
+  NewsSources,
   TrendPayload,
   Valuation,
   ValuationExplanation,
@@ -300,6 +303,35 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...llmProviderHeaders() },
         body: JSON.stringify(body),
+        signal,
+      }),
+  },
+
+  news: {
+    list: (params: { limit?: number; before?: string; source?: string; category?: string; symbol?: string } = {},
+           signal?: AbortSignal) => {
+      const query = new URLSearchParams()
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== '') query.set(key, String(value))
+      }
+      const qs = query.toString()
+      return request<NewsFeed>(`/news${qs ? `?${qs}` : ''}`, { signal })
+    },
+
+    sources: (signal?: AbortSignal) => request<NewsSources>('/news/sources', { signal }),
+
+    /** Deployment-wide wire settings (the SEC contact), edited in Settings. */
+    settings: () => request<NewsSettings>('/news/settings'),
+
+    /** "" clears the stored contact, falling back to the server's .env. */
+    updateSettings: (body: { sec_contact: string }) =>
+      request<NewsSettings>('/news/settings', { method: 'PUT', body: JSON.stringify(body) }),
+
+    /** Raw Response, read with parseSSEStream. GET, but fetch rather than
+     *  EventSource so reconnects carry an up-to-date `since` (see useNewsStream). */
+    stream: (since: string | null, signal?: AbortSignal) =>
+      fetch(`${BASE_URL}/news/stream${since ? `?since=${encodeURIComponent(since)}` : ''}`, {
+        headers: { Accept: 'text/event-stream' },
         signal,
       }),
   },

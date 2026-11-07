@@ -136,6 +136,22 @@ class Settings(BaseSettings):
     research_max_web_searches: int = 3
     research_timeout_seconds: float = 60.0
 
+    # ── News wire (services/news/) ─────────────────────────────────────────
+    # Alpaca's news stream (Benzinga headlines, ticker-tagged) needs a free
+    # Alpaca account; paper-trading keys are enough. Without them the wire
+    # runs on the keyless feeds and says Alpaca is not set up.
+    news_enabled: bool = True
+    news_http_timeout_seconds: float = 8.0
+    alpaca_api_key_id: str = ""
+    alpaca_api_secret: str = ""
+    # EDGAR refuses a User-Agent without a contact address (SEC fair-access
+    # policy), e.g. "Jane Doe jane@example.com". Normally set on the Settings
+    # page (services/app_settings.py), which overrides this; this is the
+    # fallback for a deployment configured from the file. Neither → EDGAR off.
+    sec_user_agent: str = ""
+    news_edgar_poll_seconds: float = 60.0
+    news_fed_poll_seconds: float = 300.0
+
     # ── Background warm-up (services/warmup.py) ────────────────────────────
     # Backfills the bar store and refreshes the earnings calendar ahead of
     # expiry, so the first visitor after a cold start or a TTL never waits.

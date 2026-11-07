@@ -55,10 +55,16 @@ export default {
           from: { height: 'var(--radix-accordion-content-height)' },
           to: { height: '0' },
         },
+        // A headline that just arrived on the news wire, once.
+        wireflash: {
+          from: { backgroundColor: 'hsl(var(--primary) / 0.18)' },
+          to: { backgroundColor: 'transparent' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
+        wireflash: 'wireflash 2.5s ease-out 1',
       },
     },
   },
