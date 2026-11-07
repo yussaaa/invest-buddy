@@ -30,7 +30,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -388,3 +388,79 @@ class SocialMentionSnapshot(Base):
     )
 
     __table_args__ = (Index("ix_social_mention_snapshots_bucket", "bucket"),)
+
+
+class NewsHeadline(Base):
+    """One market headline on the news wire, from any source.
+
+    `id` is a hash of (source, source_id), so a re-poll or a websocket replay
+    of the same item is an idempotent no-op. Alpaca, EDGAR and the Fed are
+    each other's strangers: the same story from two sources is two rows, and
+    any merging is the triage step's business, not the key's.
+
+    Written in stages, each of which stamps `updated_at` — that column is the
+    stream's cursor, so the page learns about a new headline and, later, its
+    triage, explanation and measured reaction through one mechanism:
+
+    1. ingest (services/news/runner.py) — everything up to `tags`
+    2. triage — `importance`, `exposures`, `triaged_at`
+    3. explain — `explanation`
+    4. reaction — `reaction`, filled once each horizon has passed
+    """
+    __tablename__ = "news_headlines"
+
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    publisher: Mapped[str | None] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # The dialect's ARRAY, not the generic one: only it has `.contains()`,
+    # which the "headlines naming NVDA" query needs.
+    symbols: Mapped[list] = mapped_column(PG_ARRAY(String(16)), nullable=False, server_default="{}")
+    category: Mapped[str | None] = mapped_column(String(24))
+    # Source-specific labels — 8-K item numbers, the Fed's release category.
+    tags: Mapped[list] = mapped_column(PG_ARRAY(String(64)), nullable=False, server_default="{}")
+
+    # {symbol: {"sector", "industry"} | null}, filled just after ingest
+    # (services/news/classify.py). Null until then; a symbol with no profile
+    # maps to null, so the row is not looked up again.
+    symbol_info: Mapped[dict | None] = mapped_column(JSONB)
+    importance: Mapped[int | None] = mapped_column(SmallInteger)
+    exposures: Mapped[list | None] = mapped_column(JSONB)
+    triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    explanation: Mapped[dict | None] = mapped_column(JSONB)
+    reaction: Mapped[dict | None] = mapped_column(JSONB)
+
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_news_headlines_published_at", "published_at"),
+        Index("ix_news_headlines_updated_at", "updated_at"),
+        Index("ix_news_headlines_symbols", "symbols", postgresql_using="gin"),
+    )
+
+
+class AppSetting(Base):
+    """A setting for the whole deployment, edited from the Settings page.
+
+    Not a user preference: these configure what the *server* does on
+    everyone's behalf — the contact the SEC sees on every EDGAR request, for
+    one. A value here takes precedence over the matching .env setting, which
+    stays as the fallback for a deployment configured entirely from the file.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

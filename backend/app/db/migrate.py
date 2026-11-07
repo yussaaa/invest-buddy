@@ -45,6 +45,8 @@ REVISION_TABLES: list[tuple[str, set[str]]] = [
     ("001", {"users", "analysis_runs", "watchlists", "user_preferences", "feedback"}),
     ("002", {"daily_bars", "bar_coverage"}),
     ("004", {"social_mention_snapshots"}),
+    ("005", {"news_headlines"}),
+    ("006", {"app_settings"}),
 ]
 
 

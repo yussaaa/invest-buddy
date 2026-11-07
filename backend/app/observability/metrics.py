@@ -124,6 +124,22 @@ CHAT_SIGNALS_EMITTED = Histogram(
     buckets=[0, 1, 2, 3, 5, 8, 13],
 )
 
+# ── News Wire Metrics ─────────────────────────────────────────────────────────
+
+NEWS_HEADLINES_INGESTED_TOTAL = Counter(
+    "news_headlines_ingested_total",
+    "New headlines stored by the news wire (repeats excluded)",
+    ["source"],  # alpaca | edgar | fed
+)
+
+# A source whose polls keep failing shows up here before anyone notices the
+# wire has gone quiet.
+NEWS_POLLS_TOTAL = Counter(
+    "news_polls_total",
+    "News source polls and stream sessions",
+    ["source", "outcome"],  # ok | unavailable | error
+)
+
 # ── Token / Cost Metrics ──────────────────────────────────────────────────────
 
 TOKEN_USAGE_TOTAL = Counter(

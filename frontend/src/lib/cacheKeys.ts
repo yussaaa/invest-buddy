@@ -37,6 +37,9 @@ export const K = {
   socialTicker: (symbol: string) => `social:snap:${symbol.toUpperCase()}`,
   socialExplain: (symbol: string) => `social:explain:${symbol.toUpperCase()}`,
   socialVol: (symbol: string) => `social:vol:${symbol.toUpperCase()}`,
+  newsSources: () => 'news:sources',
+  /** The first page only — the stream keeps it current after that. */
+  newsFeed: () => 'news:feed',
 } as const
 
 /** Milliseconds. Server constants are in seconds — the names line up. */
@@ -61,6 +64,9 @@ export const TTL = {
   // but a stale "blocked" chip for an hour would mislead.
   signalSources: 60_000,
   screenPresets: 86_400_000,  // a code constant on the server
+  newsSources: 60_000,        // like signalSources: a chip can flip to blocked
+  // Short: it is only the first paint. Live updates come from the stream.
+  newsFeed: 30_000,
 
   // Deliberately NOT the server's 60s. The breadth scan prices ~700 symbols
   // and takes minutes, so a short client TTL buys nothing but another one of

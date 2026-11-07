@@ -80,10 +80,20 @@ async def lifespan(app: FastAPI):
 
         warmup = asyncio.create_task(run_warmup_loop(), name="warmup")
 
+    news_runner = None
+    if settings.news_enabled:
+        import asyncio
+
+        from app.services.news.runner import run_news_loop
+
+        news_runner = asyncio.create_task(run_news_loop(), name="news-runner")
+
     log.info("startup_complete")
     yield
     if warmup is not None:
         warmup.cancel()
+    if news_runner is not None:
+        news_runner.cancel()
     log.info("shutdown")
 
 

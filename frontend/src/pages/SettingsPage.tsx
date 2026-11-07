@@ -1,13 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Save, Loader2, CheckCircle, AlertCircle, Cpu, RefreshCw } from 'lucide-react'
+import { Save, Loader2, CheckCircle, AlertCircle, Cpu, RefreshCw, Newspaper } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { api } from '../lib/api'
 import { setLlmProvider } from '../lib/llmProvider'
-import type { LlmConnectionTest, LlmProviderList, UserPreferences } from '../lib/types'
+import type { LlmConnectionTest, LlmProviderList, NewsSettings, UserPreferences } from '../lib/types'
 import { version as APP_VERSION } from '../../package.json'
 
 const USER_ID = 'anonymous'
@@ -86,6 +87,47 @@ function SectionHeader({ title, description }: { title: string; description: Rea
   )
 }
 
+/** The server's message from a 4xx/5xx ("API error 422: {"detail": "..."}"). */
+function apiErrorDetail(e: unknown, fallback: string): string {
+  if (!(e instanceof Error)) return fallback
+  try {
+    const detail = JSON.parse(e.message.replace(/^API error \d+: /, '')).detail
+    if (typeof detail === 'string') return detail
+  } catch {
+    // not JSON — fall through to the raw message
+  }
+  return e.message
+}
+
+function SecContactStatus({ settings, typed }: { settings: NewsSettings; typed: string }) {
+  const { edgar, sec_contact } = settings
+  if (edgar.state === 'live') {
+    return (
+      <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+        <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-green-500" />
+        <span>
+          SEC 8-K filings are on the news wire
+          {sec_contact.source === 'env' && !typed && (
+            <> · using the contact in the server's <span className="font-mono">.env</span>; saving one here overrides it</>
+          )}
+        </span>
+      </p>
+    )
+  }
+  if (edgar.state === 'not_configured') {
+    return (
+      <p className="text-xs text-muted-foreground">
+        SEC 8-K filings stay off the news wire until a contact is saved.
+      </p>
+    )
+  }
+  return (
+    <p className="flex items-start gap-1.5 text-xs text-amber-400">
+      <AlertCircle size={13} className="mt-px shrink-0" /> {edgar.reason}
+    </p>
+  )
+}
+
 const DEFAULT_PREFS: UserPreferences = {
   user_id: USER_ID,
   risk_tolerance: 'moderate',
@@ -103,6 +145,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [newsSettings, setNewsSettings] = useState<NewsSettings | null>(null)
+  const [secContact, setSecContact] = useState('')
+  const [contactError, setContactError] = useState<string | null>(null)
 
   useEffect(() => {
     Promise.allSettled([
@@ -113,6 +158,10 @@ export default function SettingsPage() {
       api.preferences.llmProviders().then(list => {
         setProviders(list)
         testConnections(list)
+      }),
+      api.news.settings().then(settings => {
+        setNewsSettings(settings)
+        setSecContact(settings.sec_contact.value ?? '')
       }),
     ]).finally(() => setLoading(false))
   }, [])
@@ -160,6 +209,22 @@ export default function SettingsPage() {
   async function handleSave() {
     setSaveState('saving')
     setErrorMsg(null)
+    setContactError(null)
+    // Server-wide, so saved separately — and only when it changed, since
+    // every save restamps a value every replica re-reads.
+    const contactChanged =
+      newsSettings !== null && secContact.trim() !== (newsSettings.sec_contact.value ?? '')
+    if (contactChanged) {
+      try {
+        const saved = await api.news.updateSettings({ sec_contact: secContact })
+        setNewsSettings(saved)
+        setSecContact(saved.sec_contact.value ?? '')
+      } catch (e) {
+        setContactError(apiErrorDetail(e, 'Could not save the SEC contact'))
+        setSaveState('idle')
+        return
+      }
+    }
     try {
       const saved = await api.preferences.update(USER_ID, {
         risk_tolerance: prefs.risk_tolerance,
@@ -193,7 +258,7 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Your investment profile, and the models that run your analyses.
+          Your investment profile, the models that run your analyses, and the news wire.
         </p>
       </div>
 
@@ -343,6 +408,55 @@ export default function SettingsPage() {
                     too: <span className="font-mono">{selectedFailure}</span>
                   </span>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      )}
+
+      {/* News wire — server-wide, not part of the profile */}
+      {newsSettings && (
+        <section className="flex flex-col gap-3">
+          <SectionHeader
+            title="News Wire"
+            description="Server-wide: these apply to everyone using this deployment, not to your profile."
+          />
+          <Card>
+            <CardContent className="pt-6 flex flex-col gap-3">
+              <div>
+                <Label htmlFor="sec-contact" className="flex items-center gap-1.5 text-sm font-semibold">
+                  <Newspaper size={14} /> Contact for SEC requests
+                </Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  The SEC asks every automated client for a name and email, so it can reach whoever
+                  runs it before blocking it. It is sent with each request for 8-K filings and
+                  nowhere else. No sign-up needed.
+                </p>
+              </div>
+              <Input
+                id="sec-contact"
+                value={secContact}
+                onChange={e => {
+                  setSecContact(e.target.value)
+                  setContactError(null)
+                }}
+                placeholder={
+                  newsSettings.sec_contact.source === 'env'
+                    ? "Set in the server's .env — type one to override it"
+                    : 'e.g. Jane Doe jane@example.com'
+                }
+                maxLength={200}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={contactError !== null}
+                className={cn('max-w-md', contactError && 'border-red-500/70')}
+              />
+              {contactError ? (
+                <p className="flex items-start gap-1.5 text-xs text-red-400">
+                  <AlertCircle size={13} className="mt-px shrink-0" /> {contactError}
+                </p>
+              ) : (
+                <SecContactStatus settings={newsSettings} typed={secContact} />
               )}
             </CardContent>
           </Card>

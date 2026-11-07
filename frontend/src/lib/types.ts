@@ -1027,3 +1027,66 @@ export interface ResearchBrief {
   model: string
   disclaimer: string
 }
+
+// ── News wire (/news) ─────────────────────────────────────────────────────────
+
+export type NewsSourceId = 'alpaca' | 'edgar' | 'fed'
+
+export type NewsCategory =
+  | 'earnings'
+  | 'deal'
+  | 'management'
+  | 'accounting'
+  | 'corporate'
+  | 'monetary_policy'
+  | 'regulatory'
+  | 'news'
+
+/** Yahoo's classification of a ticker, as the profile panel shows it. */
+export interface SymbolInfo {
+  sector: string | null
+  industry: string | null
+}
+
+export interface NewsHeadline {
+  id: string
+  source: NewsSourceId
+  publisher: string | null
+  title: string
+  summary: string | null
+  url: string | null
+  published_at: string
+  symbols: string[]
+  category: NewsCategory | null
+  tags: string[]
+  /** Filled seconds after ingest. A symbol Yahoo has no profile for maps to
+   *  null; the whole field is null until the lookup has run. */
+  symbol_info: Record<string, SymbolInfo | null> | null
+  /** Filled by later stages — null until then. */
+  importance: number | null
+  exposures: unknown[] | null
+  explanation: Record<string, unknown> | null
+  reaction: Record<string, unknown> | null
+  /** The stream's cursor: any stage that writes the row restamps it. */
+  updated_at: string
+}
+
+export interface NewsFeed {
+  headlines: NewsHeadline[]
+  as_of: string
+  error?: string
+}
+
+/** The wire's deployment-wide settings — one per server, not per user. */
+export interface NewsSettings {
+  /** `value` is only returned when it was saved from the Settings page; a
+   *  contact from the server's .env is reported by source alone. */
+  sec_contact: { value: string | null; source: 'settings' | 'env' | null }
+  edgar: SocialSourceStatus
+}
+
+export interface NewsSources {
+  sources: SocialSourceStatus[]
+  categories: NewsCategory[]
+  disclaimer: string
+}

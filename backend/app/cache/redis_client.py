@@ -168,3 +168,59 @@ async def try_lock(key: str, ttl: float) -> bool:
 
 async def unlock(key: str) -> None:
     await cache_delete(key)
+
+
+# Extend the lease if we hold it; reclaim it if it lapsed (Redis restarted, or
+# a renewal was missed); otherwise someone else leads. Atomic, so two replicas
+# reclaiming at once cannot both win.
+_RENEW_LEASE = """
+local holder = redis.call('get', KEYS[1])
+if holder == ARGV[1] then
+  return redis.call('expire', KEYS[1], ARGV[2])
+elseif not holder then
+  return redis.call('set', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) and 1 or 0
+end
+return 0
+"""
+
+
+async def acquire_lease(key: str, token: str, ttl: float) -> Optional[bool]:
+    """Take a renewable, owned lock — for a job that runs for as long as it leads.
+
+    `try_lock` suits a job that runs once per interval; a long-lived worker
+    (the news wire's stream) needs to keep the lock and to know it still has
+    it. True: acquired. False: another holder. None: Redis is unavailable, so
+    nobody can tell — callers that tolerate duplicates proceed.
+    """
+    if _breaker_open():
+        return None
+    try:
+        r = await get_redis()
+        return bool(await r.set(key, token, nx=True, ex=_coerce_ttl(ttl)))
+    except Exception as e:
+        _trip_breaker("lease", e)
+        return None
+
+
+async def renew_lease(key: str, token: str, ttl: float) -> Optional[bool]:
+    """Same answers as `acquire_lease`: True still ours, False lost, None unknown."""
+    if _breaker_open():
+        return None
+    try:
+        r = await get_redis()
+        return bool(await r.eval(_RENEW_LEASE, 1, key, token, _coerce_ttl(ttl)))
+    except Exception as e:
+        _trip_breaker("lease", e)
+        return None
+
+
+async def release_lease(key: str, token: str) -> None:
+    """Drop the lease only if it is still ours."""
+    if _breaker_open():
+        return
+    try:
+        r = await get_redis()
+        if await r.get(key) == token:
+            await r.delete(key)
+    except Exception as e:
+        _trip_breaker("lease", e)

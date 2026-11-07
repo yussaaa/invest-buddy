@@ -17,6 +17,7 @@ import {
   Clock,
   Globe2,
   List,
+  Newspaper,
   Radar,
   TrendingUp,
 } from 'lucide-react'
@@ -32,6 +33,7 @@ import MarketWatchlist from './components/market/MarketWatchlist'
 import AnalyzePage from './pages/AnalyzePage'
 import ChartingPage from './pages/ChartingPage'
 import MarketPage from './pages/MarketPage'
+import NewsPage from './pages/NewsPage'
 import SignalsPage from './pages/SignalsPage'
 import WatchlistPage from './pages/WatchlistPage'
 import HistoryPage from './pages/HistoryPage'
@@ -41,6 +43,7 @@ import { PageActiveContext } from '@/context/PageActive'
 const NAV_ITEMS = [
   { to: '/charting', label: 'Charting', icon: CandlestickChart },
   { to: '/market', label: 'Market', icon: Globe2 },
+  { to: '/news', label: 'News', icon: Newspaper },
   { to: '/signals', label: 'Signals', icon: Radar },
   { to: '/analyze', label: 'Analyze', icon: TrendingUp },
   { to: '/watchlist', label: 'Watchlist', icon: List },
@@ -181,7 +184,7 @@ function Sidebar({ collapsed, width, onToggle, onResize }: SidebarProps) {
 
 // Pages that take a ?ticker= — a watchlist click stays on the current one
 // instead of yanking the user over to Analyze.
-const TICKER_AWARE_PATHS = ['/charting', '/analyze', '/signals']
+const TICKER_AWARE_PATHS = ['/charting', '/analyze', '/signals', '/news']
 
 function AppShell() {
   const navigate = useNavigate()
@@ -247,6 +250,7 @@ function AppShell() {
           <Route path="/charting" element={<ChartingPage />} />
           {/* Rendered below, outside <Routes>, so leaving does not unmount it. */}
           <Route path="/market" element={null} />
+          <Route path="/news" element={<NewsPage />} />
           <Route path="/signals" element={<SignalsPage />} />
           <Route path="/analyze" element={<AnalyzePage />} />
           <Route path="/watchlist" element={<WatchlistPage />} />
