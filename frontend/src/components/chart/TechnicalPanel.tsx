@@ -34,6 +34,16 @@ function signed(v?: number | null, digits = 2): string {
   return `${v > 0 ? '+' : ''}${fmt(v, digits)}`
 }
 
+/**
+ * Decimals for a MACD reading: two while the whole part is a single digit,
+ * one beyond. MACD is in price units, so it runs from ±0.05 on a $20 stock to
+ * ±40 on a $2,000 one — a fixed three decimals was noise at one end and
+ * clutter at the other.
+ */
+function macdDigits(v?: number | null): number {
+  return v != null && Math.abs(v) >= 10 ? 1 : 2
+}
+
 function tone(v?: number | null) {
   if (v == null || v === 0) return 'text-muted-foreground'
   return v > 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -149,7 +159,7 @@ function MacdHistogramBars({ values }: { values: number[] }) {
               height={Math.max(h, 0.5)}
               className={v >= 0 ? 'fill-emerald-500/70' : 'fill-rose-500/70'}
             >
-              <title>{signed(v, 3)}</title>
+              <title>{signed(v, macdDigits(v))}</title>
             </rect>
           )
         })}
@@ -436,7 +446,7 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                 <>
                   <div className="flex items-baseline gap-2">
                     <span className={cn('text-2xl font-bold tabular-nums', tone(macd?.histogram))}>
-                      {signed(macd?.histogram, 3)}
+                      {signed(macd?.histogram, macdDigits(macd?.histogram))}
                     </span>
                     <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
                       histogram
@@ -446,11 +456,11 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                   <div className="flex flex-col gap-1 text-xs">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">MACD line</span>
-                      <span className="tabular-nums text-foreground">{fmt(macd?.macd, 3)}</span>
+                      <span className="tabular-nums text-foreground">{fmt(macd?.macd, macdDigits(macd?.macd))}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Signal line</span>
-                      <span className="tabular-nums text-foreground">{fmt(macd?.signal, 3)}</span>
+                      <span className="tabular-nums text-foreground">{fmt(macd?.signal, macdDigits(macd?.signal))}</span>
                     </div>
                   </div>
 
