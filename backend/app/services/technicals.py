@@ -57,6 +57,9 @@ def without_series(technicals: dict) -> dict:
 TECHNICALS_TTL = 120.0
 # The trend charts are two years wide; the last bar moves, the shape does not.
 TREND_TTL = 300.0
+# ATR moves one bar at a time; the stop it suggests does not need to be fresher.
+ATR_TTL = 300.0
+ATR_PERIOD = 14
 EXPLANATION_TTL = 900.0
 
 # 200 and 250 both sit here deliberately: 200 is the convention most chartists
@@ -252,6 +255,71 @@ async def get_trend(symbol: str, range_key: str = "2y") -> dict:
     except Exception as e:
         log.error("trend_fetch_failed", symbol=symbol, range=range_key, error=str(e))
         return {"symbol": symbol, "range": range_key, "error": str(e)}
+
+
+async def get_atr(symbol: str, period: int = ATR_PERIOD) -> dict:
+    """Average True Range and the current price — the basis for a volatility stop.
+
+    The panel that consumes this does its sizing arithmetic in the browser; all
+    it needs from here is a real measure of the stock's daily range and the
+    price to hang it off. ATR is reported in current-price dollars so a stop set
+    at `k x atr` below the live entry is directly meaningful: `atr_pct` is taken
+    from the adjusted series (robust across a split in the window), then scaled
+    to the live price. No series leaves this function — nothing to widen the
+    chat agent's grounding set, the same reason the trend series stays out.
+    """
+    symbol = symbol.upper()
+
+    async def fetch() -> dict:
+        _closes, rows, today = await _adjusted_series(symbol)
+        if not rows:
+            return {"symbol": symbol, "period": period, "error": "no price history"}
+
+        def _calc() -> dict:
+            import ta
+
+            frame = pd.DataFrame(
+                {
+                    "high": [r.high for r in rows],
+                    "low": [r.low for r in rows],
+                    "close": [r.close for r in rows],
+                }
+            ).dropna()
+            if len(frame) < period + 1:
+                return {"symbol": symbol, "period": period, "error": "not enough price history"}
+
+            atr_series = ta.volatility.AverageTrueRange(
+                high=frame["high"], low=frame["low"], close=frame["close"], window=period
+            ).average_true_range()
+            atr = atr_series.iloc[-1]
+            last_close = frame["close"].iloc[-1]
+            if atr is None or pd.isna(atr) or not last_close:
+                return {"symbol": symbol, "period": period, "error": "ATR unavailable"}
+
+            atr_pct = float(atr) / float(last_close)
+            price = float(today) if today is not None else float(last_close)
+            return {
+                "symbol": symbol,
+                "period": period,
+                "price": round(price, 2),
+                # In live-price dollars: atr_pct is scale-free, the price is today's.
+                "atr": round(atr_pct * price, 2),
+                "atr_pct": round(atr_pct, 4),
+                "as_of": datetime.now(timezone.utc).isoformat(),
+            }
+
+        return await asyncio.to_thread(_calc)
+
+    try:
+        return await cached_async(
+            f"atr:{symbol}:{period}",
+            ATR_TTL,
+            fetch,
+            should_cache=lambda r: "error" not in r,
+        )
+    except Exception as e:
+        log.error("atr_fetch_failed", symbol=symbol, error=str(e))
+        return {"symbol": symbol, "period": period, "error": str(e)}
 
 
 async def explain_technicals(symbol: str) -> dict:

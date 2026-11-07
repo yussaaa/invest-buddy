@@ -11,7 +11,7 @@ import { readJSON, writeJSON } from '@/lib/utils'
 
 export const SECTION_PREFS_KEY = 'agent-invest.charting.sections'
 
-export type SectionId = 'technicals' | 'trend' | 'valuation' | 'options'
+export type SectionId = 'technicals' | 'trend' | 'valuation' | 'sizing' | 'options'
 
 export type SectionPrefs = Record<SectionId, boolean>
 
@@ -31,6 +31,7 @@ export const DEFAULT_SECTIONS: SectionPrefs = {
   technicals: true,
   trend: true,
   valuation: true,
+  sizing: true,
   options: true,
 }
 

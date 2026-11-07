@@ -66,6 +66,15 @@ async def explain_technicals(symbol: str = Query(..., description="Ticker, e.g. 
     return await technicals.explain_technicals(symbol)
 
 
+@router.get("/atr")
+async def get_atr(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    period: int = Query(14, ge=2, le=100, description="ATR lookback in sessions"),
+) -> dict:
+    """Current price and Average True Range — the basis for a volatility stop."""
+    return await technicals.get_atr(symbol, period)
+
+
 @router.get("/valuation")
 async def get_valuation(
     symbol: str = Query(..., description="Ticker, e.g. AAPL"),
