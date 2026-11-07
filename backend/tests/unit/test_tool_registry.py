@@ -104,6 +104,8 @@ async def test_compute_macd_shape():
     assert {"macd", "signal", "histogram", "trend"} <= result.keys()
     assert result["trend"] in ("bullish", "bearish")
     assert not (result["bullish_crossover"] and result["bearish_crossover"])
+    assert len(result["history"]) == 20
+    assert result["history"][-1] == pytest.approx(result["histogram"])
 
 
 async def test_compute_bollinger_bands_are_ordered():

@@ -124,7 +124,10 @@ async def prepare_context_node(state: ChatState) -> dict:
             log.error("chat_signals_failed", ticker=ticker, error=str(exc))
 
     return {
-        "technicals": technicals,
+        # Readings only. This is both what the model is shown and what its
+        # figures are grounded against, so a series here would loosen the
+        # check; derive_signals above has already had the full payload.
+        "technicals": technicals_service.without_series(technicals),
         "quote": quotes[0] if quotes else None,
         "profile": profile,
         "signal_set": signal_set,

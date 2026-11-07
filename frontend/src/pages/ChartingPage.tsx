@@ -375,6 +375,7 @@ export default function ChartingPage() {
           ) : (
             <PriceChart
               candles={candles}
+              maLead={history?.ma_lead}
               chartType={chartType}
               maPeriods={maPeriods}
               height={520}

@@ -30,6 +30,30 @@ from app.tools.calculation.technical_indicators import (
 
 log = structlog.get_logger(__name__)
 
+# Per-indicator keys holding a recent series rather than a reading. The panel
+# draws them; nothing that quotes numbers should see them. See without_series.
+SERIES_KEYS: dict[str, tuple[str, ...]] = {
+    "rsi": ("historical",),
+    "macd": ("history",),
+}
+
+
+def without_series(technicals: dict) -> dict:
+    """The technicals payload with every per-indicator series removed.
+
+    The chat agent's numeric grounding accepts any figure found in what it was
+    shown. Twenty recent MACD histogram values — small numbers either side of
+    zero — would ground almost any small figure it invented, which is the same
+    reason the trend series never enters this payload. The chart panel keeps
+    them; the agent gets the readings.
+    """
+    out = dict(technicals)
+    for indicator, keys in SERIES_KEYS.items():
+        reading = out.get(indicator)
+        if isinstance(reading, dict):
+            out[indicator] = {k: v for k, v in reading.items() if k not in keys}
+    return out
+
 TECHNICALS_TTL = 120.0
 # The trend charts are two years wide; the last bar moves, the shape does not.
 TREND_TTL = 300.0

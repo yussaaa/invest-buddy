@@ -220,3 +220,68 @@ def _async(fn):
 
 def _explode(*a, **k):
     raise AssertionError("the provider should not have been called")
+
+
+# ── moving-average lead ─────────────────────────────────────────────────────
+
+
+async def test_history_returns_closes_before_the_range_as_ma_lead(monkeypatch):
+    # 400 sessions: ~150 inside a 6M range, the rest before it.
+    days = _sessions(TODAY - timedelta(days=1), 400)
+    bars = _bars(days)
+    requested = {}
+
+    async def stored(symbol, start, *a, **k):
+        requested["start"] = start
+        return [b for b in bars if b.bar_date >= start]
+
+    monkeypatch.setattr(bar_store, "daily_bars_for", stored)
+    monkeypatch.setattr(md, "_download", lambda *a, **k: _frame([], []))
+
+    out = await md.get_history("AAPL", "6M")
+
+    range_start = md._range_start("6M", TODAY)
+    assert requested["start"] == range_start - timedelta(days=md._MA_LEAD_DAYS["1d"])
+    # Candles are exactly the range, as before.
+    assert date.fromisoformat(out["candles"][0]["time"]) >= range_start
+    assert out["candles"][0]["close"] == next(b.close for b in bars if b.bar_date >= range_start)
+    # The lead is the closes just before it, capped, oldest first.
+    lead = out["ma_lead"]
+    assert len(lead) == md.MA_LEAD_BARS
+    before = [b.close for b in bars if b.bar_date < range_start]
+    assert lead == before[-md.MA_LEAD_BARS:]
+
+
+async def test_weekly_lead_does_not_absorb_into_the_first_candle(monkeypatch):
+    # ~9.2 years: the 5Y range plus a 199-week lead is ~8.9.
+    days = _sessions(TODAY - timedelta(days=1), 2_400)
+    bars = _bars(days)
+    monkeypatch.setattr(
+        bar_store, "daily_bars_for",
+        _async(lambda symbol, start, *a, **k: [b for b in bars if b.bar_date >= start]),
+    )
+    monkeypatch.setattr(md, "_download", lambda *a, **k: _frame([], []))
+
+    out = await md.get_history("AAPL", "5Y")
+    range_start = md._range_start("5Y", TODAY)
+
+    first_close_in_range = next(b for b in bars if b.bar_date >= range_start)
+    # The first weekly candle opens on the range's first session, not earlier.
+    assert out["candles"][0]["open"] == first_close_in_range.open
+    assert len(out["ma_lead"]) == md.MA_LEAD_BARS
+
+
+async def test_max_range_has_no_lead(monkeypatch):
+    bars = _bars(_sessions(TODAY - timedelta(days=1), 30))
+    seen = {}
+
+    async def stored(symbol, start, *a, **k):
+        seen["start"] = start
+        return bars
+
+    monkeypatch.setattr(bar_store, "daily_bars_for", stored)
+    monkeypatch.setattr(md, "_download", lambda *a, **k: _frame([], []))
+
+    out = await md.get_history("AAPL", "MAX")
+    assert seen["start"] == md._range_start("MAX", TODAY)
+    assert out["ma_lead"] == []

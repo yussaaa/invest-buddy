@@ -108,9 +108,10 @@ async def compute_macd(ticker: str, closes: Optional[pd.Series] = None) -> dict:
         macd_ind = ta.trend.MACD(close=close)
         macd_val = _safe(macd_ind.macd().iloc[-1])
         signal_val = _safe(macd_ind.macd_signal().iloc[-1])
-        hist_val = _safe(macd_ind.macd_diff().iloc[-1])
+        hist_series = macd_ind.macd_diff()
+        hist_val = _safe(hist_series.iloc[-1])
 
-        prev_hist = _safe(macd_ind.macd_diff().iloc[-2])
+        prev_hist = _safe(hist_series.iloc[-2])
         bullish_cross = (prev_hist is not None and hist_val is not None
                          and prev_hist < 0 and hist_val > 0)
         bearish_cross = (prev_hist is not None and hist_val is not None
@@ -121,6 +122,9 @@ async def compute_macd(ticker: str, closes: Optional[pd.Series] = None) -> dict:
             "macd": macd_val,
             "signal": signal_val,
             "histogram": hist_val,
+            # Last 20 sessions, oldest first — the same window as RSI's
+            # `historical`. For the chart panel; see technicals.without_series.
+            "history": [_safe(v) for v in hist_series.dropna().tail(20).tolist()],
             "bullish_crossover": bullish_cross,
             "bearish_crossover": bearish_cross,
             "trend": "bullish" if (hist_val or 0) > 0 else "bearish",

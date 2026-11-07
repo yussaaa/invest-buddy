@@ -44,6 +44,11 @@ export const MA_FALLBACK_COLOR = '#94a3b8'
 
 interface PriceChartProps {
   candles: Candle[]
+  /**
+   * Closes before the first candle, oldest first — warm-up for the moving
+   * averages, never drawn. Without it an N-period line starts N bars in.
+   */
+  maLead?: number[]
   chartType: ChartType
   maPeriods?: number[]
   height?: number
@@ -55,21 +60,33 @@ interface PriceChartProps {
   viewKey?: string
 }
 
-function sma(candles: Candle[], period: number) {
+/**
+ * Simple moving average over `lead` then `candles`, emitted only on candles.
+ * The lead seeds the window, so with enough of it the line starts at the
+ * chart's left edge instead of `period` bars in.
+ */
+export function sma(candles: Candle[], period: number, lead: number[] = []) {
+  const closes = [...lead, ...candles.map(c => c.close)]
   const out: { time: Time; value: number }[] = []
   let sum = 0
-  for (let i = 0; i < candles.length; i++) {
-    sum += candles[i].close
-    if (i >= period) sum -= candles[i - period].close
-    if (i >= period - 1) {
-      out.push({ time: candles[i].time as Time, value: sum / period })
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    if (i >= period) sum -= closes[i - period]
+    const c = i - lead.length
+    if (c >= 0 && i >= period - 1) {
+      out.push({ time: candles[c].time as Time, value: sum / period })
     }
   }
   return out
 }
 
+// One shared empty lead: a fresh `[]` default would be a new dependency on
+// every render, and hovering re-renders on every mouse move.
+const NO_LEAD: number[] = []
+
 export default function PriceChart({
   candles,
+  maLead = NO_LEAD,
   chartType,
   maPeriods = [],
   height = 460,
@@ -225,7 +242,7 @@ export default function PriceChart({
     }
 
     for (const period of maPeriods) {
-      if (candles.length < period) continue
+      if (maLead.length + candles.length < period) continue
       let series = maRefs.current.get(period)
       if (!series) {
         series = chart.addSeries(LineSeries, {
@@ -236,9 +253,9 @@ export default function PriceChart({
         })
         maRefs.current.set(period, series)
       }
-      series.setData(sma(candles, period))
+      series.setData(sma(candles, period, maLead))
     }
-  }, [candles, maPeriods, chartType])
+  }, [candles, maLead, maPeriods, chartType])
 
   return <div ref={containerRef} style={{ height }} className="w-full" />
 }

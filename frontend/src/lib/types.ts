@@ -158,6 +158,9 @@ export interface History {
   interval: string
   intraday: boolean
   candles: Candle[]
+  /** Up to 199 closes before the first candle, oldest first, in the same
+   *  interval — moving-average warm-up only. Absent on intraday ranges. */
+  ma_lead?: number[]
   period_change?: number
   period_change_percent?: number
   error?: string
@@ -196,6 +199,9 @@ export interface MacdReading {
   macd?: number
   signal?: number
   histogram?: number
+  /** Last 20 histogram values, oldest first. For the panel only — the chat
+   *  agent never sees it (technicals.without_series). */
+  history?: (number | null)[]
   bullish_crossover?: boolean
   bearish_crossover?: boolean
   trend?: 'bullish' | 'bearish'
