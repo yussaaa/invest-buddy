@@ -493,3 +493,10 @@ def test_every_release_links_to_its_publisher_over_https():
 
     [cpi] = _major_releases([{"release_name": "Consumer Price Index", "date": "2026-11-10"}])
     assert cpi["publisher"] == "BLS" and "bls.gov" in cpi["url"]
+
+
+def test_every_breadth_index_names_the_index_to_chart():
+    from app.services.market_data import BREADTH_INDICES, INDEX_SOURCES
+
+    assert all(INDEX_SOURCES[key]["symbol"].startswith("^") for key in BREADTH_INDICES)
+    assert all("symbol" in source for source in INDEX_SOURCES.values())

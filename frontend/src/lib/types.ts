@@ -492,6 +492,8 @@ export interface MarketOverview {
 export interface IndexBreadth {
   index: string
   label: string
+  /** The index itself — "^GSPC" — for its chart. */
+  symbol?: string | null
   advancing?: number
   declining?: number
   unchanged?: number

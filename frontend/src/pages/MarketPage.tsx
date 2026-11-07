@@ -299,7 +299,7 @@ function mergeOverview(prev: MarketOverview | null, next: MarketOverview): Marke
  * Advance/decline for one index: a stacked up/flat/down bar with the split
  * spelled out, so "index is green but most of its stocks are red" is visible.
  */
-function BreadthCard({ row }: { row: IndexBreadth }) {
+function BreadthCard({ row, onSelect }: { row: IndexBreadth; onSelect: (symbol: string) => void }) {
   const up = row.advancing_percent ?? 0
   const down = row.declining_percent ?? 0
   const flat = row.unchanged_percent ?? 0
@@ -309,7 +309,16 @@ function BreadthCard({ row }: { row: IndexBreadth }) {
     <Card>
       <CardContent className="flex flex-col gap-2.5 py-4">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="text-[13px] font-semibold text-foreground">{row.label}</p>
+          {row.symbol ? (
+            <ChartLink
+              row={{ symbol: row.symbol, label: row.label }}
+              what="index"
+              onSelect={onSelect}
+              labelClassName="text-[13px] font-semibold"
+            />
+          ) : (
+            <p className="text-[13px] font-semibold text-foreground">{row.label}</p>
+          )}
           <span className="text-[10px] text-muted-foreground/60">
             {hasData ? `${row.counted} stocks` : '—'}
           </span>
@@ -872,12 +881,53 @@ function WeekPicker({
   )
 }
 
-function PerformanceBar({ row }: { row: MarketRow }) {
+/**
+ * A row's name that opens the instrument behind it on the charting page, with
+ * the ticker beside it so it is clear what "Technology" or "Gold" actually
+ * prices — the sector's SPDR ETF, the front-month future.
+ */
+function ChartLink({
+  row,
+  what,
+  onSelect,
+  className,
+  labelClassName = 'text-xs',
+}: {
+  row: { symbol: string; label: string }
+  /** Completes the tooltip: "Chart XLK — Technology sector ETF". */
+  what?: string
+  onSelect: (symbol: string) => void
+  className?: string
+  labelClassName?: string
+}) {
+  return (
+    <button
+      onClick={() => onSelect(row.symbol)}
+      title={`Chart ${row.symbol} — ${row.label}${what ? ` ${what}` : ''}`}
+      className={cn('group flex min-w-0 items-baseline gap-1.5 text-left', className)}
+    >
+      <span
+        className={cn(
+          'truncate text-foreground underline-offset-2 group-hover:text-primary group-hover:underline',
+          labelClassName
+        )}
+      >
+        {row.label}
+      </span>
+      <span className="shrink-0 font-mono text-[9px] text-muted-foreground/50 group-hover:text-primary/70">
+        {row.symbol}
+      </span>
+    </button>
+  )
+}
+
+/** One sector's move today as a bar either side of zero. */
+function PerformanceBar({ row, onSelect }: { row: MarketRow; onSelect: (symbol: string) => void }) {
   const v = row.change_percent ?? 0
   const width = Math.min(100, Math.abs(v) * 25)  // ±4% fills the half-bar
   return (
     <div className="flex items-center gap-3">
-      <span className="w-32 shrink-0 truncate text-xs text-foreground">{row.label}</span>
+      <ChartLink row={row} what="sector ETF" onSelect={onSelect} className="w-40 shrink-0" />
       <div className="relative h-4 flex-1 rounded bg-muted/40">
         <div className="absolute left-1/2 top-0 h-full w-px bg-border" />
         <div
@@ -896,6 +946,8 @@ function PerformanceBar({ row }: { row: MarketRow }) {
 
 export default function MarketPage() {
   const navigate = useNavigate()
+  // Encoded: the macro rows are "^TNX", "GC=F", "DX-Y.NYB".
+  const openChart = (symbol: string) => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)
 
   const [initialPrefs] = useState(readMarketPrefs)
   const [index, setIndex] = useState(initialPrefs.index)
@@ -1001,7 +1053,7 @@ export default function MarketPage() {
             <IndexCard
               key={row.symbol}
               row={row}
-              onClick={() => navigate(`/charting?ticker=${encodeURIComponent(row.symbol)}`)}
+              onClick={() => openChart(row.symbol)}
             />
           ))}
         </div>
@@ -1026,7 +1078,7 @@ export default function MarketPage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {(indexBreadth?.indices ?? []).map(row => (
-              <BreadthCard key={row.index} row={row} />
+              <BreadthCard key={row.index} row={row} onSelect={openChart} />
             ))}
           </div>
         )}
@@ -1060,14 +1112,14 @@ export default function MarketPage() {
             rows={tierMovers?.gainers ?? []}
             loading={moversRes.isLoading}
             gaining
-            onSelect={symbol => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)}
+            onSelect={openChart}
           />
           <MoversCard
             title="Top 10 losers"
             rows={tierMovers?.losers ?? []}
             loading={moversRes.isLoading}
             gaining={false}
-            onSelect={symbol => navigate(`/charting?ticker=${encodeURIComponent(symbol)}`)}
+            onSelect={openChart}
           />
         </div>
       </div>
@@ -1147,7 +1199,7 @@ export default function MarketPage() {
             <Separator />
             <div className="flex flex-col gap-2">
               {(overview?.sectors ?? []).map(row => (
-                <PerformanceBar key={row.symbol} row={row} />
+                <PerformanceBar key={row.symbol} row={row} onSelect={openChart} />
               ))}
             </div>
           </CardContent>
@@ -1166,8 +1218,8 @@ export default function MarketPage() {
                   key={row.symbol}
                   className="flex items-center justify-between gap-2 border-b border-border/40 py-2 last:border-b-0"
                 >
-                  <span className="text-xs text-foreground">{row.label}</span>
-                  <div className="flex items-center gap-3">
+                  <ChartLink row={row} onSelect={openChart} />
+                  <div className="flex shrink-0 items-center gap-3">
                     <Sparkline
                       values={row.sparkline ?? []}
                       positive={(row.change_percent ?? 0) > 0}
@@ -1228,7 +1280,7 @@ export default function MarketPage() {
                   earnings={earnings}
                   startIso={events?.week_start ?? isoDay(new Date())}
                   todayIso={events?.today ?? isoDay(new Date())}
-                  onSelect={symbol => navigate(`/charting?ticker=${symbol}`)}
+                  onSelect={openChart}
                 />
               )}
             </CardContent>
