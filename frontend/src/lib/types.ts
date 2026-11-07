@@ -725,6 +725,8 @@ export interface MarketEvents {
   /** Today in US market time — the browser clock can be a day off. */
   today?: string
   is_current_week?: boolean
+  /** Week view only: the cap tier the earnings and season are filtered to. */
+  cap?: CapTier
   earnings: EarningsEvent[]
   /** Progress through the reporting season the week falls in; null if the
    *  calendar could not be read. */

@@ -50,12 +50,51 @@ const INDEX_OPTIONS = [
 
 // Cap tiers mirror CAP_TIERS in services/market_data.py — the bounds live
 // server-side, these are only the labels and the order they appear in.
-const CAP_TIERS: { value: CapTier; label: string; hint: string }[] = [
-  { value: 'all', label: 'All caps', hint: 'Every US listing above $300M' },
-  { value: 'large', label: 'Large cap', hint: 'Above $10B' },
-  { value: 'mid', label: 'Mid cap', hint: '$2B – $10B' },
-  { value: 'small', label: 'Small cap', hint: '$300M – $2B' },
+// Shared by the movers screen and the earnings calendar, so "large cap" means
+// one thing on the page.
+const CAP_TIERS: { value: CapTier; label: string; short: string; noun: string; hint: string }[] = [
+  { value: 'all', label: 'All caps', short: 'All', noun: 'companies', hint: 'Every US listing above $300M' },
+  { value: 'large', label: 'Large cap', short: 'Large', noun: 'large caps', hint: 'Above $10B' },
+  { value: 'mid', label: 'Mid cap', short: 'Mid', noun: 'mid caps', hint: '$2B – $10B' },
+  { value: 'small', label: 'Small cap', short: 'Small', noun: 'small caps', hint: '$300M – $2B' },
 ]
+
+/** Segmented cap-tier picker; `compact` for a card header, full for a section. */
+function CapTierToggle({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: CapTier
+  onChange: (tier: CapTier) => void
+  compact?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex items-center rounded-lg border border-border bg-card',
+        compact ? 'gap-0.5 p-0.5' : 'gap-1 p-1'
+      )}
+    >
+      {CAP_TIERS.map(tier => (
+        <button
+          key={tier.value}
+          onClick={() => onChange(tier.value)}
+          title={tier.hint}
+          className={cn(
+            'rounded font-medium transition-colors',
+            compact ? 'h-6 px-2 text-[11px]' : 'h-7 px-2.5 text-xs',
+            value === tier.value
+              ? 'bg-primary/20 text-primary'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          )}
+        >
+          {compact ? tier.short : tier.label}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 const HEATMAP_RANGES = [
   { value: 'change', label: '1D' },
@@ -84,12 +123,15 @@ const MARKET_SESSION_KEY = 'agent-invest-market-session'
 
 interface MarketPrefs {
   capTier: CapTier
+  /** The earnings calendar's own tier — large by default, unlike the movers. */
+  earningsCap: CapTier
   index: string
   blockColor: string
 }
 
 const DEFAULT_MARKET_PREFS: MarketPrefs = {
   capTier: 'all',
+  earningsCap: 'large',
   index: 'SPX500',
   blockColor: 'change',
 }
@@ -100,6 +142,9 @@ function readMarketPrefs(): MarketPrefs {
     capTier: CAP_TIERS.some(t => t.value === stored.capTier)
       ? (stored.capTier as CapTier)
       : DEFAULT_MARKET_PREFS.capTier,
+    earningsCap: CAP_TIERS.some(t => t.value === stored.earningsCap)
+      ? (stored.earningsCap as CapTier)
+      : DEFAULT_MARKET_PREFS.earningsCap,
     index: INDEX_OPTIONS.some(o => o.value === stored.index)
       ? (stored.index as string)
       : DEFAULT_MARKET_PREFS.index,
@@ -647,22 +692,24 @@ function EarningsWeek({
 
 /**
  * How far through the reporting season the market is: "Q3 2026 season ·
- * 703 / 863 reported". The total is every US-listed $10B+ company reporting
- * in the quarter the viewed week falls in, so it follows the week picker.
+ * 703 / 863 large caps reported". The total is every US-listed company in
+ * the chosen cap tier reporting in the quarter the viewed week falls in, so it
+ * follows both the week picker and the tier.
  */
-function SeasonProgress({ season }: { season: EarningsSeason }) {
+function SeasonProgress({ season, cap }: { season: EarningsSeason; cap: CapTier }) {
   const { label, total, reported } = season
+  const tier = CAP_TIERS.find(t => t.value === cap) ?? CAP_TIERS[1]
   const window = [season.start, season.end]
     .map(d => new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
     .join(' – ')
 
   return (
     <span
-      title={`${reported} of ${total} US-listed $10B+ companies reporting ${window} are in`}
+      title={`${reported} of ${total} US-listed companies (${tier.hint}) reporting ${window} are in`}
       className="flex items-center gap-1.5 text-[11px] font-normal text-muted-foreground"
     >
       <span className="tabular-nums">
-        {label} season · <span className="text-foreground">{reported}</span> / {total} large caps reported
+        {label} season · <span className="text-foreground">{reported}</span> / {total} {tier.noun} reported
       </span>
       <span className="h-1 w-14 overflow-hidden rounded-full bg-muted">
         <span
@@ -766,11 +813,12 @@ export default function MarketPage() {
   const [index, setIndex] = useState(initialPrefs.index)
   const [blockColor, setBlockColor] = useState(initialPrefs.blockColor)
   const [capTier, setCapTier] = useState<CapTier>(initialPrefs.capTier)
+  const [earningsCap, setEarningsCap] = useState<CapTier>(initialPrefs.earningsCap)
   const [weekOffset, setWeekOffset] = useState(readWeekOffset)
 
   useEffect(() => {
-    writeJSON(MARKET_PREFS_KEY, { capTier, index, blockColor })
-  }, [capTier, index, blockColor])
+    writeJSON(MARKET_PREFS_KEY, { capTier, earningsCap, index, blockColor })
+  }, [capTier, earningsCap, index, blockColor])
 
   useEffect(() => {
     writeJSON(MARKET_SESSION_KEY, { weekOffset }, sessionStorage)
@@ -816,8 +864,8 @@ export default function MarketPage() {
   )
 
   const eventsRes = useCachedResource(
-    K.weekEvents(weekOffset),
-    () => api.market.weekEvents(weekOffset),
+    K.weekEvents(weekOffset, earningsCap),
+    () => api.market.weekEvents(weekOffset, earningsCap),
     { ttl: TTL.weekEvents },
   )
   const events = eventsRes.data ?? null
@@ -908,23 +956,7 @@ export default function MarketPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-            {CAP_TIERS.map(tier => (
-              <button
-                key={tier.value}
-                onClick={() => setCapTier(tier.value)}
-                title={tier.hint}
-                className={cn(
-                  'h-7 rounded px-2.5 text-xs font-medium transition-colors',
-                  capTier === tier.value
-                    ? 'bg-primary/20 text-primary'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                )}
-              >
-                {tier.label}
-              </button>
-            ))}
-          </div>
+          <CapTierToggle value={capTier} onChange={setCapTier} />
         </div>
 
         {tierMovers?.error && (
@@ -1087,24 +1119,21 @@ export default function MarketPage() {
           {/* Earnings — laid out as a working-week calendar */}
           <Card>
             <CardContent className="flex flex-col gap-3 py-4">
-              <h3 className="flex items-baseline justify-between gap-2 text-sm font-semibold text-foreground">
-                <span>
-                  Earnings <span className="text-muted-foreground/60">({earnings.length})</span>
-                </span>
-                {events?.season ? (
-                  <SeasonProgress season={events.season} />
-                ) : (
-                  <span className="text-[10px] font-normal text-muted-foreground/60">
-                    US-listed, $10B+ market cap
-                  </span>
-                )}
-              </h3>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Earnings <span className="text-muted-foreground/60">({earnings.length})</span>
+                  </h3>
+                  {events?.season && <SeasonProgress season={events.season} cap={earningsCap} />}
+                </div>
+                <CapTierToggle value={earningsCap} onChange={setEarningsCap} compact />
+              </div>
               <Separator />
 
               {eventsRes.isLoading ? (
                 <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" />
-                  Scanning large caps…
+                  Loading {CAP_TIERS.find(t => t.value === earningsCap)?.noun ?? 'earnings'}…
                 </div>
               ) : (
                 <EarningsWeek

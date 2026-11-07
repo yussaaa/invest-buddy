@@ -1248,9 +1248,11 @@ async def get_events(days: int = 7, extra_symbols: list[str] | None = None) -> d
 # used to scan a fixed list of 40 mega-caps one ticker at a time, which cost ~36s
 # cold and, once those 40 had reported, left a day of peak season showing two
 # names while a hundred large caps reported around them.
-EARNINGS_MIN_MARKET_CAP = 10e9      # large caps: "the reports that move things"
+# The cap tier is the movers screen's (`CAP_TIERS`), so "large cap" means the
+# same thing in both panels. Large is the default: the reports that move things.
+EARNINGS_DEFAULT_CAP = "large"
 EARNINGS_PAGE = 100                 # Yahoo's cap on one page
-EARNINGS_MAX_PAGES = 12             # a whole season is ~860 rows above $10B
+EARNINGS_MAX_PAGES = 40             # an all-caps season is ~3,100 rows
 EARNINGS_WEEK_TTL = 3600.0          # a week still in play fills in reported EPS
 EARNINGS_PAST_WEEK_TTL = 86400.0    # a finished week only changes by revision
 MAX_WEEK_OFFSET = 26
@@ -1272,8 +1274,13 @@ def _iso_week_bounds(offset: int) -> tuple[date, date]:
     return monday, monday + timedelta(days=6)
 
 
-def _earnings_query(start: date, end: date, symbols: list[str] | None = None):
-    """The calendar filter: US earnings events in a window, by cap or by name.
+def _earnings_query(
+    start: date,
+    end: date,
+    symbols: list[str] | None = None,
+    cap: str = EARNINGS_DEFAULT_CAP,
+):
+    """The calendar filter: US earnings events in a window, by cap tier or by name.
 
     The window is padded a day each side because Yahoo filters on the UTC
     timestamp and the caller slices on the New York date; a report at 8pm ET
@@ -1291,7 +1298,10 @@ def _earnings_query(start: date, end: date, symbols: list[str] | None = None):
         # Named tickers come back whatever their size or listing: someone asked.
         operands.append(Q("or", [Q("eq", ["ticker", s]) for s in symbols]))
     else:
-        operands.append(Q("gte", ["intradaymarketcap", EARNINGS_MIN_MARKET_CAP]))
+        tier = CAP_TIERS[cap]
+        operands.append(Q("gte", ["intradaymarketcap", tier["min"]]))
+        if tier["max"] is not None:
+            operands.append(Q("lt", ["intradaymarketcap", tier["max"]]))
         # Primary US listings only (the movers screen's list). Without this the
         # feed carries foreign giants again as OTC lines: MUFG beside MBFJF,
         # Siemens as both SIEGY and SMAWF.
@@ -1358,8 +1368,10 @@ def _earnings_rows(frame: pd.DataFrame, start: date, end: date) -> list[dict]:
     return list(rows.values())
 
 
-def _fetch_earnings_between(start: date, end: date, extra_symbols: list[str]) -> list[dict]:
-    frames = _earnings_pages(_earnings_query(start, end))
+def _fetch_earnings_between(
+    start: date, end: date, extra_symbols: list[str], cap: str = EARNINGS_DEFAULT_CAP
+) -> list[dict]:
+    frames = _earnings_pages(_earnings_query(start, end, cap=cap))
     if extra_symbols:
         frames += _earnings_pages(_earnings_query(start, end, extra_symbols))
     frames = [f for f in frames if not f.empty]
@@ -1404,14 +1416,16 @@ def _season_bounds(day: date) -> tuple[date, date, str]:
     return start, following - timedelta(days=1), f"Q{results_q} {results_year}"
 
 
-def _season_summary(start: date, end: date, label: str, today: date) -> dict:
-    """How many of the season's large-cap reporters are in.
+def _season_summary(
+    start: date, end: date, label: str, today: date, cap: str = EARNINGS_DEFAULT_CAP
+) -> dict:
+    """How many of the season's reporters in one cap tier are in.
 
     Reported means the EPS is in, or the date has passed: Yahoo never fills in
     a handful each season (~8 of ~860), and a finished season should read as
     finished.
     """
-    rows = _fetch_earnings_between(start, end, [])
+    rows = _fetch_earnings_between(start, end, [], cap)
     reported = sum(
         1 for r in rows if r["reported_eps"] is not None or r["date"] < today.isoformat()
     )
@@ -1424,9 +1438,9 @@ def _season_summary(start: date, end: date, label: str, today: date) -> dict:
     }
 
 
-def _earnings_week_key(start: date, extra_symbols: list[str]) -> str:
+def _earnings_week_key(start: date, extra_symbols: list[str], cap: str = EARNINGS_DEFAULT_CAP) -> str:
     """Shared by the endpoint and the warm-up job, so the two cannot drift."""
-    return f"earnings-week:{start.isoformat()}:{','.join(extra_symbols)}"
+    return f"earnings-week:{cap}:{start.isoformat()}:{','.join(extra_symbols)}"
 
 
 def _earnings_week_ttl(end: date, today: date) -> float:
@@ -1437,9 +1451,9 @@ async def refresh_earnings_calendar(ahead: float = 0.85) -> bool:
     """Re-fetch this week's calendar once it is `ahead` of the way to expiry.
 
     The fetch is now a second or less, so this is no longer what stands between
-    a visitor and a 36s wait — but the current week is what every visitor opens
-    on, and keeping it warm means Yahoo being slow is never their problem.
-    Returns True if it fetched.
+    a visitor and a 36s wait — but the current week at the default tier is what
+    every visitor opens on, and keeping it warm means Yahoo being slow is never
+    their problem. Returns True if it fetched.
     """
     from app.services import cache
 
@@ -1457,13 +1471,20 @@ async def refresh_earnings_calendar(ahead: float = 0.85) -> bool:
     return bool(rows)
 
 
-async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None = None) -> dict:
+async def get_week_events(
+    week_offset: int = 0,
+    extra_symbols: list[str] | None = None,
+    cap: str = EARNINGS_DEFAULT_CAP,
+) -> dict:
     """Earnings and economic releases for one calendar week.
 
     `week_offset` is relative to the current week — 0 is this one, -1 last
     week, +1 next. Past weeks carry reported EPS and the surprise against
-    estimate; future weeks carry the estimate alone.
+    estimate; future weeks carry the estimate alone. `cap` is a `CAP_TIERS`
+    key and filters the earnings and the season progress alike.
     """
+    if cap not in CAP_TIERS:
+        cap = EARNINGS_DEFAULT_CAP
     week_offset = max(-MAX_WEEK_OFFSET, min(week_offset, MAX_WEEK_OFFSET))
     start, end = _iso_week_bounds(week_offset)
     today = datetime.now(ZoneInfo("America/New_York")).date()
@@ -1476,6 +1497,7 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
         "week_end": end.isoformat(),
         "today": today.isoformat(),
         "is_current_week": start <= today <= end,
+        "cap": cap,
     }
 
     season_start, season_end, season_label = _season_bounds(start)
@@ -1483,9 +1505,9 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
     async def week() -> list[dict]:
         try:
             return await _cached(
-                _earnings_week_key(start, extra),
+                _earnings_week_key(start, extra, cap),
                 _earnings_week_ttl(end, today),
-                lambda: _fetch_earnings_between(start, end, extra),
+                lambda: _fetch_earnings_between(start, end, extra, cap),
                 should_cache=bool,
                 lock=True,
             )
@@ -1496,9 +1518,9 @@ async def get_week_events(week_offset: int = 0, extra_symbols: list[str] | None 
     async def season() -> dict | None:
         try:
             return await _cached(
-                f"earnings-season:{season_start.isoformat()}",
+                f"earnings-season:{cap}:{season_start.isoformat()}",
                 _earnings_week_ttl(season_end, today),
-                lambda: _season_summary(season_start, season_end, season_label, today),
+                lambda: _season_summary(season_start, season_end, season_label, today, cap),
                 should_cache=lambda v: bool(v and v["total"]),
                 lock=True,
             )

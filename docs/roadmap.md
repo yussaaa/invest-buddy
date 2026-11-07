@@ -136,6 +136,8 @@ The three written documents exist. Not done:
       after-close / time TBA, and fold the rest.
       The header shows season progress ("Q3 2026 season · 703 / 863 large
       caps reported"): the same filter over the quarter the week falls in.
+      A cap-tier toggle (All / Large / Mid / Small, the movers' `CAP_TIERS`)
+      filters both; large by default, remembered per browser.
 - [x] ~~`/market/breadth` never served warm~~ — fixed 2026-08-18. `cached`
       stamps a value with the time its fetch *started*, so `BREADTH_TTL = 60`
       against a 120 s+ scan produced values that were **born expired** and could

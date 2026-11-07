@@ -163,7 +163,8 @@ async def get_events(
 async def get_week_events(
     offset: int = Query(0, ge=-26, le=26, description="0 = this week, -1 = last, +1 = next"),
     symbols: str = Query("", description="Extra tickers to include in the earnings scan"),
+    cap: str = Query("large", pattern="^(all|large|mid|small)$", description="Market-cap tier"),
 ) -> dict:
     """Earnings and economic releases for one calendar week (Mon–Sun)."""
     extra = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    return await market_data.get_week_events(offset, extra)
+    return await market_data.get_week_events(offset, extra, cap)

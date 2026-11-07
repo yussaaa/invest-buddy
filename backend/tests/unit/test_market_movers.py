@@ -402,6 +402,28 @@ def test_season_counts_a_past_date_as_reported_even_without_eps(monkeypatch):
         {"symbol": "TODAY", "date": "2026-11-07", "reported_eps": None},     # not out yet
         {"symbol": "LATER", "date": "2026-12-01", "reported_eps": None},
     ]
-    monkeypatch.setattr(md, "_fetch_earnings_between", lambda s, e, x: rows)
+    monkeypatch.setattr(md, "_fetch_earnings_between", lambda s, e, x, cap: rows)
     summary = md._season_summary(date(2026, 10, 1), date(2026, 12, 31), "Q3 2026", date(2026, 11, 7))
     assert (summary["reported"], summary["total"]) == (2, 4)
+
+
+@pytest.mark.parametrize(
+    "cap, floor, ceiling",
+    [("large", 10e9, None), ("mid", 2e9, 10e9), ("small", 300e6, 2e9), ("all", 300e6, None)],
+)
+def test_the_cap_tier_bounds_the_query_like_the_movers_screen(cap, floor, ceiling):
+    from app.services.market_data import _earnings_query
+
+    bounds = {
+        op["operator"]: op["operands"][1]
+        for op in _earnings_query(*WEEK, cap=cap).to_dict()["operands"]
+        if op["operands"][0] == "intradaymarketcap"
+    }
+    assert bounds == ({"GTE": floor} if ceiling is None else {"GTE": floor, "LT": ceiling})
+
+
+def test_each_tier_has_its_own_cache_key():
+    from app.services.market_data import _earnings_week_key
+
+    keys = {_earnings_week_key(WEEK[0], [], cap) for cap in ("all", "large", "mid", "small")}
+    assert len(keys) == 4
