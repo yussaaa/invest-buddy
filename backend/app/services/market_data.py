@@ -129,6 +129,7 @@ RELEASE_PUBLISHERS: dict[str, tuple[str, str]] = {
 INDEX_SOURCES: dict[str, dict] = {
     "sp500": {
         "label": "S&P 500",
+        "symbol": "^GSPC",      # the index itself, for its chart
         "url": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
         "symbol_col": "Symbol",
         "name_col": "Security",
@@ -138,6 +139,7 @@ INDEX_SOURCES: dict[str, dict] = {
         # Wikipedia dropped its components table, so membership comes from
         # Slickcharts and sectors are filled in from the S&P 500 table.
         "label": "Nasdaq 100",
+        "symbol": "^NDX",      # the index itself, for its chart
         "url": "https://www.slickcharts.com/nasdaq100",
         "symbol_col": "Symbol",
         "name_col": "Company",
@@ -145,6 +147,7 @@ INDEX_SOURCES: dict[str, dict] = {
     },
     "dow30": {
         "label": "Dow Jones 30",
+        "symbol": "^DJI",      # the index itself, for its chart
         "url": "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average",
         "symbol_col": "Symbol",
         "name_col": "Company",
@@ -154,6 +157,7 @@ INDEX_SOURCES: dict[str, dict] = {
     # sector for most mid- and small-cap names without a per-symbol lookup.
     "sp400": {
         "label": "S&P MidCap 400",
+        "symbol": "^MID",      # the index itself, for its chart
         "url": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
         "symbol_col": "Symbol",
         "name_col": "Security",
@@ -161,6 +165,7 @@ INDEX_SOURCES: dict[str, dict] = {
     },
     "sp600": {
         "label": "S&P SmallCap 600",
+        "symbol": "^SP600",      # the index itself, for its chart
         "url": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
         "symbol_col": "Symbol",
         "name_col": "Security",
@@ -1070,7 +1075,10 @@ async def get_breadth() -> dict:
         log.error("breadth_fetch_failed", error=str(e))
         return {"indices": [], "error": str(e)}
 
-    return {"indices": rows, "as_of": datetime.now(timezone.utc).isoformat()}
+    # Added on the way out rather than inside the cached rows, so a field added
+    # here reaches clients without waiting out (or forcing) a multi-minute scan.
+    indices = [{**row, "symbol": INDEX_SOURCES.get(row["index"], {}).get("symbol")} for row in rows]
+    return {"indices": indices, "as_of": datetime.now(timezone.utc).isoformat()}
 
 
 # ── top gainers / losers ──────────────────────────────────────────────────────
