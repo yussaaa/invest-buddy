@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.services import market_data, options, technicals, valuation, valuation_explain
+from app.services import (
+    market_data,
+    options,
+    relative,
+    technicals,
+    valuation,
+    valuation_explain,
+)
 
 router = APIRouter()
 
@@ -58,6 +65,16 @@ async def get_trend(
 ) -> dict:
     """Price vs its 200-day average: SMA slopes, the ±1.5σ band and the z-score."""
     return await technicals.get_trend(symbol, range)
+
+
+@router.get("/relative")
+async def get_relative(
+    symbol: str = Query(..., description="Ticker, e.g. AAPL"),
+    compare: str = Query("", description="Extra benchmark tickers, comma-separated (e.g. GLD,USO)"),
+) -> dict:
+    """Relative strength vs SPY, sector and any extra tickers (1M/3M/6M), plus relative volume."""
+    extra = [s for s in compare.split(",") if s.strip()]
+    return await relative.get_relative(symbol, extra)
 
 
 @router.get("/technicals/explain")

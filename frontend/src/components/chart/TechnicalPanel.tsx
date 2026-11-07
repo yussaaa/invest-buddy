@@ -6,13 +6,13 @@
  * call per symbol, and most of the time the numbers speak for themselves.
  */
 
-import { useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { AlertCircle, Loader2, Sparkles } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import { cn, readJSON, writeJSON } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { cached, put } from '@/lib/clientCache'
 import { K, TTL } from '@/lib/cacheKeys'
@@ -47,6 +47,41 @@ function macdDigits(v?: number | null): number {
 function tone(v?: number | null) {
   if (v == null || v === 0) return 'text-muted-foreground'
   return v > 0 ? 'text-emerald-400' : 'text-rose-400'
+}
+
+/** A decimal rate as a signed percentage: 0.052 → "+5.2%". */
+function pctSigned(v?: number | null, digits = 1): string {
+  if (v == null) return '—'
+  return `${v > 0 ? '+' : ''}${(v * 100).toFixed(digits)}%`
+}
+
+/** Share volume, abbreviated: 1_540_000 → "1.5M". */
+function compactVol(v?: number | null): string {
+  if (v == null) return '—'
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`
+  return String(v)
+}
+
+// One-tap macro proxies for the relative-strength comparison, plus whatever
+// ticker the reader types. The chosen set persists — it's a property of how the
+// reader likes to compare, not of the symbol on screen.
+const RS_PRESETS = [
+  { sym: 'GLD', label: 'Gold' },
+  { sym: 'USO', label: 'Oil' },
+  { sym: 'TLT', label: 'Bonds' },
+  { sym: 'UUP', label: 'Dollar' },
+  { sym: 'IBIT', label: 'Bitcoin' },
+]
+const RS_COMPARE_KEY = 'agent-invest.charting.rs-compare'
+const RS_MAX_COMPARE = 5
+const RS_TICKER = /^[A-Z0-9.\-^=]{1,12}$/
+
+function readCompare(): string[] {
+  const raw = readJSON<unknown>(RS_COMPARE_KEY, [])
+  if (!Array.isArray(raw)) return []
+  return raw.filter((s): s is string => typeof s === 'string').slice(0, RS_MAX_COMPARE)
 }
 
 /** 0–100 track with the oversold/overbought bands marked. */
@@ -342,10 +377,53 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
     }
   }
 
+  // Which extra benchmarks to compare against (gold, oil, …). A preference, so
+  // it persists; keyed into the request so switching it refetches and caches.
+  const [compare, setCompare] = useState<string[]>(readCompare)
+  const [compareDraft, setCompareDraft] = useState('')
+  useEffect(() => {
+    writeJSON(RS_COMPARE_KEY, compare)
+  }, [compare])
+
+  function addCompare(sym: string) {
+    const s = sym.toUpperCase()
+    setCompare(prev => (prev.includes(s) || prev.length >= RS_MAX_COMPARE ? prev : [...prev, s]))
+  }
+  function toggleCompare(sym: string) {
+    const s = sym.toUpperCase()
+    setCompare(prev =>
+      prev.includes(s)
+        ? prev.filter(x => x !== s)
+        : prev.length >= RS_MAX_COMPARE
+          ? prev
+          : [...prev, s]
+    )
+  }
+  function submitDraft() {
+    const s = compareDraft.trim().toUpperCase()
+    setCompareDraft('')
+    if (s && RS_TICKER.test(s)) addCompare(s)
+  }
+
+  // Relative strength + relative volume: its own request (SPY and the sector
+  // ETF are extra bar reads), surfaced as two more cards in the same grid.
+  const relative = useCachedResource(
+    K.relative(symbol, compare),
+    () => api.market.relative(symbol, compare),
+    // Don't cache a failure/empty response — mirror the backend, which only
+    // caches available results, so a transient error clears on the next read.
+    { ttl: TTL.relative, shouldCache: r => r.available === true },
+  ).data
+
   const rsi = data?.rsi
   const macd = data?.macd
   const ladder = data?.moving_averages
   const drawdown = data?.drawdown
+  const rvol = relative?.available ? relative.rvol : null
+  const rsWindows = relative?.available ? (relative.windows ?? []) : []
+  const rsBenchmarks = relative?.available ? (relative.benchmarks ?? []) : []
+  // Custom chips the reader added beyond the presets, for removable display.
+  const customCompare = compare.filter(s => !RS_PRESETS.some(p => p.sym === s))
 
   const rsiValue = rsi?.current_rsi
   const zoneColor =
@@ -377,8 +455,10 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
         </Card>
       ) : (
         // Four across once each card gets ~225px (what the MA ladder's three
-        // columns need), 2×2 below that, one column on a phone — never 3 + 1,
-        // which left one card stranded on a row of its own.
+        // columns need), 2-wide below that, one column on a phone. Six cards
+        // now (RSI, MACD, MAs, drawdown, relative strength, relative volume),
+        // so the wide layout is 4 + 2 — the even column counts keep any row
+        // from stranding a single card on its own.
         <div className="grid gap-3 [@container(min-width:480px)]:grid-cols-2 [@container(min-width:940px)]:grid-cols-4">
           {/* RSI */}
           <Card>
@@ -615,6 +695,152 @@ export default function TechnicalPanel({ symbol }: TechnicalPanelProps) {
                         </span>
                       </div>
                     )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Relative strength — excess return vs SPY and the sector ETF */}
+          <Card>
+            <CardContent className="flex h-full flex-col gap-2.5 py-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] font-semibold text-foreground">Relative strength</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  excess return
+                </span>
+              </div>
+
+              {rsWindows.length === 0 ? (
+                <p className="py-3 text-xs text-muted-foreground/60">
+                  {relative && !relative.available
+                    ? (relative.reason ?? 'No data')
+                    : 'Not enough history.'}
+                </p>
+              ) : (
+                <>
+                  <span className="text-2xl font-bold capitalize text-foreground">
+                    {relative?.trend_label ?? '—'}
+                  </span>
+
+                  {/* Rows = benchmarks, columns = windows, so adding a custom
+                      benchmark grows the card down rather than needing width. */}
+                  <div
+                    className="mt-1 grid items-center gap-x-2 gap-y-1 text-[11px] tabular-nums"
+                    style={{ gridTemplateColumns: `minmax(0,1fr) repeat(${rsWindows.length}, auto)` }}
+                  >
+                    <span className="text-[9px] uppercase tracking-wide text-muted-foreground/50">
+                      vs
+                    </span>
+                    {rsWindows.map(w => (
+                      <span
+                        key={w}
+                        className="text-right text-[9px] uppercase tracking-wide text-muted-foreground/50"
+                      >
+                        {w}
+                      </span>
+                    ))}
+                    {rsBenchmarks.map(b => (
+                      <Fragment key={b.symbol}>
+                        <span className="truncate text-muted-foreground" title={b.symbol}>
+                          {b.label}
+                        </span>
+                        {rsWindows.map(w => (
+                          <span key={w} className={cn('text-right', tone(b.excess[w]))}>
+                            {b.no_data ? '—' : pctSigned(b.excess[w])}
+                          </span>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </div>
+
+                  {/* Compare against custom benchmarks — presets plus a free ticker. */}
+                  <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-border/40 pt-2">
+                    <span className="mr-0.5 text-[9px] uppercase tracking-wide text-muted-foreground/50">
+                      compare
+                    </span>
+                    {RS_PRESETS.map(p => (
+                      <button
+                        key={p.sym}
+                        type="button"
+                        onClick={() => toggleCompare(p.sym)}
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[10px] transition-colors',
+                          compare.includes(p.sym)
+                            ? 'bg-sky-500/20 text-sky-300'
+                            : 'bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                    {customCompare.map(sym => (
+                      <button
+                        key={sym}
+                        type="button"
+                        onClick={() => toggleCompare(sym)}
+                        title="Remove"
+                        className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-300"
+                      >
+                        {sym} ×
+                      </button>
+                    ))}
+                    {compare.length < RS_MAX_COMPARE && (
+                      <input
+                        value={compareDraft}
+                        onChange={e => setCompareDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            submitDraft()
+                          }
+                        }}
+                        onBlur={submitDraft}
+                        placeholder="+ ticker"
+                        className="w-16 rounded bg-muted px-1.5 py-0.5 text-[10px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Relative volume — today's volume against its own 20-day average */}
+          <Card>
+            <CardContent className="flex h-full flex-col gap-2.5 py-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] font-semibold text-foreground">Relative volume</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                  vs {rvol?.window ?? 20}-day avg
+                </span>
+              </div>
+
+              {!rvol ? (
+                <p className="py-3 text-xs text-muted-foreground/60">No volume data.</p>
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold tabular-nums text-foreground">
+                      {fmt(rvol.value, 1)}×
+                    </span>
+                    <Badge variant="secondary" className="text-[10px] capitalize">
+                      {rvol.label}
+                    </Badge>
+                  </div>
+                  <div className="mt-auto flex flex-col gap-1 pt-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Today</span>
+                      <span className="tabular-nums text-foreground">
+                        {compactVol(rvol.today_volume)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Avg ({rvol.window}d)</span>
+                      <span className="tabular-nums text-foreground">
+                        {compactVol(rvol.avg_volume)}
+                      </span>
+                    </div>
                   </div>
                 </>
               )}
