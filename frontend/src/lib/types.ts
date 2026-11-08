@@ -318,6 +318,11 @@ export interface VolatilityContext {
   note: string
 }
 
+export interface SkewPoint {
+  moneyness: number
+  iv: number
+}
+
 export interface OptionExpirySummary {
   expiry: string
   dte: number
@@ -329,6 +334,11 @@ export interface OptionExpirySummary {
   total_call_oi?: number
   total_put_oi?: number
   put_call_oi_ratio?: number | null
+  total_call_volume?: number
+  total_put_volume?: number
+  put_call_volume_ratio?: number | null
+  /** OTM implied-vol by moneyness — the skew/smile for this expiry. */
+  skew?: SkewPoint[]
 }
 
 export interface OptionCandidate {
