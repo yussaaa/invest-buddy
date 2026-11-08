@@ -79,6 +79,7 @@ const CONTRACT: Column[] = [
   {
     key: 'expiry',
     label: 'Expiry',
+    hint: 'Expiration date, with days to expiry (DTE)',
     align: 'left',
     sort: c => c.dte,
     render: c => (
@@ -91,6 +92,7 @@ const CONTRACT: Column[] = [
   {
     key: 'strike',
     label: 'Strike',
+    hint: 'Strike price, with how far it sits from the current price (moneyness)',
     sort: c => c.strike,
     render: c => (
       <span className="whitespace-nowrap">
@@ -168,6 +170,7 @@ const LIQUIDITY: Column = {
 const FLAGS: Column = {
   key: 'flags',
   label: 'Notes',
+  hint: 'Quality flags on the contract — liquidity, moneyness, stale pricing and event warnings',
   render: c => <Flags quality={c.quality} />,
 }
 
@@ -189,7 +192,13 @@ function yieldCol(
 const COLUMNS: Record<OptionStrategyKey, Column[]> = {
   csp: [
     ...CONTRACT,
-    { key: 'credit', label: 'Credit', sort: c => c.mid, render: c => fmt(c.mid) },
+    {
+      key: 'credit',
+      label: 'Credit',
+      hint: 'Premium received per share for writing the option; ×100 is the cash per contract',
+      sort: c => c.mid,
+      render: c => fmt(c.mid),
+    },
     ...GREEKS,
     POP,
     yieldCol(
@@ -217,7 +226,13 @@ const COLUMNS: Record<OptionStrategyKey, Column[]> = {
   ],
   covered_call: [
     ...CONTRACT,
-    { key: 'credit', label: 'Credit', sort: c => c.mid, render: c => fmt(c.mid) },
+    {
+      key: 'credit',
+      label: 'Credit',
+      hint: 'Premium received per share for writing the option; ×100 is the cash per contract',
+      sort: c => c.mid,
+      render: c => fmt(c.mid),
+    },
     ...GREEKS,
     POP,
     yieldCol(
@@ -251,7 +266,13 @@ const COLUMNS: Record<OptionStrategyKey, Column[]> = {
   ],
   leaps_call: [
     ...CONTRACT,
-    { key: 'debit', label: 'Debit', sort: c => c.mid, render: c => fmt(c.mid) },
+    {
+      key: 'debit',
+      label: 'Debit',
+      hint: 'Premium paid per share to buy the call; ×100 is the cost per contract',
+      sort: c => c.mid,
+      render: c => fmt(c.mid),
+    },
     ...GREEKS,
     POP,
     {
@@ -296,7 +317,13 @@ const COLUMNS: Record<OptionStrategyKey, Column[]> = {
         </span>
       ),
     },
-    { key: 'credit', label: 'Credit', sort: c => c.credit ?? 0, render: c => fmt(c.credit) },
+    {
+      key: 'credit',
+      label: 'Credit',
+      hint: 'Net premium received per share: the short-leg premium less the long-leg cost',
+      sort: c => c.credit ?? 0,
+      render: c => fmt(c.credit),
+    },
     {
       key: 'maxloss',
       label: 'Max loss',
@@ -314,6 +341,7 @@ const COLUMNS: Record<OptionStrategyKey, Column[]> = {
     {
       key: 'breakeven',
       label: 'Breakeven',
+      hint: 'The price below which the spread loses: short strike less the credit',
       sort: c => c.breakeven ?? 0,
       render: c => fmt(c.breakeven),
     },
@@ -369,11 +397,22 @@ export default function StrategyTable({ strategy, candidates }: Props) {
               className={cn(
                 HEAD,
                 col.align === 'left' ? 'text-left' : 'text-right',
-                col.sort && 'cursor-pointer select-none hover:text-foreground'
+                col.sort && 'cursor-pointer select-none hover:text-foreground',
+                // A header with a definition is hoverable even when it doesn't sort.
+                col.hint && !col.sort && 'cursor-help'
               )}
             >
               <span className="inline-flex items-center gap-0.5">
-                {col.label}
+                {/* Dotted underline signals "hover for a definition" on every
+                    header that carries one. */}
+                <span
+                  className={cn(
+                    col.hint &&
+                      'underline decoration-dotted decoration-muted-foreground/40 underline-offset-2'
+                  )}
+                >
+                  {col.label}
+                </span>
                 {sortKey === col.key &&
                   (desc ? <ArrowDown size={10} /> : <ArrowUp size={10} />)}
               </span>
@@ -385,7 +424,9 @@ export default function StrategyTable({ strategy, candidates }: Props) {
             className={cn(HEAD, 'cursor-pointer select-none text-right hover:text-foreground')}
           >
             <span className="inline-flex items-center gap-0.5">
-              {scoreLabel}
+              <span className="underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
+                {scoreLabel}
+              </span>
               {sortKey === 'score' && (desc ? <ArrowDown size={10} /> : <ArrowUp size={10} />)}
             </span>
           </TableHead>
