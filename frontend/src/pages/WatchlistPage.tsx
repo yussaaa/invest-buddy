@@ -9,6 +9,7 @@ import {
   AlertCircle,
   X,
   FolderPlus,
+  ChevronDown,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -17,8 +18,10 @@ import { Input } from '@/components/ui/input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
 import { api } from '../lib/api'
 import type { Watchlist } from '../lib/types'
+import PortfolioRiskPanel from '@/components/watchlist/PortfolioRiskPanel'
 
 const USER_ID = 'anonymous'
 
@@ -63,6 +66,7 @@ interface WatchlistCardProps {
 function WatchlistCard({ watchlist, onDelete, onAddTicker, onRemoveTicker, onAnalyze }: WatchlistCardProps) {
   const [adding, setAdding] = useState(false)
   const [newTicker, setNewTicker] = useState('')
+  const [showRisk, setShowRisk] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   function handleAdd() {
@@ -150,6 +154,30 @@ function WatchlistCard({ watchlist, onDelete, onAddTicker, onRemoveTicker, onAna
             </Button>
           )}
         </div>
+
+        {/* Portfolio risk — lazy, so it only fetches when opened. Needs at
+            least two names to say anything about correlation. */}
+        {watchlist.tickers.length >= 2 && (
+          <div className="border-t border-border/40 pt-3">
+            <button
+              type="button"
+              onClick={() => setShowRisk(s => !s)}
+              aria-expanded={showRisk}
+              className="group flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ChevronDown
+                size={13}
+                className={cn('shrink-0 transition-transform', showRisk ? 'rotate-0' : '-rotate-90')}
+              />
+              Portfolio risk
+            </button>
+            {showRisk && (
+              <div className="mt-3">
+                <PortfolioRiskPanel tickers={watchlist.tickers} />
+              </div>
+            )}
+          </div>
+        )}
 
         <p className="text-xs text-muted-foreground/60">
           Created {new Date(watchlist.created_at).toLocaleDateString()}

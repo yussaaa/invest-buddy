@@ -12,6 +12,7 @@ import type {
   MarketEvents,
   MarketMovers,
   MarketOverview,
+  PortfolioRisk,
   NewsFeed,
   NewsSettings,
   NewsSources,
@@ -155,6 +156,12 @@ export const api = {
     quotes: (symbols: string[], signal?: AbortSignal) =>
       request<{ quotes: Quote[]; as_of: number }>(
         `/market/quotes?symbols=${encodeURIComponent(symbols.join(','))}`,
+        { signal }
+      ),
+
+    portfolioRisk: (symbols: string[], signal?: AbortSignal) =>
+      request<PortfolioRisk>(
+        `/market/portfolio-risk?symbols=${encodeURIComponent(symbols.join(','))}`,
         { signal }
       ),
 

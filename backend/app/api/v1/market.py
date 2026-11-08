@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.services import market_data, options, technicals, valuation, valuation_explain
+from app.services import (
+    market_data,
+    options,
+    portfolio_risk,
+    technicals,
+    valuation,
+    valuation_explain,
+)
 
 router = APIRouter()
 
@@ -22,6 +29,15 @@ async def get_quotes(
     if not requested:
         return {"quotes": []}
     return {"quotes": await market_data.get_quotes(requested)}
+
+
+@router.get("/portfolio-risk")
+async def get_portfolio_risk(
+    symbols: str = Query(..., description="Comma-separated tickers in the basket"),
+) -> dict:
+    """Beta, volatility and pairwise correlation for a basket, equal-weighted."""
+    requested = [s.strip() for s in symbols.split(",") if s.strip()]
+    return await portfolio_risk.portfolio_risk(requested)
 
 
 @router.get("/history")

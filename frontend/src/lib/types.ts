@@ -774,6 +774,33 @@ export interface Watchlist {
   created_at: string
 }
 
+// Equal-weight portfolio risk for a watchlist's tickers; see backend
+// services/portfolio_risk.py. Scalars + a correlation matrix only.
+export interface PortfolioRiskName {
+  symbol: string
+  beta: number | null
+  vol: number | null
+}
+
+export interface PortfolioRisk {
+  available: boolean
+  reason?: string | null
+  benchmark?: string
+  window_sessions?: number
+  missing?: string[]
+  names?: PortfolioRiskName[]
+  correlation?: { symbols: string[]; matrix: (number | null)[][] }
+  portfolio?: {
+    names_used: number
+    beta: number | null
+    vol: number | null
+    avg_correlation: number | null
+    diversification: string
+    most_correlated?: { a: string; b: string; value: number | null } | null
+  }
+  as_of?: string
+}
+
 // ── Chat agent ────────────────────────────────────────────────────────────────
 
 /** Which way a condition leans. Never an instruction — see services/signals.py. */
