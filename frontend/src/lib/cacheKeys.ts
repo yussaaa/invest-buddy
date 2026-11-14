@@ -12,6 +12,9 @@ import type { CapTier } from './types'
 export const K = {
   /** Per symbol, like the backend's `quote:{sym}` — see lib/quoteStore.ts. */
   quote: (symbol: string) => `quote:${symbol.toUpperCase()}`,
+  /** Keyed on the sorted ticker set, so it busts when membership changes. */
+  portfolioRisk: (symbols: string[]) =>
+    `portfolio:risk:${[...symbols].map(s => s.toUpperCase()).sort().join(',')}`,
   history: (symbol: string, range: string) => `hist:${symbol}:${range}`,
   profile: (symbol: string) => `profile:${symbol}`,
   technicals: (symbol: string) => `technicals:${symbol}`,
@@ -45,6 +48,7 @@ export const K = {
 /** Milliseconds. Server constants are in seconds — the names line up. */
 export const TTL = {
   quotes: 10_000,             // market_data.QUOTES_TTL
+  portfolioRisk: 300_000,     // portfolio_risk.PORTFOLIO_RISK_TTL
   history: 30_000,            // market_data.HISTORY_TTL
   overview: 30_000,           // market_data.OVERVIEW_TTL
   movers: 60_000,             // market_data.MOVERS_TTL
